@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AMD Radeon 890M reports gfx1150, but the ROCm 6.3 PyTorch wheel needs a
+# gfx1100-compatible target for common kernels on this machine.
+export HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-11.0.0}"
+
+# Enable PyTorch's experimental ROCm AOTriton attention kernels on this GPU.
+export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="${TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL:-1}"
+
+exec uv run "$@"

@@ -1,0 +1,4 @@
+### embed: Dockerfile.extra
+RUN apt-get install -y  rocminfo rocm-device-libs
+ #   sudo apt install hipblas rocblas miopen-hip rocfft hipsparse rccl
+### end embed

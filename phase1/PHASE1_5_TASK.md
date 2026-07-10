@@ -15,7 +15,10 @@
 1. [x] Implement Phase 1.5 script
 2. [x] Execute bounded GPT-2 Phase 1.5 run
 3. [x] Verify outputs
+4. [x] Update for v2 spec: empirical sweep, covariance certificate, null depth profile
+5. [x] Execute >=200k-token GPT-2 Phase 1.5 run
+6. [x] Verify v2 outputs
 
 ## Notes / uncertainties
-- Full spec asks WikiText-2 ≥200k tokens and null samples=500/head; current execution used 4096 eval tokens and 5 null samples/head as a bounded first run.
-- Uniform certified ranks kept all 64 dimensions for eps <= 1.0, so the initial certified truncation curve shows 0 compression under the hard bound.
+- Full spec asks WikiText-2 ≥200k tokens and null samples=500/head; v1 execution used 4096 eval tokens and 5 null samples/head as a bounded first run.
+- Uniform certified ranks kept all 64 dimensions for eps <= 1.0, so v2 requires empirical fixed-rank and census-guided sweeps.

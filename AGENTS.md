@@ -23,6 +23,40 @@ uv run python -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-hea
 uv run python -m phase1.scripts.plots --input outputs/census_gpt2.parquet --model gpt2
 ```
 
+### ROCm PyTorch on AMD Radeon 890M
+
+This project is pinned to ROCm PyTorch in `pyproject.toml` / `uv.lock`:
+
+- `torch==2.9.1+rocm6.3`
+- `pytorch-triton-rocm==3.5.1`
+- Python constrained to `>=3.10,<3.12` because the ROCm companion wheels are not available for newer Python versions here.
+
+On the AMD Radeon 890M, PyTorch detects the GPU but common kernels fail unless this compatibility override is set. PyTorch ROCm attention also needs the experimental AOTriton kernels enabled to avoid slow/fallback attention behavior:
+
+```bash
+export HSA_OVERRIDE_GFX_VERSION=11.0.0
+export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+```
+
+Prefer the project wrappers, which set both variables automatically:
+
+```bash
+./scripts/rocm-run python -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+./scripts/rocm-python -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+```
+
+ROCm verification command:
+
+```bash
+./scripts/rocm-run python - <<'PY'
+import torch
+print(torch.__version__, torch.version.hip, torch.cuda.is_available(), torch.cuda.get_device_name(0))
+x = torch.ones(16, device='cuda') + 2
+torch.cuda.synchronize()
+print(x.device, x[:3].cpu().tolist())
+PY
+```
+
 If parquet support is unavailable, the census script also writes CSV.
 
 ## Ways of working

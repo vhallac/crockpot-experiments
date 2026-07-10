@@ -229,13 +229,32 @@ where x, y are the post-LayerNorm residual vectors feeding the head.
 ### 3B.3 Evaluation
 
 1. For each ε: truncate ALL heads at their `r_h(ε)`; report WikiText-2 perplexity
-   (stride-512 eval, ≥ 200k tokens) vs the untouched model, plus mean rank kept and
-   parameter/cache-width reduction.
+   (stride-512 eval, **≥ 200k tokens — 4k is underpowered, do not ship less**) vs
+   the untouched model, plus mean rank kept and parameter/cache-width reduction.
 2. Sanity: on 10k calibration tokens, record observed max |Δlogit| per head and
    verify observed ≤ certified bound (if violated, the LN bound or the patch is
    wrong — STOP).
 3. One curve: perplexity delta vs compression fraction, annotated with ε. Expected
    shape: flat then cliff. Report where the cliff starts vs census dead_frac.
+4. **Empirical (uncertified) sweep — REQUIRED after the v1 result:** the uniform
+   certificate is vacuous on gpt2 (flat spectra × worst-case quantifier ⇒ rank 64
+   chosen everywhere; v1 measured this). The functional question must therefore be
+   answered empirically: truncate all heads at fixed global ranks
+   r ∈ {60, 56, 48, 40, 32, 24, 16} (same refactor recipe), report the full
+   perplexity curve. Separately, per-head ranks proportional to census liveness
+   (keep enough directions to cover 1−dead_frac of S_B² energy) vs a matched
+   uniform-rank control — this tests whether the census predicts WHERE to cut.
+5. **Covariance-weighted certificate (rung 2):** replace `‖x‖·‖y‖` in the bound
+   with empirical quantiles of the PROJECTED energies `‖P_cut x‖, ‖P_cut y‖`
+   measured on calibration tokens (P_cut = the truncated directions). LayerNormed
+   residuals spread energy ~uniformly over d_model, so projections onto a
+   (64−r)-dim cut are ~`sqrt((64−r)/768)` of the norm — expect 10–40× tighter
+   bounds. Report certified compression under this bound at the same ε grid, with
+   the quantile (99.9%) stated as the certificate's probabilistic condition.
+
+**Anomaly-log requirement (repeat offense):** "no truncation occurred at any ε" is
+a mandatory anomaly-log entry, not a silent table row. Any run where a phase's
+core operation is a no-op MUST say so in prose in REPORT.md.
 
 **RoPE caveat:** this recipe is exact only for non-RoPE models (gpt2). For RoPE
 models the interaction varies with offset; truncation must preserve rotary plane
@@ -255,6 +274,14 @@ measured dead_frac vs the null distribution's mean ± std, and the z-score.
   ONE finding, not two. Report honestly.
 - If measured >> null: the excess is a separate structure (oubliette or gradient
   shadow) — Phase 2's token-type analysis and the checkpoint dynamics discriminate.
+- **v1 result: measured << null (median z = −14; 130/144 heads BELOW entailment).**
+  The tail is RESCUED relative to lighthouse-entailment. Follow-up REQUIRED:
+  rerun the null at k ∈ {5, 10, 20, 32} to produce the alignment-depth profile —
+  the depth at which measured dead_frac meets the null is the effective width of
+  the aligned band per head. Report that width's distribution and its correlation
+  with the census observables. The three excess-deadness exceptions
+  (L4.H11 z=+57, L5.H0 z=+28, L7.H2 z=+3.4) get individual panels: spectra,
+  alignment profile, and (in Phase 2) their runtime key-cloud occupancy.
 
 ### 3B.5 Outputs
 

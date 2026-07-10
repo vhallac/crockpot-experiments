@@ -2,9 +2,10 @@
 name = "dead-keys-census"
 version = "0.1.0"
 description = "Phase 1 weights-only dead-key census"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.12"
 dependencies = [
-  "torch>=2.2",
+  "torch==2.9.1+rocm6.3",
+  "pytorch-triton-rocm==3.5.1 ; sys_platform == 'linux'",
   "transformers>=4.45",
   "numpy>=1.26",
   "pandas>=2.1",
@@ -16,3 +17,12 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-rocm" }
+pytorch-triton-rocm = { index = "pytorch-rocm" }
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.3"
+explicit = true
