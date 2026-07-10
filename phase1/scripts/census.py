@@ -19,8 +19,8 @@ def _rows_for_bands(config, tag: str, d_head: int) -> list[Band]:
     return bands
 
 
-def _compute_one(A: torch.Tensor, B: torch.Tensor, *, samples: int, seed: int):
-    m = head_metrics(A, B, samples=samples, seed=seed)
+def _compute_one(A: torch.Tensor, B: torch.Tensor, *, samples: int, seed: int, misalign_rotations: int):
+    m = head_metrics(A, B, samples=samples, seed=seed, misalign_rotations=misalign_rotations)
     rb = random_baseline(A, B, samples=samples, seed=seed + 1000)
     m.dead_frac_random_baseline = rb
     return m
@@ -48,7 +48,7 @@ def run(args: argparse.Namespace) -> None:
             if A.shape[0] < 2 or B.shape[0] < 2:
                 continue
             seed = args.seed + 100_000 * hs.layer + 1000 * hs.head + len(rows)
-            metrics = _compute_one(A, B, samples=args.samples, seed=seed)
+            metrics = _compute_one(A, B, samples=args.samples, seed=seed, misalign_rotations=args.misalign_rotations)
             prefix = f"l{hs.layer}.h{hs.head}.{band.name}"
             spectra[f"{prefix}.S_A"] = metrics.S_A
             spectra[f"{prefix}.S_B"] = metrics.S_B
@@ -66,6 +66,7 @@ def run(args: argparse.Namespace) -> None:
                     "erank_B": metrics.erank_B,
                     "erank_M": metrics.erank_M,
                     "misalign_index": metrics.misalign_index,
+                    "misalign_z": metrics.misalign_z,
                     "dead_frac": metrics.dead_frac,
                     "dead_frac_random_baseline": metrics.dead_frac_random_baseline,
                     "t5_threshold": metrics.t5_threshold,
@@ -101,6 +102,7 @@ def run(args: argparse.Namespace) -> None:
                 "erank_B": np.nan,
                 "erank_M": np.nan,
                 "misalign_index": np.nan,
+                "misalign_z": np.nan,
                 "dead_frac": dead,
                 "dead_frac_random_baseline": rb,
                 "t5_threshold": t5,
@@ -135,6 +137,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit-layers", type=int)
     p.add_argument("--limit-heads", type=int)
     p.add_argument("--atol", type=float, default=1e-4)
+    p.add_argument("--misalign-rotations", type=int, default=200, help="random orthogonal rotations for misalignment z-score")
     return p.parse_args()
 
 

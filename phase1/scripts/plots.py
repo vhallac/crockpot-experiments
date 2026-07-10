@@ -51,10 +51,11 @@ def run(args: argparse.Namespace) -> None:
 
     fig, ax = plt.subplots(figsize=(6, 4))
     all_df = df[df["band"] == "all"]
-    ax.scatter(all_df["layer"], all_df["misalign_index"], s=12)
-    ax.set_title(f"{model} misalignment vs layer")
+    misalign_col = "misalign_z" if "misalign_z" in all_df.columns else "misalign_index"
+    ax.scatter(all_df["layer"], all_df[misalign_col], s=12)
+    ax.set_title(f"{model} {misalign_col} vs layer")
     ax.set_xlabel("layer")
-    ax.set_ylabel("misalign_index")
+    ax.set_ylabel(misalign_col)
     fig.tight_layout()
     fig.savefig(out / f"{model}_misalign_vs_layer.pdf")
     fig.savefig(out / f"{model}_misalign_vs_layer.png", dpi=150)

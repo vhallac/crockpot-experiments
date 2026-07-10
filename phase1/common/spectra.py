@@ -15,6 +15,7 @@ class HeadMetrics:
     erank_B: float
     erank_M: float
     misalign_index: float
+    misalign_z: float
     dead_frac: float
     dead_frac_random_baseline: float
     t5_threshold: float
@@ -53,7 +54,31 @@ def dead_fraction(A: torch.Tensor, U_B: torch.Tensor, S_B: torch.Tensor, *, samp
     return float(dead.item()), float(t5.item())
 
 
-def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, seed: int = 0) -> HeadMetrics:
+def misalignment_z_score(S_A: torch.Tensor, S_B: torch.Tensor, raw: torch.Tensor, *, rotations: int = 200, seed: int = 0) -> float:
+    """Spec §3.2 random-orthogonal baseline for the raw misalignment index."""
+    if rotations <= 1:
+        return float("nan")
+    d = S_A.numel()
+    denom = torch.sum(S_A * S_B).clamp_min(1e-30)
+    gen = torch.Generator(device="cpu")
+    gen.manual_seed(seed)
+    vals = []
+    diag_a = torch.diag(S_A)
+    diag_b = torch.diag(S_B)
+    for _ in range(rotations):
+        Q, R = torch.linalg.qr(torch.randn(d, d, generator=gen, dtype=torch.float32))
+        signs = torch.sign(torch.diag(R))
+        signs[signs == 0] = 1
+        Q = Q * signs.unsqueeze(0)
+        vals.append(torch.linalg.svdvals(diag_a @ Q @ diag_b).sum() / denom)
+    rand = torch.stack(vals)
+    std = rand.std(unbiased=True)
+    if std <= 1e-12:
+        return float("nan")
+    return float(((raw - rand.mean()) / std).item())
+
+
+def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, seed: int = 0, misalign_rotations: int = 200) -> HeadMetrics:
     A = A.detach().to(dtype=torch.float32, device="cpu")
     B = B.detach().to(dtype=torch.float32, device="cpu")
 
@@ -62,6 +87,8 @@ def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, see
     C = torch.diag(S_A) @ (U_A.T @ U_B) @ torch.diag(S_B)
     S_M = torch.linalg.svdvals(C)
     denom = torch.sum(S_A * S_B).clamp_min(1e-30)
+    raw_misalign = S_M.sum() / denom
+    misalign_z = misalignment_z_score(S_A, S_B, raw_misalign, rotations=misalign_rotations, seed=seed + 31)
     dead, t5 = dead_fraction(A, U_B, S_B, samples=samples, seed=seed)
 
     return HeadMetrics(
@@ -71,7 +98,8 @@ def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, see
         erank_A=effective_rank(S_A),
         erank_B=effective_rank(S_B),
         erank_M=effective_rank(S_M),
-        misalign_index=float((S_M.sum() / denom).item()),
+        misalign_index=float(raw_misalign.item()),
+        misalign_z=misalign_z,
         dead_frac=dead,
         dead_frac_random_baseline=np.nan,
         t5_threshold=t5,

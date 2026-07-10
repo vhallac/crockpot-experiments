@@ -100,6 +100,14 @@ Record per head:
 - Effective rank of each: `erank(S) = exp(entropy(S² / sum(S²)))`
 - **Misalignment index:** `sum(S_M) / sum(S_A * S_B)` — equals 1 iff bases perfectly
   aligned; smaller = key-generating capacity aimed at query-blind directions.
+- **Misalignment z-score (REQUIRED — the raw index is misleading):** for near-flat
+  spectra the raw index has a floor just below 1 even under a completely random
+  rotation (empirically ~0.976 at erank≈60/64), so raw values like 0.98 do NOT mean
+  "98% aligned". Compute a per-head baseline: for 200 random orthogonal `R`
+  (`[d_head, d_head]`, via QR of Gaussian), `m_rand = sum(svdvals(diag(S_A) @ R @
+  diag(S_B))) / sum(S_A*S_B)`. Report `misalign_z = (raw - mean(m_rand)) /
+  std(m_rand)`. All cross-head and cross-layer comparisons use the z-score; the raw
+  index is recorded but never interpreted.
 
 ### 3.3 Dead-fraction via random-direction baseline
 
