@@ -1,0 +1,11 @@
+# Python/uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated outputs can be large; keep intentionally if needed with git add -f.
+outputs/
+
+# Local caches
+.cache/
