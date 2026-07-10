@@ -11,6 +11,7 @@ dependencies = [
   "pyarrow>=14",
   "matplotlib>=3.8",
   "accelerate>=0.30",
+  "datasets>=5.0.0",
 ]
 
 [tool.uv]

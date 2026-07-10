@@ -188,7 +188,80 @@ Plots (matplotlib, one PDF per model):
 
 ---
 
-## 4. Phase 2 — Runtime wedge validation
+## 3B. Phase 1.5 — Certified QK truncation (run on gpt2 FIRST) + null model
+
+**Goal:** functional validation of the census. Truncate each head's QK interaction to
+the directions the census says are live, with a PROVEN bound on logit perturbation,
+and show perplexity does not move. This converts the census from descriptive to
+causal. No training anywhere.
+
+### 3B.1 Truncation recipe (per head, exact)
+
+Using the SVDs already computed in §3.2 (`A = U_A S_A V_A^T`, `B = U_B S_B V_B^T`,
+economy, `V_*` shape `[d_model, d_head]`):
+
+```
+C  = diag(S_A) @ (U_A.T @ U_B) @ diag(S_B)     # [d_head, d_head]
+P, Sig, Qt = svd(C)                             # M = (V_A P) diag(Sig) (V_B Q)^T
+# rank-r factors (r chosen per head in 3B.2):
+Wq_new = diag(sqrt(Sig[:r])) @ (V_A @ P[:, :r]).T    # [r, d_model]
+Wk_new = diag(sqrt(Sig[:r])) @ (V_B @ Qt.T[:, :r]).T # [r, d_model]
+```
+
+Then `Wq_new.T @ Wk_new` equals the best rank-r approximation of the head's true
+interaction matrix `M = W_Q^T W_K`. Patch the model so this head computes logits as
+`(Wq_new x) · (Wk_new y) / sqrt(d_head)` (keep the ORIGINAL `sqrt(d_head)` scaling;
+V and O paths untouched). Biases: fold `k`-bias into a per-key constant, keep as-is.
+
+### 3B.2 The certificate (choose r per head)
+
+Truncation error for any inputs: `|Δlogit| ≤ Sig[r] * ‖x‖ * ‖y‖ / sqrt(d_head)`
+where x, y are the post-LayerNorm residual vectors feeding the head.
+
+- **Uniform bound (gpt2):** pre-affine LN output has exact norm `sqrt(d_model)`, so
+  `‖x‖ ≤ max|γ| * sqrt(d_model) + ‖β‖` using that layer's LN gain γ and bias β.
+  Plug in for both x and y → hard bound `E_r` per head per rank.
+- **Distributional bound:** measure the 99.9th percentile of `‖x‖` on ~100k
+  calibration tokens; same formula. Report both.
+- Choose per-head `r_h(ε) = min r s.t. E_r ≤ ε` for
+  `ε ∈ {0.01, 0.05, 0.1, 0.5, 1.0}` (logit units; softmax sensitivity ~ e^ε).
+
+### 3B.3 Evaluation
+
+1. For each ε: truncate ALL heads at their `r_h(ε)`; report WikiText-2 perplexity
+   (stride-512 eval, ≥ 200k tokens) vs the untouched model, plus mean rank kept and
+   parameter/cache-width reduction.
+2. Sanity: on 10k calibration tokens, record observed max |Δlogit| per head and
+   verify observed ≤ certified bound (if violated, the LN bound or the patch is
+   wrong — STOP).
+3. One curve: perplexity delta vs compression fraction, annotated with ε. Expected
+   shape: flat then cliff. Report where the cliff starts vs census dead_frac.
+
+**RoPE caveat:** this recipe is exact only for non-RoPE models (gpt2). For RoPE
+models the interaction varies with offset; truncation must preserve rotary plane
+pairing — do NOT run 3B on RoPE models in this pass; gpt2 only.
+
+### 3B.4 Alignment-entailment null model (settles whether the dead tail is a separate finding)
+
+The lighthouse (top directions under-parked, measured park0 ≈ 0.03 vs 0.125) may
+GEOMETRICALLY entail excess tail deadness via orthogonality. Test: per head,
+generate 500 synthetic (A', B') pairs: random Gaussian matrices with the head's
+true spectra (S_A, S_B), where the top-k left singular vectors of B' are rotated to
+match the head's measured top-k alignment with A' (k = 5; match the measured
+`park0..park4` overlap values), and the remaining directions are random in the
+orthogonal complement. Compute dead_frac on each synthetic pair. Report per head:
+measured dead_frac vs the null distribution's mean ± std, and the z-score.
+- If measured ≈ null: the tail deadness is bookkeeping entailed by the lighthouse —
+  ONE finding, not two. Report honestly.
+- If measured >> null: the excess is a separate structure (oubliette or gradient
+  shadow) — Phase 2's token-type analysis and the checkpoint dynamics discriminate.
+
+### 3B.5 Outputs
+
+`truncation_gpt2.csv` (per head × ε: r_h, E_r, observed_max_dlogit, params_kept),
+`ppl_curve_gpt2.csv`, `null_model_gpt2.csv` (per head: dead_frac, null_mean,
+null_std, z), plots for each, and the §8 report items extended with a Phase 1.5
+table (ppl at each ε) and the null-model verdict.
 
 ### 4.1 Data collection
 
@@ -239,6 +312,13 @@ Per cached key (layer, head, position):
 4. **Optional (prediction 3):** compute the top-5 principal components of the whole
    key cloud per head (these capture outlier/shared directions); report the mean
    pullback score of those directions vs the mean over random directions.
+5. **Oubliette check (token-type analysis):** label every cached position by coarse
+   type: {punctuation, stopword/function word, newline/whitespace-like, number,
+   content word (everything else), needle}. Per head, report the type composition of
+   the bottom-decile-by-x keys vs the full cache. Hypothesis: the dead zone is
+   disproportionately punctuation/function/whitespace tokens (the model files
+   don't-care keys to be unfindable). If instead dead-zone occupancy is
+   type-uniform, the gradient-shadow account gains and the oubliette loses.
 
 ### 4.4 Calibration covariance (optional refinement, cheap)
 
