@@ -53,6 +53,8 @@ def run(args: argparse.Namespace) -> None:
             spectra[f"{prefix}.S_A"] = metrics.S_A
             spectra[f"{prefix}.S_B"] = metrics.S_B
             spectra[f"{prefix}.S_M"] = metrics.S_M
+            spectra[f"{prefix}.U_B_top5"] = metrics.U_B_top5
+            spectra[f"{prefix}.A_soft_basis"] = metrics.A_soft_basis
             rows.append(
                 {
                     "layer": hs.layer,

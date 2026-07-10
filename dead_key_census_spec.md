@@ -174,7 +174,11 @@ layer, head, kv_head, band, S_A_sum, S_B_sum, S_M_sum, erank_A, erank_B, erank_M
 misalign_index, dead_frac, dead_frac_random_baseline, t5_threshold, is_group_level
 ```
 
-Plus one `.npz` per model with the raw spectra vectors.
+Plus one `.npz` per model with the raw spectra vectors, AND per head: the top-5 right
+singular directions of W_K in head space (`U_B[:, :5]`, shape `[d_head, 5]`) and the
+soft-kernel basis of W_Q (left singular vectors of A below the 5th-percentile
+threshold, up to 8 vectors). These are required for the outlier-parking check
+(prediction 3): without stored directions, only spectra can be re-analyzed.
 
 Plots (matplotlib, one PDF per model):
 1. Heatmap: dead_frac over (layer × head), one panel per band.

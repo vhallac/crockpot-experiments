@@ -11,6 +11,8 @@ class HeadMetrics:
     S_A: np.ndarray
     S_B: np.ndarray
     S_M: np.ndarray
+    U_B_top5: np.ndarray
+    A_soft_basis: np.ndarray
     erank_A: float
     erank_B: float
     erank_M: float
@@ -90,11 +92,16 @@ def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, see
     raw_misalign = S_M.sum() / denom
     misalign_z = misalignment_z_score(S_A, S_B, raw_misalign, rotations=misalign_rotations, seed=seed + 31)
     dead, t5 = dead_fraction(A, U_B, S_B, samples=samples, seed=seed)
+    a_pullbacks = pullback_scores(A, U_A.T.contiguous())
+    soft_idx = torch.nonzero(a_pullbacks < t5, as_tuple=False).flatten()[:8]
+    a_soft_basis = U_A[:, soft_idx].contiguous()
 
     return HeadMetrics(
         S_A=S_A.numpy(),
         S_B=S_B.numpy(),
         S_M=S_M.numpy(),
+        U_B_top5=U_B[:, :5].contiguous().numpy(),
+        A_soft_basis=a_soft_basis.numpy(),
         erank_A=effective_rank(S_A),
         erank_B=effective_rank(S_B),
         erank_M=effective_rank(S_M),
