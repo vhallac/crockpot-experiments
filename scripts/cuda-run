@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dedicated CUDA environment for NVIDIA RunPod hosts. This keeps the local
+# ROCm-pinned uv environment intact while installing CUDA PyTorch separately.
+if [[ -f "$HOME/.dead-keys-census-runpod-env" ]]; then
+  # shellcheck disable=SC1091
+  . "$HOME/.dead-keys-census-runpod-env"
+fi
+
+VENV_DIR="${DEAD_KEYS_CUDA_VENV:-.venv-cuda}"
+PYTHON_BIN="${DEAD_KEYS_CUDA_PYTHON:-python3}"
+
+if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+  uv venv --python "$PYTHON_BIN" "$VENV_DIR"
+fi
+
+uv pip install --python "$VENV_DIR/bin/python" -r requirements-runpod-cuda.txt
+exec "$VENV_DIR/bin/python" "$@"

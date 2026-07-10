@@ -1,0 +1,11 @@
+--index-url https://download.pytorch.org/whl/cu128
+--extra-index-url https://pypi.org/simple
+
+torch==2.9.1+cu128
+transformers>=4.45
+numpy>=1.26
+pandas>=2.1
+pyarrow>=14
+matplotlib>=3.8
+accelerate>=0.30
+datasets>=5.0.0
