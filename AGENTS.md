@@ -26,18 +26,39 @@ uv run python -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-hea
 uv run python -m phase1.scripts.plots --input outputs/census_gpt2.parquet --model gpt2
 ```
 
-### RunPod `dead-weight` NVIDIA/CUDA environment
+### RunPod `dead-weight` / `dead-weight-migration` NVIDIA/CUDA environment
 
 Non-secret RunPod metadata discovered 2026-07-10:
 
-- Pod name: `dead-weight`
-- Pod id: `6mwc5q4jwwcgw9`
+- Original pod name: `dead-weight`
+- Original pod id: `6mwc5q4jwwcgw9`
+- Migration pod name: `dead-weight-migration`
+- Migration pod id: `lszgheen2t7qor`
+- Migration pod SSH user discovered from RunPod SSH command: `lszgheen2t7qor-64410ed2`
 - GPU display name from RunPod API: `RTX A4500`
 - Machine type: secure cloud GPU pod
 - Current desired status after investigation: keep `EXITED`
 - Local RunPod credential env var: `RUNPOD_API_KEY` (do not print or commit value)
 - In-pod GitHub credential env var: `RUNPOD_SECRET_GITHUB_TOKEN` (do not print or commit value)
 - Local `~/.ssh/config`: no `dead-weight`, `runpod`, or pod-id host entry was present during discovery.
+
+RunPod migration / startup procedure:
+
+1. Keep `dead-weight-migration` halted when idle. Current verified halted state: `desiredStatus: EXITED`.
+2. If the original pod cannot resume because its host has no free GPU capacity, create/deploy a replacement pod in RunPod with the same network volume attached at creation time. Network volumes for pods are effectively chosen at deployment time; do not expect to attach one later to an existing pod.
+3. Prefer same datacenter / compatible GPU when possible so the existing network volume is available. Name the replacement clearly, e.g. `dead-weight-migration`.
+4. After deployment, query the pod by name via GraphQL and record its new pod id, GPU, image, and runtime SSH ports here. The current migration pod id is `lszgheen2t7qor`.
+5. Before installing dependencies or downloading models, run `./scripts/runpod-persistent-cache-setup` inside the pod so Hugging Face, torch, pip, uv, Triton, and CUDA virtualenv data live under `/workspace/dead-keys-census-cache` on the network volume.
+6. For cross-datacenter moves, RunPod's documented path is two running pods and `rsync` between their `/workspace` mounts; this is separate from simply deploying a replacement pod against the same existing volume.
+
+RunPod SSH after migration:
+
+1. First query runtime ports from GraphQL; while the pod is `EXITED`, `runtime` is `null`, so IP/ports are unavailable until it is running.
+2. Prefer the public TCP SSH endpoint from `runtime.ports`: `ssh -p <publicPort> root@<public-ip> -i ~/.ssh/id_ed25519`. During discovery this was `root@213.173.98.71 -p 19159`, but runtime IP/port can change after migration/restart.
+3. If public TCP SSH auth fails or is unavailable, use the RunPod web UI Connect/SSH command. It shows the complete random proxy user, e.g. `ssh <pod-id>-<suffix>@ssh.runpod.io -i ~/.ssh/id_ed25519`.
+4. The migration proxy user discovered for `lszgheen2t7qor` was `lszgheen2t7qor-64410ed2`.
+5. The pod id alone is available from GraphQL, but the extra random `ssh.runpod.io` suffix was not present in the basic `myself { pods { ... runtime { ports ... } } }` response. Treat the UI Connect command as the reliable source for that suffix.
+6. The `ssh.runpod.io` proxy requires a PTY; for scripted commands, pipe commands into `ssh -tt <user>@ssh.runpod.io -i ~/.ssh/id_ed25519` rather than using plain non-interactive `ssh <host> command`.
 
 The local `pyproject.toml` / `uv.lock` remain pinned for ROCm.
 
@@ -87,24 +108,24 @@ CUDA wrapper details:
 RunPod API helpers:
 
 ```bash
-# Query non-secret pod state
+# Query non-secret pod state for original and migration pods
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
   -H 'content-type: application/json' \
   --data-binary '{"query":"query { myself { pods { id name desiredStatus runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName cpuCount memoryTotal secureCloud machineType } } } }"}' \
-  | jq '.data.myself.pods[] | select(.name=="dead-weight")'
+  | jq '.data.myself.pods[] | select(.name=="dead-weight" or .name=="dead-weight-migration")'
 
-# Resume pod
+# Resume migration pod
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
   -H 'content-type: application/json' \
-  --data-binary '{"query":"mutation { podResume(input: {podId: \"6mwc5q4jwwcgw9\"}) { id name desiredStatus } }"}'
+  --data-binary '{"query":"mutation { podResume(input: {podId: \"lszgheen2t7qor\"}) { id name desiredStatus } }"}'
 
-# Stop pod when finished; verify desiredStatus is EXITED afterward
+# Stop migration pod when finished; verify desiredStatus is EXITED afterward
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
   -H 'content-type: application/json' \
-  --data-binary '{"query":"mutation { podStop(input: {podId: \"6mwc5q4jwwcgw9\"}) { id name desiredStatus } }"}'
+  --data-binary '{"query":"mutation { podStop(input: {podId: \"lszgheen2t7qor\"}) { id name desiredStatus } }"}'
 ```
 
-Discovery note: on 2026-07-10, `podResume` failed with `There are not enough free GPUs on the host machine to start this pod`, so in-pod CUDA/OS/driver inspection could not be completed then.
+Discovery note: on 2026-07-10, `podResume` for the original `dead-weight` pod failed with `There are not enough free GPUs on the host machine to start this pod`; the replacement `dead-weight-migration` pod was created and configured instead.
 
 ### ROCm PyTorch on AMD Radeon 890M
 
