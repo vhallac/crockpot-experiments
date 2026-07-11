@@ -15,5 +15,5 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   uv venv --python "$PYTHON_BIN" "$VENV_DIR"
 fi
 
-uv pip install --python "$VENV_DIR/bin/python" -r requirements-runpod-cuda.txt
+uv pip install --index-strategy unsafe-best-match --python "$VENV_DIR/bin/python" -r requirements-runpod-cuda.txt
 exec "$VENV_DIR/bin/python" "$@"
