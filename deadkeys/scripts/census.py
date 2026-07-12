@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from phase1.common.loading import MODEL_IDS, iter_heads, load_model, sanity_check
-from phase1.common.rope import Band, rope_bands
-from phase1.common.spectra import group_dead_fraction, group_random_baseline, head_metrics, random_baseline
+from deadkeys.common.loading import MODEL_IDS, iter_heads, load_model, sanity_check
+from deadkeys.common.rope import Band, rope_bands
+from deadkeys.common.spectra import group_dead_fraction, group_random_baseline, head_metrics, random_baseline
 
 
 def _rows_for_bands(config, tag: str, d_head: int) -> list[Band]:

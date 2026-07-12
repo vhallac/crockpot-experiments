@@ -12,8 +12,8 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from phase1.common.loading import MODEL_IDS, iter_heads, load_model, sanity_check
-from phase1.common.spectra import dead_fraction
+from deadkeys.common.loading import MODEL_IDS, iter_heads, load_model, sanity_check
+from deadkeys.common.spectra import dead_fraction
 
 EPSILONS = (0.01, 0.05, 0.1, 0.5, 1.0)
 FIXED_RANKS = (60, 56, 48, 40, 32, 24, 16)

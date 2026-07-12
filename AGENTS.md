@@ -3,7 +3,7 @@
 ## Layout
 
 - `dead_key_census_spec.md` — source specification.
-- `phase1/` — Phase 1 weights-only census implementation.
+- `deadkeys/` — Phase 1 weights-only census implementation.
   - `common/loading.py` — HuggingFace model loading, per-architecture Q/K slicing, sanity checks.
   - `common/spectra.py` — SVD, effective rank, dead-fraction, random baseline math.
   - `common/rope.py` — RoPE band partition helpers.
@@ -22,8 +22,8 @@ Typical commands:
 
 ```bash
 uv sync
-uv run python -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
-uv run python -m phase1.scripts.plots --input outputs/census_gpt2.parquet --model gpt2
+uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+uv run python -m deadkeys.scripts.plots --input outputs/census_gpt2.parquet --model gpt2
 ```
 
 ### RunPod `dead-weight` / `dead-weight-migration` NVIDIA/CUDA environment
@@ -96,21 +96,21 @@ torch.cuda.synchronize()
 print(x.device, x[:3].cpu().tolist())
 PY
 
-./scripts/cuda-run -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --device cuda
+./scripts/cuda-run -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --device cuda
 ```
 
 Pythia GPU smoke tests on RunPod:
 
 ```bash
 # Phase 1 smoke only; do not use full defaults until this shows CUDA use.
-./scripts/cuda-run -m phase1.scripts.census \
+./scripts/cuda-run -m deadkeys.scripts.census \
   --model pythia410 --limit-layers 1 --limit-heads 1 \
   --samples 256 --misalign-rotations 2 --device cuda \
   --output-dir outputs/smoke_pythia_gpu
 
 # Phase 1.5 Pythia certificate/null smoke only. PPL/truncated-attention eval is
 # currently implemented for GPT-2 only, so Pythia smoke uses --skip-ppl.
-./scripts/cuda-run -m phase1.scripts.phase1_5 \
+./scripts/cuda-run -m deadkeys.scripts.phase1_5 \
   --model pythia410 --limit-layers 1 --limit-heads 1 \
   --eval-tokens 1024 --calibration-tokens 256 --observed-tokens 128 \
   --null-samples 2 --null-dead-samples 128 --null-depths 5 \
@@ -122,7 +122,7 @@ Verify GPU use during a smoke test from another shell with:
 
 ```bash
 nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv
-pgrep -af 'phase1.scripts.(census|phase1_5)|pythia' || true
+pgrep -af 'deadkeys.scripts.(census|phase1_5)|pythia' || true
 ```
 
 CUDA wrapper details:
@@ -185,8 +185,8 @@ export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 Prefer the project wrappers, which set both variables automatically:
 
 ```bash
-./scripts/rocm-run python -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
-./scripts/rocm-python -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+./scripts/rocm-run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+./scripts/rocm-python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
 ```
 
 ROCm verification command:
@@ -206,7 +206,7 @@ If parquet support is unavailable, the census script also writes CSV.
 ## Ways of working
 
 - Treat `dead_key_census_spec.md` as authoritative.
-- Keep all Phase 1 code under `phase1/` unless explicitly asked otherwise.
+- Keep all Phase 1 code under `deadkeys/` unless explicitly asked otherwise.
 - Run the §6.4 q/k reconstruction sanity check before trusting census outputs.
 - Never pool raw scores across heads.
 - Use smoke-test limits before full-model runs:

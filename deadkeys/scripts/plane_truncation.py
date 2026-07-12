@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from phase1.common.loading import load_model
+from deadkeys.common.loading import load_model
 
 EPSILONS = (0.05, 0.1, 0.5, 1.0)
 FRACTIONS = (0.10, 0.25, 0.50)

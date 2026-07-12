@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from phase1.common.loading import MODEL_IDS, LoadedModel, iter_heads
+from deadkeys.common.loading import MODEL_IDS, LoadedModel, iter_heads
 
 NEEDLE = "The maintenance code for the auxiliary pump is 7413."
 QUESTION = "What is the maintenance code for the auxiliary pump?"
