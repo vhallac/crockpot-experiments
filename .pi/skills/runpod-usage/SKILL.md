@@ -28,6 +28,7 @@ Known non-secret project context as of 2026-07-10:
 - Local RunPod credential env var: `RUNPOD_API_KEY`.
 - In-pod GitHub credential env var: `RUNPOD_SECRET_GITHUB_TOKEN`.
 - Use `scripts/cuda-run` / `scripts/cuda-python` on NVIDIA RunPod hosts.
+- Reusable private RunPod template: `dead-keys-census-cuda` (id `1zpm2v05rn`); see Template-Based Pod Provisioning below.
 
 ## Query Pod State
 
@@ -38,8 +39,8 @@ ACTION: Run a GraphQL query using the local `RUNPOD_API_KEY` and inspect only no
 ```bash
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
   -H 'content-type: application/json' \
-  --data-binary '{"query":"query { myself { pods { id name desiredStatus runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName cpuCount memoryTotal secureCloud machineType } } } }"}' \
-  | jq '.data.myself.pods[] | select(.name=="dead-weight" or .name=="dead-weight-migration" or .name=="dead-weight-migration-2")'
+  --data-binary '{"query":"query { myself { pods { id name desiredStatus imageName containerDiskInGb volumeInGb volumeMountPath ports runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName cpuCount memoryTotal secureCloud machineType } } } }"}' \
+  | jq '.data.myself.pods[] | select(.name|test("dead-weight"))'
 ```
 
 OUTPUT: Pod id, name, desired status, runtime ports if running, and GPU/machine metadata.
@@ -336,6 +337,89 @@ ERROR RECOVERY:
 - If no compatible offering exists in the volume datacenter, STOP and report the unsatisfied constraints; do not create a pod in another datacenter.
 - If the schema rejects the mutation, introspect/check current RunPod docs and adjust field names while preserving the same-datacenter and network-volume-at-creation invariants.
 - If pod starts without the volume mounted, stop investigation before installing dependencies; report the mismatch and do not download models to ephemeral disk.
+
+## Template-Based Pod Provisioning
+
+TRIGGER: A replacement pod is needed and the project's reusable RunPod template is the preferred provisioning path (faster and less error-prone than re-specifying image, disk, ports, and mount path each time).
+
+CONTEXT:
+
+- Private template name: `dead-keys-census-cuda`
+- Template id: `1zpm2v05rn`
+- Verified 2026-07-12 by deploying `dead-keys-template-smoke-delete-me` from the template on an L4, then stopping/deleting the smoke pod.
+- The template captures reusable pod configuration only: CUDA PyTorch image, 30 GB container disk, NVIDIA category, `/workspace` mount path, and `22/tcp` SSH port. It does NOT snapshot network-volume contents or Git checkout state.
+- Keep heavyweight model/package caches and generated results on the attached network volume; run `./scripts/runpod-persistent-cache-setup` after first SSH into a pod deployed from the template.
+
+ACTION — Create or recreate the template via REST API:
+
+```bash
+cat > /tmp/deadkeys_template.json <<'JSON'
+{
+  "category": "NVIDIA",
+  "containerDiskInGb": 30,
+  "dockerEntrypoint": [],
+  "dockerStartCmd": [],
+  "env": {},
+  "imageName": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+  "isPublic": false,
+  "isServerless": false,
+  "name": "dead-keys-census-cuda",
+  "ports": ["22/tcp"],
+  "readme": "Dead Keys Census CUDA pod template: base PyTorch CUDA image, SSH TCP, /workspace network-volume mount expected at deploy time. Keep model/cache/venv data on the network volume, not in the template.",
+  "volumeInGb": 0,
+  "volumeMountPath": "/workspace"
+}
+JSON
+
+curl -sS --request POST \
+  --url https://rest.runpod.io/v1/templates \
+  --header "Authorization: Bearer $RUNPOD_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --data @/tmp/deadkeys_template.json \
+  | jq '{id,name,imageName,category,containerDiskInGb,volumeInGb,volumeMountPath,ports}'
+```
+
+ACTION — Deploy a replacement pod from the template:
+
+```bash
+cat > /tmp/deadkeys_template_pod.json <<'JSON'
+{
+  "name": "dead-weight-migration-N",
+  "templateId": "1zpm2v05rn",
+  "gpuTypeIds": ["NVIDIA L4"],
+  "gpuCount": 1,
+  "cloudType": "SECURE"
+}
+JSON
+
+curl -sS --request POST \
+  --url https://rest.runpod.io/v1/pods \
+  --header "Authorization: Bearer $RUNPOD_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --data @/tmp/deadkeys_template_pod.json \
+  | jq '{id,name,desiredStatus,imageName,templateId,gpuCount,machineId}'
+```
+
+VERIFY: Query pod state (see Query Pod State) and confirm the new pod is running with the expected image and an attached `/workspace` volume; then run SSH discovery, persistent cache setup, and a CUDA smoke test as in the Replacement Pod / Migration section.
+
+ACTION — Stop and delete a smoke or throwaway pod immediately when no longer needed:
+
+```bash
+curl -sS --request POST \
+  --url "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID/stop" \
+  --header "Authorization: Bearer $RUNPOD_API_KEY" \
+  | jq '{id,name,desiredStatus}'
+
+curl -sS --request DELETE \
+  --url https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID \
+  --header "Authorization: Bearer $RUNPOD_API_KEY"
+```
+
+ERROR RECOVERY:
+
+- If a pod deployed from the template comes up without the network volume mounted, STOP before installing dependencies or downloading models; the template only sets the mount path, the volume itself must be available and attachable at deploy time in the chosen datacenter.
+- If the REST endpoint or field names are rejected, introspect the current RunPod REST docs and adjust while preserving the `templateId` + `cloudType: SECURE` + GPU type invariants.
+- Do not leave smoke pods running; stop and delete them in the same session that created them.
 
 ## Reporting Template
 

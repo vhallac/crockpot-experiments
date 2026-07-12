@@ -139,8 +139,8 @@ RunPod API helpers:
 # Query non-secret pod state for original and migration pods
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
   -H 'content-type: application/json' \
-  --data-binary '{"query":"query { myself { pods { id name desiredStatus runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName cpuCount memoryTotal secureCloud machineType } } } }"}' \
-  | jq '.data.myself.pods[] | select(.name=="dead-weight" or .name=="dead-weight-migration")'
+  --data-binary '{"query":"query { myself { pods { id name desiredStatus imageName containerDiskInGb volumeInGb volumeMountPath ports runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName cpuCount memoryTotal secureCloud machineType } } } }"}' \
+  | jq '.data.myself.pods[] | select(.name|test("dead-weight"))'
 
 # Resume migration pod
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
