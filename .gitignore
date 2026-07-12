@@ -9,3 +9,6 @@ outputs/
 
 # Local caches
 .cache/
+
+# my temp files
+temp/
