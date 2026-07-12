@@ -12,7 +12,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from phase1.common.loading import iter_heads, load_model, sanity_check
+from phase1.common.loading import MODEL_IDS, iter_heads, load_model, sanity_check
 from phase1.common.spectra import dead_fraction
 
 EPSILONS = (0.01, 0.05, 0.1, 0.5, 1.0)
@@ -63,6 +63,8 @@ def hidden_inputs(lm, input_ids: torch.Tensor, max_tokens: int) -> dict[int, tor
         modules = [block.attn.c_attn for block in model.transformer.h]
     elif lm.tag.startswith("pythia"):
         modules = [layer.attention.query_key_value for layer in model.gpt_neox.layers]
+    elif lm.tag in {"qwen25", "qwen3", "openllama7"}:
+        modules = [layer.self_attn.q_proj for layer in model.model.layers]
     else:
         raise NotImplementedError(f"Phase 1.5 hidden capture not implemented for {lm.tag}")
 
@@ -97,11 +99,14 @@ def decompose_heads(lm, *, limit_layers: int | None = None, limit_heads: int | N
             ln = lm.model.transformer.h[hs.layer].ln_1
         elif lm.tag.startswith("pythia"):
             ln = lm.model.gpt_neox.layers[hs.layer].input_layernorm
+        elif lm.tag in {"qwen25", "qwen3", "openllama7"}:
+            ln = lm.model.model.layers[hs.layer].input_layernorm
         else:
             raise NotImplementedError(f"Phase 1.5 decomposition not implemented for {lm.tag}")
         gamma = ln.weight.detach().to(device=device, dtype=torch.float32)
-        beta = ln.bias.detach().to(device=device, dtype=torch.float32)
-        norm_bound = float(gamma.abs().max().item() * math.sqrt(lm.d_model) + beta.norm().item())
+        ln_bias = getattr(ln, "bias", None)
+        beta_norm = 0.0 if ln_bias is None else float(ln_bias.detach().to(device=device, dtype=torch.float32).norm().item())
+        norm_bound = float(gamma.abs().max().item() * math.sqrt(lm.d_model) + beta_norm)
         out.append(HeadDecomp(
             layer=hs.layer,
             head=hs.head,
@@ -520,7 +525,7 @@ def run(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Phase 1.5 certified and empirical QK truncation")
-    p.add_argument("--model", default="gpt2", choices=["gpt2", "pythia410", "pythia1.4"])
+    p.add_argument("--model", default="gpt2", choices=sorted(MODEL_IDS))
     p.add_argument("--output-dir", default="outputs/phase1_5")
     p.add_argument("--eval-tokens", type=int, default=200_000)
     p.add_argument("--calibration-tokens", type=int, default=10_000)
