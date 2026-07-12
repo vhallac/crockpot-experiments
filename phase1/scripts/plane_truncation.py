@@ -40,13 +40,13 @@ def _module_lists(lm):
     return [layer.self_attn.q_proj for layer in layers], [layer.self_attn.k_proj for layer in layers]
 
 
-def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int | None) -> dict[tuple[int, str], torch.Tensor]:
+def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int | None, forward_tokens: int) -> dict[tuple[int, str], torch.Tensor]:
     """Capture post-q_norm/k_norm, pre-RoPE q/k activations for Qwen-style models."""
     if lm.tag != "qwen3":
         raise NotImplementedError("plane truncation task is currently registered for qwen3 only")
     model = lm.model
     device = next(model.parameters()).device
-    max_len = int(getattr(model.config, "max_position_embeddings", 4096))
+    max_len = min(int(getattr(model.config, "max_position_embeddings", 4096)), forward_tokens)
     qs, ks = _module_lists(lm)
     layers = model.model.layers
     n_layers = min(lm.n_layers, limit_layers or lm.n_layers)
@@ -173,10 +173,10 @@ def zero_planes_inplace(lm, plan: pd.DataFrame, *, epsilon: float | None = None,
         layer.self_attn.k_proj.weight.data.mul_(k_mask)
 
 
-def perplexity(model, ids: torch.Tensor, stride: int) -> float:
+def perplexity(model, ids: torch.Tensor, stride: int, forward_tokens: int) -> float:
     losses = []
     weights = []
-    max_len = int(getattr(model.config, "max_position_embeddings", 4096))
+    max_len = min(int(getattr(model.config, "max_position_embeddings", 4096)), forward_tokens)
     device = next(model.parameters()).device
     with torch.inference_mode():
         for start in range(0, max(1, len(ids) - 1), stride):
@@ -208,7 +208,7 @@ def run(args: argparse.Namespace) -> None:
     ids = get_text(lm.tokenizer, max(args.eval_tokens, args.calibration_tokens))
     if args.eval_tokens < 200_000 and not args.allow_smoke_under_200k:
         raise RuntimeError("Task 1 requires >=200k eval tokens; pass --allow-smoke-under-200k for smoke tests")
-    captures = capture_qk_norms(lm, ids[: args.calibration_tokens], args.calibration_tokens, args.limit_layers)
+    captures = capture_qk_norms(lm, ids[: args.calibration_tokens], args.calibration_tokens, args.limit_layers, args.forward_tokens)
     plan = select_planes(lm, captures, tuple(args.epsilons), args.observed_tokens)
     if not bool(plan["ok"].all()):
         bad = plan[~plan["ok"]].head()
@@ -216,13 +216,13 @@ def run(args: argparse.Namespace) -> None:
     plan.to_csv(out / "plane_truncation_qwen3.csv", index=False)
 
     eval_ids = ids[: args.eval_tokens]
-    base_ppl = perplexity(lm.model, eval_ids, args.stride)
+    base_ppl = perplexity(lm.model, eval_ids, args.stride, args.forward_tokens)
     ppl_rows = [{"mode": "base", "label": "base", "baseline_ppl": base_ppl, "truncated_ppl": base_ppl, "ppl_delta": 0.0, "eval_tokens": len(eval_ids)}]
 
     for eps in args.epsilons:
         lm_eval = copy.deepcopy(lm)
         zero_planes_inplace(lm_eval, plan, epsilon=eps, seed=args.seed)
-        p = perplexity(lm_eval.model, eval_ids, args.stride)
+        p = perplexity(lm_eval.model, eval_ids, args.stride, args.forward_tokens)
         ppl_rows.append({"mode": "certified", "label": f"eps={eps}", "epsilon": eps, "baseline_ppl": base_ppl, "truncated_ppl": p, "ppl_delta": p - base_ppl, "eval_tokens": len(eval_ids)})
         pd.DataFrame(ppl_rows).to_csv(out / "ppl_planes_qwen3.csv", index=False)
 
@@ -232,7 +232,7 @@ def run(args: argparse.Namespace) -> None:
         for random_control in (False, True):
             lm_eval = copy.deepcopy(lm)
             zero_planes_inplace(lm_eval, plan[plan["epsilon"] == 1.0], fraction=frac, random_control=random_control, seed=args.seed)
-            p = perplexity(lm_eval.model, eval_ids, args.stride)
+            p = perplexity(lm_eval.model, eval_ids, args.stride, args.forward_tokens)
             ppl_rows.append({"mode": "random_control" if random_control else "bound_fraction", "label": f"frac={frac:.3f}", "fraction": frac, "baseline_ppl": base_ppl, "truncated_ppl": p, "ppl_delta": p - base_ppl, "eval_tokens": len(eval_ids)})
             pd.DataFrame(ppl_rows).to_csv(out / "ppl_planes_qwen3.csv", index=False)
 
@@ -258,6 +258,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--calibration-tokens", type=int, default=100_000)
     p.add_argument("--eval-tokens", type=int, default=200_000)
     p.add_argument("--stride", type=int, default=512)
+    p.add_argument("--forward-tokens", type=int, default=1024, help="max tokens per forward pass to fit L4 memory")
     p.add_argument("--observed-tokens", type=int, default=10_000)
     p.add_argument("--epsilons", type=float, nargs="+", default=list(EPSILONS))
     p.add_argument("--fractions", type=float, nargs="+", default=list(FRACTIONS))
