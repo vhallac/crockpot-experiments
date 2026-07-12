@@ -19,9 +19,9 @@ def _rows_for_bands(config, tag: str, d_head: int) -> list[Band]:
     return bands
 
 
-def _compute_one(A: torch.Tensor, B: torch.Tensor, *, samples: int, seed: int, misalign_rotations: int):
-    m = head_metrics(A, B, samples=samples, seed=seed, misalign_rotations=misalign_rotations)
-    rb = random_baseline(A, B, samples=samples, seed=seed + 1000)
+def _compute_one(A: torch.Tensor, B: torch.Tensor, *, samples: int, seed: int, misalign_rotations: int, device: torch.device):
+    m = head_metrics(A, B, samples=samples, seed=seed, misalign_rotations=misalign_rotations, device=device)
+    rb = random_baseline(A, B, samples=samples, seed=seed + 1000, device=device)
     m.dead_frac_random_baseline = rb
     return m
 
@@ -30,7 +30,11 @@ def run(args: argparse.Namespace) -> None:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    lm = load_model(args.model)
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("--device cuda requested, but torch.cuda.is_available() is false")
+    lm = load_model(args.model, device=device)
+    print(f"device {device}")
     sanity = sanity_check(lm, atol=args.atol)
     print(f"sanity {args.model}: max_q_error={sanity['max_q_error']:.3g} max_k_error={sanity['max_k_error']:.3g}")
 
@@ -48,7 +52,7 @@ def run(args: argparse.Namespace) -> None:
             if A.shape[0] < 2 or B.shape[0] < 2:
                 continue
             seed = args.seed + 100_000 * hs.layer + 1000 * hs.head + len(rows)
-            metrics = _compute_one(A, B, samples=args.samples, seed=seed, misalign_rotations=args.misalign_rotations)
+            metrics = _compute_one(A, B, samples=args.samples, seed=seed, misalign_rotations=args.misalign_rotations, device=device)
             prefix = f"l{hs.layer}.h{hs.head}.{band.name}"
             spectra[f"{prefix}.S_A"] = metrics.S_A
             spectra[f"{prefix}.S_B"] = metrics.S_B
@@ -89,8 +93,8 @@ def run(args: argparse.Namespace) -> None:
         if not isinstance(A_list, list):
             continue
         seed = args.seed + 500_000 + 100_000 * layer + 1000 * kv_head + len(band_name)
-        dead, t5 = group_dead_fraction(A_list, B, samples=args.samples, seed=seed)
-        rb = group_random_baseline(A_list, B, samples=args.samples, seed=seed + 1000)
+        dead, t5 = group_dead_fraction(A_list, B, samples=args.samples, seed=seed, device=device)
+        rb = group_random_baseline(A_list, B, samples=args.samples, seed=seed + 1000, device=device)
         rows.append(
             {
                 "layer": layer,
@@ -140,6 +144,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit-heads", type=int)
     p.add_argument("--atol", type=float, default=1e-4)
     p.add_argument("--misalign-rotations", type=int, default=200, help="random orthogonal rotations for misalignment z-score")
+    p.add_argument("--device", default="cpu", help="torch device for model weights and matrix work, e.g. cpu or cuda")
     return p.parse_args()
 
 

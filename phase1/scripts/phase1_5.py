@@ -51,37 +51,55 @@ def get_text(tokenizer, max_tokens: int) -> torch.Tensor:
     return ids[:max_tokens]
 
 
-def gpt2_hidden_inputs(model, input_ids: torch.Tensor, max_tokens: int) -> dict[int, torch.Tensor]:
-    max_len = int(model.config.n_positions)
+def hidden_inputs(lm, input_ids: torch.Tensor, max_tokens: int) -> dict[int, torch.Tensor]:
+    """Capture QKV module inputs for GPT-2/Pythia without forcing CPU compute."""
+    model = lm.model
+    max_len = int(getattr(model.config, "n_positions", getattr(model.config, "max_position_embeddings", 2048)))
     device = next(model.parameters()).device
-    chunks: dict[int, list[torch.Tensor]] = {i: [] for i in range(len(model.transformer.h))}
+    chunks: dict[int, list[torch.Tensor]] = {i: [] for i in range(lm.n_layers)}
+    handles = []
+
+    if lm.tag == "gpt2":
+        modules = [block.attn.c_attn for block in model.transformer.h]
+    elif lm.tag.startswith("pythia"):
+        modules = [layer.attention.query_key_value for layer in model.gpt_neox.layers]
+    else:
+        raise NotImplementedError(f"Phase 1.5 hidden capture not implemented for {lm.tag}")
+
+    for li, module in enumerate(modules):
+        def hook(_module, inputs, _output, li=li):
+            chunks[li].append(inputs[0][0].detach().cpu())
+        handles.append(module.register_forward_hook(hook))
+
     limit = min(max_tokens, input_ids.numel())
-    with torch.no_grad():
-        for start in range(0, limit, max_len):
-            ids = input_ids[start : min(start + max_len, limit)].unsqueeze(0).to(device)
-            pos = torch.arange(ids.shape[1], device=device).unsqueeze(0)
-            hidden = model.transformer.wte(ids) + model.transformer.wpe(pos)
-            for li, block in enumerate(model.transformer.h):
-                x = block.ln_1(hidden)
-                chunks[li].append(x[0].detach().cpu())
-                attn_out, _ = block.attn(x, output_attentions=False)
-                hidden = hidden + attn_out
-                hidden = hidden + block.mlp(block.ln_2(hidden))
-    return {li: torch.cat(parts, dim=0) for li, parts in chunks.items()}
+    try:
+        with torch.no_grad():
+            for start in range(0, limit, max_len):
+                ids = input_ids[start : min(start + max_len, limit)].unsqueeze(0).to(device)
+                model(ids, use_cache=False)
+    finally:
+        for h in handles:
+            h.remove()
+    return {li: torch.cat(parts, dim=0) for li, parts in chunks.items() if parts}
 
 
-def decompose_heads(lm) -> list[HeadDecomp]:
+def decompose_heads(lm, *, limit_layers: int | None = None, limit_heads: int | None = None) -> list[HeadDecomp]:
     out = []
-    for hs in iter_heads(lm):
+    for hs in iter_heads(lm, limit_layers=limit_layers, limit_heads=limit_heads):
         A = hs.A.float().cpu()
         B = hs.B.float().cpu()
         U_A, S_A, Vh_A = torch.linalg.svd(A, full_matrices=False)
         U_B, S_B, Vh_B = torch.linalg.svd(B, full_matrices=False)
         C = torch.diag(S_A) @ (U_A.T @ U_B) @ torch.diag(S_B)
         P, Sig, Vh_C = torch.linalg.svd(C, full_matrices=False)
-        block = lm.model.transformer.h[hs.layer]
-        gamma = block.ln_1.weight.detach().float().cpu()
-        beta = block.ln_1.bias.detach().float().cpu()
+        if lm.tag == "gpt2":
+            ln = lm.model.transformer.h[hs.layer].ln_1
+        elif lm.tag.startswith("pythia"):
+            ln = lm.model.gpt_neox.layers[hs.layer].input_layernorm
+        else:
+            raise NotImplementedError(f"Phase 1.5 decomposition not implemented for {lm.tag}")
+        gamma = ln.weight.detach().float().cpu()
+        beta = ln.bias.detach().float().cpu()
         norm_bound = float(gamma.abs().max().item() * math.sqrt(lm.d_model) + beta.norm().item())
         out.append(HeadDecomp(
             layer=hs.layer,
@@ -367,11 +385,15 @@ def null_model(decomps: list[HeadDecomp], samples: int, dead_samples: int, depth
     return pd.DataFrame(rows)
 
 
-def plot_outputs(out: Path) -> None:
-    trunc = pd.read_csv(out / "truncation_gpt2.csv")
-    ppl = pd.read_csv(out / "ppl_curve_gpt2.csv")
-    null = pd.read_csv(out / "null_model_gpt2.csv")
-    cov = pd.read_csv(out / "covariance_certificate_gpt2.csv")
+def plot_outputs(out: Path, model: str) -> None:
+    trunc = pd.read_csv(out / f"truncation_{model}.csv")
+    ppl_path = out / f"ppl_curve_{model}.csv"
+    null = pd.read_csv(out / f"null_model_{model}.csv")
+    cov = pd.read_csv(out / f"covariance_certificate_{model}.csv")
+
+    if not ppl_path.exists():
+        return
+    ppl = pd.read_csv(ppl_path)
 
     fig, ax = plt.subplots(figsize=(7, 4))
     for mode, df in ppl.groupby("mode"):
@@ -407,17 +429,18 @@ def plot_outputs(out: Path) -> None:
 
 def run(args: argparse.Namespace) -> None:
     out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
-    lm = load_model("gpt2")
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("--device cuda requested, but torch.cuda.is_available() is false")
+    lm = load_model(args.model, device=device)
     print("sanity", sanity_check(lm))
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    lm.model.to(device)
     print(f"device {device}")
     ids = get_text(lm.tokenizer, args.eval_tokens)
-    if ids.numel() < 200_000:
-        raise RuntimeError("Phase 1.5 spec requires >=200k eval tokens")
+    if ids.numel() < 200_000 and not args.allow_smoke_under_200k:
+        raise RuntimeError("Phase 1.5 spec requires >=200k eval tokens; pass --allow-smoke-under-200k for bounded smoke tests")
     cal_ids = ids[: min(args.calibration_tokens, len(ids))]
-    decomps = decompose_heads(lm)
-    hidden = gpt2_hidden_inputs(lm.model, cal_ids, min(args.calibration_tokens, len(cal_ids)))
+    decomps = decompose_heads(lm, limit_layers=args.limit_layers, limit_heads=args.limit_heads)
+    hidden = hidden_inputs(lm, cal_ids, min(args.calibration_tokens, len(cal_ids)))
     observed_hidden = {li: x[: min(args.observed_tokens, x.shape[0])] for li, x in hidden.items()}
 
     trunc_rows = []
@@ -438,17 +461,26 @@ def run(args: argparse.Namespace) -> None:
                 "observed_le_certified": bool(obs <= E + 1e-3),
             })
     trunc_df = pd.DataFrame(trunc_rows)
-    trunc_df.to_csv(out / "truncation_gpt2.csv", index=False)
+    trunc_df.to_csv(out / f"truncation_{args.model}.csv", index=False)
 
     cov_df = covariance_certificate(decomps, hidden, lm.d_head, args.cert_quantile)
-    cov_df.to_csv(out / "covariance_certificate_gpt2.csv", index=False)
+    cov_df.to_csv(out / f"covariance_certificate_{args.model}.csv", index=False)
+
+    if args.skip_ppl or args.model != "gpt2":
+        if args.model != "gpt2" and not args.skip_ppl:
+            print(f"skipping PPL/truncated-attention eval: currently implemented only for gpt2, not {args.model}")
+        null_df = null_model(decomps, samples=args.null_samples, dead_samples=args.null_dead_samples, depths=tuple(args.null_depths), seed=args.seed)
+        null_df.to_csv(out / f"null_model_{args.model}.csv", index=False)
+        plot_outputs(out, args.model)
+        print(f"wrote Phase 1.5 certificate/null outputs to {out}")
+        return
 
     base_ppl = perplexity(lm.model, ids, args.stride)
     ppl_rows = []
 
     def append_ppl(row: dict) -> None:
         ppl_rows.append(row)
-        pd.DataFrame(ppl_rows).to_csv(out / "ppl_curve_gpt2.csv", index=False)
+        pd.DataFrame(ppl_rows).to_csv(out / f"ppl_curve_{args.model}.csv", index=False)
 
     for eps in EPSILONS:
         if np.mean(list(ranks_by_eps[eps].values())) == lm.d_head:
@@ -467,13 +499,14 @@ def run(args: argparse.Namespace) -> None:
     append_ppl(eval_rank_mode("matched_uniform_control", f"r={guided_mean}", fixed_ranks(decomps, guided_mean), base_ppl, ids, args.stride, decomps, lm.d_head, device))
 
     null_df = null_model(decomps, samples=args.null_samples, dead_samples=args.null_dead_samples, depths=tuple(args.null_depths), seed=args.seed)
-    null_df.to_csv(out / "null_model_gpt2.csv", index=False)
-    plot_outputs(out)
+    null_df.to_csv(out / f"null_model_{args.model}.csv", index=False)
+    plot_outputs(out, args.model)
     print(f"wrote Phase 1.5 outputs to {out}")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Phase 1.5 certified and empirical QK truncation for GPT-2")
+    p = argparse.ArgumentParser(description="Phase 1.5 certified and empirical QK truncation")
+    p.add_argument("--model", default="gpt2", choices=["gpt2", "pythia410", "pythia1.4"])
     p.add_argument("--output-dir", default="outputs/phase1_5")
     p.add_argument("--eval-tokens", type=int, default=200_000)
     p.add_argument("--calibration-tokens", type=int, default=10_000)
@@ -485,6 +518,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cert-quantile", type=float, default=0.999)
     p.add_argument("--census", default="outputs/census_gpt2.parquet")
     p.add_argument("--seed", type=int, default=1234)
+    p.add_argument("--device", default="cpu", help="torch device for model/eval work, e.g. cpu or cuda")
+    p.add_argument("--limit-layers", type=int, help="smoke-test limit on layers to decompose")
+    p.add_argument("--limit-heads", type=int, help="smoke-test limit on heads to decompose")
+    p.add_argument("--allow-smoke-under-200k", action="store_true", help="allow bounded smoke tests below the spec's 200k eval-token floor")
+    p.add_argument("--skip-ppl", action="store_true", help="write certificate/null outputs only; useful for non-GPT-2 smoke tests")
     return p.parse_args()
 
 

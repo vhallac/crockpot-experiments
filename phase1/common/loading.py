@@ -42,12 +42,14 @@ class LoadedModel:
     d_head: int
 
 
-def load_model(tag: str) -> LoadedModel:
+def load_model(tag: str, *, device: str | torch.device | None = None) -> LoadedModel:
     if tag not in MODEL_IDS:
         raise ValueError(f"unknown model tag {tag!r}; choose one of {sorted(MODEL_IDS)}")
     hf_id = MODEL_IDS[tag]
     config = AutoConfig.from_pretrained(hf_id)
     model = AutoModelForCausalLM.from_pretrained(hf_id, torch_dtype=torch.float32, low_cpu_mem_usage=True)
+    if device is not None:
+        model.to(torch.device(device))
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(hf_id)
 
@@ -62,7 +64,7 @@ def load_model(tag: str) -> LoadedModel:
 def _bias_slice(bias: torch.Tensor | None, start: int, stop: int) -> torch.Tensor | None:
     if bias is None:
         return None
-    return bias.detach()[start:stop].float().cpu()
+    return bias.detach()[start:stop].float()
 
 
 def iter_heads(lm: LoadedModel, limit_layers: int | None = None, limit_heads: int | None = None) -> Iterable[HeadSpec]:
@@ -70,9 +72,9 @@ def iter_heads(lm: LoadedModel, limit_layers: int | None = None, limit_heads: in
     if tag == "gpt2":
         layers = lm.model.transformer.h
         for li, block in enumerate(layers[: limit_layers or len(layers)]):
-            W = block.attn.c_attn.weight.detach().T.float().cpu()  # [3*d_model, d_model]
+            W = block.attn.c_attn.weight.detach().T.float()  # [3*d_model, d_model]
             bias = getattr(block.attn.c_attn, "bias", None)
-            b = None if bias is None else bias.detach().float().cpu()
+            b = None if bias is None else bias.detach().float()
             Wq, Wk, _ = W.split(lm.d_model, dim=0)
             bq, bk = (None, None) if b is None else b.split(lm.d_model, dim=0)[:2]
             for h in range(min(lm.n_heads, limit_heads or lm.n_heads)):
@@ -84,8 +86,8 @@ def iter_heads(lm: LoadedModel, limit_layers: int | None = None, limit_heads: in
         layers = lm.model.gpt_neox.layers
         for li, layer in enumerate(layers[: limit_layers or len(layers)]):
             qkv = layer.attention.query_key_value
-            W = qkv.weight.detach().float().cpu().view(lm.n_heads, 3, lm.d_head, lm.d_model)
-            b = None if qkv.bias is None else qkv.bias.detach().float().cpu().view(lm.n_heads, 3, lm.d_head)
+            W = qkv.weight.detach().float().view(lm.n_heads, 3, lm.d_head, lm.d_model)
+            b = None if qkv.bias is None else qkv.bias.detach().float().view(lm.n_heads, 3, lm.d_head)
             for h in range(min(lm.n_heads, limit_heads or lm.n_heads)):
                 yield HeadSpec(li, h, h, W[h, 0], W[h, 1], None if b is None else b[h, 0], None if b is None else b[h, 1])
         return
@@ -95,10 +97,10 @@ def iter_heads(lm: LoadedModel, limit_layers: int | None = None, limit_heads: in
         group = lm.n_heads // lm.n_kv_heads
         for li, layer in enumerate(layers[: limit_layers or len(layers)]):
             attn = layer.self_attn
-            Wq = attn.q_proj.weight.detach().float().cpu().view(lm.n_heads, lm.d_head, lm.d_model)
-            Wk = attn.k_proj.weight.detach().float().cpu().view(lm.n_kv_heads, lm.d_head, lm.d_model)
-            bq = None if attn.q_proj.bias is None else attn.q_proj.bias.detach().float().cpu().view(lm.n_heads, lm.d_head)
-            bk = None if attn.k_proj.bias is None else attn.k_proj.bias.detach().float().cpu().view(lm.n_kv_heads, lm.d_head)
+            Wq = attn.q_proj.weight.detach().float().view(lm.n_heads, lm.d_head, lm.d_model)
+            Wk = attn.k_proj.weight.detach().float().view(lm.n_kv_heads, lm.d_head, lm.d_model)
+            bq = None if attn.q_proj.bias is None else attn.q_proj.bias.detach().float().view(lm.n_heads, lm.d_head)
+            bk = None if attn.k_proj.bias is None else attn.k_proj.bias.detach().float().view(lm.n_kv_heads, lm.d_head)
             for h in range(min(lm.n_heads, limit_heads or lm.n_heads)):
                 kv = h // group
                 yield HeadSpec(li, h, kv, Wq[h], Wk[kv], None if bq is None else bq[h], None if bk is None else bk[kv])
@@ -113,12 +115,13 @@ def sanity_check(lm: LoadedModel, *, atol: float = 1e-4) -> dict[str, float]:
     Returns max absolute q/k reconstruction error. The census uses weights only,
     but this catches transposed or incorrectly interleaved head slicing.
     """
+    device = next(lm.model.parameters()).device
     tok = lm.tokenizer("Sanity check for q and k slicing.", return_tensors="pt")
-    input_ids = tok["input_ids"][:, :10]
+    input_ids = tok["input_ids"][:, :10].to(device)
     with torch.no_grad():
         if lm.tag == "gpt2":
             block = lm.model.transformer.h[0]
-            hidden = lm.model.transformer.wte(input_ids) + lm.model.transformer.wpe(torch.arange(input_ids.shape[1]).unsqueeze(0))
+            hidden = lm.model.transformer.wte(input_ids) + lm.model.transformer.wpe(torch.arange(input_ids.shape[1], device=device).unsqueeze(0))
             x = block.ln_1(hidden)
             proj = block.attn.c_attn(x)
             q_ref, k_ref, _ = proj.split(lm.d_model, dim=-1)

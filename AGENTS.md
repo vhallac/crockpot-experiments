@@ -95,7 +95,33 @@ torch.cuda.synchronize()
 print(x.device, x[:3].cpu().tolist())
 PY
 
-./scripts/cuda-run -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+./scripts/cuda-run -m phase1.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --device cuda
+```
+
+Pythia GPU smoke tests on RunPod:
+
+```bash
+# Phase 1 smoke only; do not use full defaults until this shows CUDA use.
+./scripts/cuda-run -m phase1.scripts.census \
+  --model pythia410 --limit-layers 1 --limit-heads 1 \
+  --samples 256 --misalign-rotations 2 --device cuda \
+  --output-dir outputs/smoke_pythia_gpu
+
+# Phase 1.5 Pythia certificate/null smoke only. PPL/truncated-attention eval is
+# currently implemented for GPT-2 only, so Pythia smoke uses --skip-ppl.
+./scripts/cuda-run -m phase1.scripts.phase1_5 \
+  --model pythia410 --limit-layers 1 --limit-heads 1 \
+  --eval-tokens 1024 --calibration-tokens 256 --observed-tokens 128 \
+  --null-samples 2 --null-dead-samples 128 --null-depths 5 \
+  --allow-smoke-under-200k --skip-ppl --device cuda \
+  --output-dir outputs/phase1_5_smoke_pythia_gpu
+```
+
+Verify GPU use during a smoke test from another shell with:
+
+```bash
+nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv
+pgrep -af 'phase1.scripts.(census|phase1_5)|pythia' || true
 ```
 
 CUDA wrapper details:
@@ -103,6 +129,7 @@ CUDA wrapper details:
 - `scripts/cuda-run` sources `~/.dead-keys-census-runpod-env` if present, then creates/uses `DEAD_KEYS_CUDA_VENV` if set; otherwise it falls back to `.venv-cuda`.
 - Override the venv path with `DEAD_KEYS_CUDA_VENV=/path/to/venv`.
 - Override Python with `DEAD_KEYS_CUDA_PYTHON=python3.11` if the pod has multiple Python versions.
+- If a compatible CUDA virtualenv already exists on a pod, use it without reinstalling heavyweight wheels: `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run ...`.
 - The wrapper avoids changing the ROCm `uv` environment used on the local AMD machine.
 
 RunPod API helpers:
@@ -126,6 +153,18 @@ curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphq
 ```
 
 Discovery note: on 2026-07-10, `podResume` for the original `dead-weight` pod failed with `There are not enough free GPUs on the host machine to start this pod`; the replacement `dead-weight-migration` pod was created and configured instead.
+
+### RunPod `dead-weight-migration-2` notes
+
+Verified 2026-07-11:
+
+- Pod name: `dead-weight-migration-2`
+- Pod id: `6r332ke14n1lpx`
+- GPU: NVIDIA L4
+- Public SSH endpoint at verification time: `ssh -p 30002 root@213.173.105.20 -i ~/.ssh/id_ed25519`
+- A compatible CUDA environment existed at `/venv-deadkeys` with CUDA PyTorch; use `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1` to avoid reinstalling multi-GB wheels.
+- A failed install into `/workspace/dead-keys-census-cache/uv` hit `Quota exceeded`; prefer the existing venv above unless intentionally rebuilding caches.
+
 
 ### ROCm PyTorch on AMD Radeon 890M
 

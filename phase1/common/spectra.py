@@ -60,6 +60,9 @@ def misalignment_z_score(S_A: torch.Tensor, S_B: torch.Tensor, raw: torch.Tensor
     """Spec §3.2 random-orthogonal baseline for the raw misalignment index."""
     if rotations <= 1:
         return float("nan")
+    S_A = S_A.detach().cpu()
+    S_B = S_B.detach().cpu()
+    raw = raw.detach().cpu()
     d = S_A.numel()
     denom = torch.sum(S_A * S_B).clamp_min(1e-30)
     gen = torch.Generator(device="cpu")
@@ -80,9 +83,10 @@ def misalignment_z_score(S_A: torch.Tensor, S_B: torch.Tensor, raw: torch.Tensor
     return float(((raw - rand.mean()) / std).item())
 
 
-def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, seed: int = 0, misalign_rotations: int = 200) -> HeadMetrics:
-    A = A.detach().to(dtype=torch.float32, device="cpu")
-    B = B.detach().to(dtype=torch.float32, device="cpu")
+def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, seed: int = 0, misalign_rotations: int = 200, device: str | torch.device | None = None) -> HeadMetrics:
+    target = torch.device(device) if device is not None else A.device
+    A = A.detach().to(dtype=torch.float32, device=target)
+    B = B.detach().to(dtype=torch.float32, device=target)
 
     U_A, S_A, _ = torch.linalg.svd(A, full_matrices=False)
     U_B, S_B, _ = torch.linalg.svd(B, full_matrices=False)
@@ -97,11 +101,11 @@ def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, see
     a_soft_basis = U_A[:, soft_idx].contiguous()
 
     return HeadMetrics(
-        S_A=S_A.numpy(),
-        S_B=S_B.numpy(),
-        S_M=S_M.numpy(),
-        U_B_top5=U_B[:, :5].contiguous().numpy(),
-        A_soft_basis=a_soft_basis.numpy(),
+        S_A=S_A.cpu().numpy(),
+        S_B=S_B.cpu().numpy(),
+        S_M=S_M.cpu().numpy(),
+        U_B_top5=U_B[:, :5].contiguous().cpu().numpy(),
+        A_soft_basis=a_soft_basis.cpu().numpy(),
         erank_A=effective_rank(S_A),
         erank_B=effective_rank(S_B),
         erank_M=effective_rank(S_M),
@@ -113,13 +117,14 @@ def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, see
     )
 
 
-def random_baseline(A: torch.Tensor, B: torch.Tensor, *, samples: int, seed: int) -> float:
-    A = A.detach().to(dtype=torch.float32, device="cpu")
-    B = B.detach().to(dtype=torch.float32, device="cpu")
-    gen = torch.Generator(device="cpu")
+def random_baseline(A: torch.Tensor, B: torch.Tensor, *, samples: int, seed: int, device: str | torch.device | None = None) -> float:
+    target = torch.device(device) if device is not None else A.device
+    A = A.detach().to(dtype=torch.float32, device=target)
+    B = B.detach().to(dtype=torch.float32, device=target)
+    gen = torch.Generator(device=target)
     gen.manual_seed(seed)
-    Ar = torch.randn(A.shape, generator=gen, dtype=torch.float32)
-    Br = torch.randn(B.shape, generator=gen, dtype=torch.float32)
+    Ar = torch.randn(A.shape, generator=gen, dtype=torch.float32, device=target)
+    Br = torch.randn(B.shape, generator=gen, dtype=torch.float32, device=target)
     Ar = Ar * (A.norm() / Ar.norm().clamp_min(1e-30))
     Br = Br * (B.norm() / Br.norm().clamp_min(1e-30))
     U_Br, S_Br, _ = torch.linalg.svd(Br, full_matrices=False)
@@ -127,10 +132,11 @@ def random_baseline(A: torch.Tensor, B: torch.Tensor, *, samples: int, seed: int
     return dead
 
 
-def group_dead_fraction(A_list: list[torch.Tensor], B: torch.Tensor, *, samples: int, seed: int) -> tuple[float, float]:
+def group_dead_fraction(A_list: list[torch.Tensor], B: torch.Tensor, *, samples: int, seed: int, device: str | torch.device | None = None) -> tuple[float, float]:
     """GQA dead fraction: key direction must be weak for every query head reader."""
-    A_list = [A.detach().to(dtype=torch.float32, device="cpu") for A in A_list]
-    B = B.detach().to(dtype=torch.float32, device="cpu")
+    target = torch.device(device) if device is not None else B.device
+    A_list = [A.detach().to(dtype=torch.float32, device=target) for A in A_list]
+    B = B.detach().to(dtype=torch.float32, device=target)
     U_B, S_B, _ = torch.linalg.svd(B, full_matrices=False)
     d_head = B.shape[0]
     baseline_dirs = _unit_random(samples, d_head, B.device, seed)
@@ -143,16 +149,17 @@ def group_dead_fraction(A_list: list[torch.Tensor], B: torch.Tensor, *, samples:
     return float(dead.item()), float(t5.item())
 
 
-def group_random_baseline(A_list: list[torch.Tensor], B: torch.Tensor, *, samples: int, seed: int) -> float:
-    gen = torch.Generator(device="cpu")
+def group_random_baseline(A_list: list[torch.Tensor], B: torch.Tensor, *, samples: int, seed: int, device: str | torch.device | None = None) -> float:
+    target = torch.device(device) if device is not None else B.device
+    gen = torch.Generator(device=target)
     gen.manual_seed(seed)
     rand_as = []
     for A in A_list:
-        A = A.detach().to(dtype=torch.float32, device="cpu")
-        Ar = torch.randn(A.shape, generator=gen, dtype=torch.float32)
+        A = A.detach().to(dtype=torch.float32, device=target)
+        Ar = torch.randn(A.shape, generator=gen, dtype=torch.float32, device=target)
         rand_as.append(Ar * (A.norm() / Ar.norm().clamp_min(1e-30)))
-    B = B.detach().to(dtype=torch.float32, device="cpu")
-    Br = torch.randn(B.shape, generator=gen, dtype=torch.float32)
+    B = B.detach().to(dtype=torch.float32, device=target)
+    Br = torch.randn(B.shape, generator=gen, dtype=torch.float32, device=target)
     Br = Br * (B.norm() / Br.norm().clamp_min(1e-30))
-    dead, _ = group_dead_fraction(rand_as, Br, samples=samples, seed=seed + 17)
+    dead, _ = group_dead_fraction(rand_as, Br, samples=samples, seed=seed + 17, device=target)
     return dead
