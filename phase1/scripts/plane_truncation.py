@@ -40,8 +40,13 @@ def _module_lists(lm):
     return [layer.self_attn.q_proj for layer in layers], [layer.self_attn.k_proj for layer in layers]
 
 
-def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int | None, forward_tokens: int) -> dict[tuple[int, str], torch.Tensor]:
-    """Capture post-q_norm/k_norm, pre-RoPE q/k activations for Qwen-style models."""
+def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int | None, forward_tokens: int, observed_tokens: int) -> dict[tuple[int, str], torch.Tensor]:
+    """Capture compact post-q_norm/k_norm, pre-RoPE calibration statistics.
+
+    Store per-plane norms for all calibration tokens, plus full q/k activations
+    only for the observed-token sanity subset. This keeps the 100k-token Qwen3
+    run within L4 host memory.
+    """
     if lm.tag != "qwen3":
         raise NotImplementedError("plane truncation task is currently registered for qwen3 only")
     model = lm.model
@@ -50,8 +55,12 @@ def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int |
     qs, ks = _module_lists(lm)
     layers = model.model.layers
     n_layers = min(lm.n_layers, limit_layers or lm.n_layers)
-    chunks: dict[tuple[int, str], list[torch.Tensor]] = {(i, "q"): [] for i in range(n_layers)}
-    chunks.update({(i, "k"): [] for i in range(n_layers)})
+    chunks: dict[tuple[int, str], list[torch.Tensor]] = {(i, "q_norms"): [] for i in range(n_layers)}
+    chunks.update({(i, "k_norms"): [] for i in range(n_layers)})
+    chunks.update({(i, "q_obs"): [] for i in range(n_layers)})
+    chunks.update({(i, "k_obs"): [] for i in range(n_layers)})
+    seen = {i: 0 for i in range(n_layers)}
+    obs_limit = min(observed_tokens, max_tokens)
     handles = []
 
     for li in range(n_layers):
@@ -60,11 +69,20 @@ def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int |
 
         def q_hook(_module, _inputs, output, li=li, q_norm=q_norm):
             q = output[0].detach().view(-1, lm.n_heads, lm.d_head).float()
-            chunks[(li, "q")].append(q_norm(q).detach().cpu())
+            q = q_norm(q)
+            chunks[(li, "q_norms")].append(torch.linalg.vector_norm(q.view(q.shape[0], lm.n_heads, lm.d_head // 2, 2), dim=-1).cpu())
+            remain = max(0, obs_limit - seen[li])
+            if remain:
+                chunks[(li, "q_obs")].append(q[:remain].cpu())
 
         def k_hook(_module, _inputs, output, li=li, k_norm=k_norm):
             k = output[0].detach().view(-1, lm.n_kv_heads, lm.d_head).float()
-            chunks[(li, "k")].append(k_norm(k).detach().cpu())
+            k = k_norm(k)
+            chunks[(li, "k_norms")].append(torch.linalg.vector_norm(k.view(k.shape[0], lm.n_kv_heads, lm.d_head // 2, 2), dim=-1).cpu())
+            remain = max(0, obs_limit - seen[li])
+            if remain:
+                chunks[(li, "k_obs")].append(k[:remain].cpu())
+            seen[li] += k.shape[0]
 
         handles.append(qs[li].register_forward_hook(q_hook))
         handles.append(ks[li].register_forward_hook(k_hook))
@@ -79,7 +97,6 @@ def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int |
         for h in handles:
             h.remove()
     return {key: torch.cat(parts, dim=0) for key, parts in chunks.items() if parts}
-
 
 def _observed_plane_dlogit(q: torch.Tensor, k: torch.Tensor, planes: list[int], d_head: int, chunk: int = 256) -> float:
     if not planes:
@@ -102,12 +119,14 @@ def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: t
     group = lm.n_heads // lm.n_kv_heads
     n_planes = lm.d_head // 2
     for li in range(lm.n_layers):
-        if (li, "q") not in captures:
+        if (li, "q_norms") not in captures:
             continue
-        q = captures[(li, "q")].view(-1, lm.n_heads, n_planes, 2)
-        k = captures[(li, "k")].view(-1, lm.n_kv_heads, n_planes, 2)
-        q_p999 = torch.quantile(torch.linalg.vector_norm(q, dim=-1), 0.999, dim=0)
-        k_p999 = torch.quantile(torch.linalg.vector_norm(k, dim=-1), 0.999, dim=0)
+        q_norms = captures[(li, "q_norms")]
+        k_norms = captures[(li, "k_norms")]
+        q_obs = captures[(li, "q_obs")]
+        k_obs = captures[(li, "k_obs")]
+        q_p999 = torch.quantile(q_norms, 0.999, dim=0)
+        k_p999 = torch.quantile(k_norms, 0.999, dim=0)
         for h in range(lm.n_heads):
             kv = h // group
             b = q_p999[h] * k_p999[kv] / math.sqrt(lm.d_head)
@@ -121,7 +140,7 @@ def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: t
                         break
                     total = cand
                     dropped.append(p)
-                observed = _observed_plane_dlogit(q[:observed_tokens, h].reshape(-1, lm.d_head), k[:observed_tokens, kv].reshape(-1, lm.d_head), dropped, lm.d_head)
+                observed = _observed_plane_dlogit(q_obs[:observed_tokens, h].reshape(-1, lm.d_head), k_obs[:observed_tokens, kv].reshape(-1, lm.d_head), dropped, lm.d_head)
                 rows.append({
                     "layer": li,
                     "head": h,
@@ -208,7 +227,7 @@ def run(args: argparse.Namespace) -> None:
     ids = get_text(lm.tokenizer, max(args.eval_tokens, args.calibration_tokens))
     if args.eval_tokens < 200_000 and not args.allow_smoke_under_200k:
         raise RuntimeError("Task 1 requires >=200k eval tokens; pass --allow-smoke-under-200k for smoke tests")
-    captures = capture_qk_norms(lm, ids[: args.calibration_tokens], args.calibration_tokens, args.limit_layers, args.forward_tokens)
+    captures = capture_qk_norms(lm, ids[: args.calibration_tokens], args.calibration_tokens, args.limit_layers, args.forward_tokens, args.observed_tokens)
     plan = select_planes(lm, captures, tuple(args.epsilons), args.observed_tokens)
     if not bool(plan["ok"].all()):
         bad = plan[~plan["ok"]].head()
