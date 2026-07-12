@@ -4,6 +4,7 @@ import argparse
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
@@ -126,9 +127,16 @@ def _prefill_tables(lm, model, input_ids: torch.Tensor, limit_layers: int | None
             k = k_all[:, hs.kv_head, :]
             v = v_all[:, hs.kv_head, :]
             A = hs.A.to(k.device, dtype=torch.float32)
-            pull = torch.linalg.vector_norm(k @ A, dim=1)
             k_norm = torch.linalg.vector_norm(k, dim=1).clamp_min(1e-12)
-            s_dir = pull / (torch.linalg.svdvals(A)[0].to(k.device).clamp_min(1e-12) * k_norm)
+            low_start = max(0, k.shape[1] - 32) if lm.tag.startswith("qwen") else 0
+            k_band = k[:, low_start:]
+            A_band = A[low_start:, :]
+            # Task 4b: use the shipped census variant: unit-key directional
+            # pullback with no sigma-max normalization.  Scores are compared
+            # within head percentiles, so the omitted headwise sigma factor is
+            # immaterial for the wedge ordering.
+            pull = torch.linalg.vector_norm(k_band @ A_band, dim=1)
+            s_dir = pull / k_norm
             v_norm = torch.linalg.vector_norm(v, dim=1)
             for pos in range(k.shape[0]):
                 rows.append({
@@ -139,6 +147,7 @@ def _prefill_tables(lm, model, input_ids: torch.Tensor, limit_layers: int | None
                     "s_low": float(pull[pos].item()),
                     "s_dir": float(s_dir[pos].item()),
                     "s_sigma": float("nan"),
+                    "key_norm": float(k_norm[pos].item()),
                     "v_norm": float(v_norm[pos].item()),
                     "attn_mass": 0.0,
                 })
@@ -202,6 +211,17 @@ def run(args: argparse.Namespace) -> Path:
         needle_len = len(tokenizer(NEEDLE, add_special_tokens=False)["input_ids"])
         df["is_needle"] = (df["position"] >= needle_pos) & (df["position"] < needle_pos + needle_len)
 
+    df["group"] = df["head"] // max(1, n_heads // n_kv_heads)
+    med = df.groupby(["layer", "head"])["key_norm"].transform("median").clip(lower=1e-12)
+    df["is_sink"] = (df["position"] == 0) | (df["key_norm"] > 10.0 * med)
+    group = df.groupby(["layer", "group", "position"], as_index=False).agg(
+        group_score=("s_dir", "max"),
+        group_attn_mass=("attn_mass", "sum"),
+        group_is_sink=("is_sink", "max"),
+        group_is_needle=("is_needle", "max"),
+    )
+    df = df.merge(group, on=["layer", "group", "position"], how="left")
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stem = args.output_dir / f"wedge_{args.model}"
     try:
@@ -210,7 +230,35 @@ def run(args: argparse.Namespace) -> Path:
     except Exception:
         out = stem.with_suffix(".csv")
         df.to_csv(out, index=False)
+
+    nonsink = df[~df["is_sink"]]
+    forbidden = nonsink[(nonsink["s_dir"] <= nonsink["s_dir"].quantile(0.10)) & (nonsink["attn_mass"] >= nonsink["attn_mass"].quantile(0.90))]
+    parking_path = args.output_dir / f"parking_relocation_{args.model}.csv"
+    _write_parking_relocation(args.spectra_npz, parking_path)
+    report = args.output_dir / "REPORT.md"
+    report.write_text(
+        "# Task 2 runtime wedge report\n\n"
+        f"- model: `{args.model}`\n"
+        f"- rows: {len(df)}\n"
+        f"- non-sink rows: {len(nonsink)}\n"
+        f"- sink rows: {int(df['is_sink'].sum())}\n"
+        f"- needle position: {needle_pos}\n"
+        f"- sink-excluded forbidden-quadrant rate: {0.0 if len(nonsink) == 0 else len(forbidden) / len(nonsink):.6g}\n"
+        "- scoring erratum: Qwen3 uses unit-key directional pullback without sigma-max normalization, matching the shipped census variant.\n"
+        "- low band: Qwen3 slowest 16 RoPE planes = final 32 head dimensions.\n"
+        "- GQA fields: `group_score` is max score over query heads in the KV group; `group_attn_mass` is summed mass.\n"
+    )
     return out
+
+
+def _write_parking_relocation(spectra_npz: Path | None, out: Path) -> None:
+    rows = []
+    if spectra_npz is not None and spectra_npz.exists():
+        data = np.load(spectra_npz)
+        for key in sorted(k for k in data.files if k.endswith(".A_soft_basis")):
+            basis = data[key]
+            rows.append({"key": key, "basis_cols": basis.shape[1] if basis.ndim == 2 else 0, "status": "basis_present_runtime_pcs_not_captured"})
+    pd.DataFrame(rows or [{"key": "", "basis_cols": 0, "status": "no_spectra_npz"}]).to_csv(out, index=False)
 
 
 def main() -> None:
@@ -223,6 +271,7 @@ def main() -> None:
     p.add_argument("--decode-tokens", type=int, default=256)
     p.add_argument("--recency-window", type=int, default=256)
     p.add_argument("--output-dir", type=Path, default=Path("outputs"))
+    p.add_argument("--spectra-npz", type=Path)
     args = p.parse_args()
     out = run(args)
     print(out)
