@@ -42,16 +42,17 @@ class LoadedModel:
     d_head: int
 
 
-def load_model(tag: str, *, device: str | torch.device | None = None) -> LoadedModel:
+def load_model(tag: str, *, device: str | torch.device | None = None, revision: str | None = None) -> LoadedModel:
     if tag not in MODEL_IDS:
         raise ValueError(f"unknown model tag {tag!r}; choose one of {sorted(MODEL_IDS)}")
     hf_id = MODEL_IDS[tag]
-    config = AutoConfig.from_pretrained(hf_id)
-    model = AutoModelForCausalLM.from_pretrained(hf_id, torch_dtype=torch.float32, low_cpu_mem_usage=True)
+    rev_kw = {} if revision is None else {"revision": revision}
+    config = AutoConfig.from_pretrained(hf_id, **rev_kw)
+    model = AutoModelForCausalLM.from_pretrained(hf_id, torch_dtype=torch.float32, low_cpu_mem_usage=True, **rev_kw)
     if device is not None:
         model.to(torch.device(device))
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(hf_id)
+    tokenizer = AutoTokenizer.from_pretrained(hf_id, **rev_kw)
 
     d_model = int(getattr(config, "hidden_size", getattr(config, "n_embd", 0)))
     n_heads = int(getattr(config, "num_attention_heads", getattr(config, "n_head", 0)))

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# CPU-only Python environment on NixOS via nix-shell (no CUDA here).
+# Use for weights-only census / Task 3 biography work that does not need a GPU.
+set -euo pipefail
+exec nix-shell -p \
+  python311Packages.torch \
+  python311Packages.transformers \
+  python311Packages.pandas \
+  python311Packages.matplotlib \
+  python311Packages.datasets \
+  python311Packages.pyarrow \
+  python311Packages.accelerate \
+  --run "python3 $*"

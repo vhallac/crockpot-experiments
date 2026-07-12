@@ -12,6 +12,7 @@ class HeadMetrics:
     S_B: np.ndarray
     S_M: np.ndarray
     U_B_top5: np.ndarray
+    U_A_top8: np.ndarray
     A_soft_basis: np.ndarray
     erank_A: float
     erank_B: float
@@ -21,6 +22,7 @@ class HeadMetrics:
     dead_frac: float
     dead_frac_random_baseline: float
     t5_threshold: float
+    park: tuple[float, ...]
 
 
 def effective_rank(s: torch.Tensor) -> float:
@@ -101,11 +103,16 @@ def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, see
     soft_idx = torch.nonzero(a_pullbacks < t5, as_tuple=False).flatten()[:8]
     a_soft_basis = U_A[:, soft_idx].contiguous()
 
+    # park_k = |<U_A[:, k], U_B[:, k]>| : singular-direction alignment (lighthouse parking).
+    k_park = min(8, S_A.numel(), S_B.numel())
+    park = tuple(float(v) for v in torch.sum(U_A[:, :k_park] * U_B[:, :k_park], dim=0).abs().tolist())
+
     return HeadMetrics(
         S_A=S_A.cpu().numpy(),
         S_B=S_B.cpu().numpy(),
         S_M=S_M.cpu().numpy(),
         U_B_top5=U_B[:, :5].contiguous().cpu().numpy(),
+        U_A_top8=U_A[:, :8].contiguous().cpu().numpy(),
         A_soft_basis=a_soft_basis.cpu().numpy(),
         erank_A=effective_rank(S_A),
         erank_B=effective_rank(S_B),
@@ -115,6 +122,7 @@ def head_metrics(A: torch.Tensor, B: torch.Tensor, *, samples: int = 10_000, see
         dead_frac=dead,
         dead_frac_random_baseline=np.nan,
         t5_threshold=t5,
+        park=park,
     )
 
 

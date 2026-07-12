@@ -33,7 +33,7 @@ def run(args: argparse.Namespace) -> None:
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("--device cuda requested, but torch.cuda.is_available() is false")
-    lm = load_model(args.model, device=device)
+    lm = load_model(args.model, device=device, revision=args.revision)
     print(f"device {device}")
     sanity = sanity_check(lm, atol=args.atol)
     print(f"sanity {args.model}: max_q_error={sanity['max_q_error']:.3g} max_k_error={sanity['max_k_error']:.3g}")
@@ -58,6 +58,7 @@ def run(args: argparse.Namespace) -> None:
             spectra[f"{prefix}.S_B"] = metrics.S_B
             spectra[f"{prefix}.S_M"] = metrics.S_M
             spectra[f"{prefix}.U_B_top5"] = metrics.U_B_top5
+            spectra[f"{prefix}.U_A_top8"] = metrics.U_A_top8
             spectra[f"{prefix}.A_soft_basis"] = metrics.A_soft_basis
             rows.append(
                 {
@@ -76,6 +77,11 @@ def run(args: argparse.Namespace) -> None:
                     "dead_frac": metrics.dead_frac,
                     "dead_frac_random_baseline": metrics.dead_frac_random_baseline,
                     "t5_threshold": metrics.t5_threshold,
+                    "park0": metrics.park[0] if metrics.park else float("nan"),
+                    "park1": metrics.park[1] if len(metrics.park) > 1 else float("nan"),
+                    "park2": metrics.park[2] if len(metrics.park) > 2 else float("nan"),
+                    "park3": metrics.park[3] if len(metrics.park) > 3 else float("nan"),
+                    "park4": metrics.park[4] if len(metrics.park) > 4 else float("nan"),
                     "is_group_level": False,
                     "sanity_max_q_error": sanity["max_q_error"],
                     "sanity_max_k_error": sanity["max_k_error"],
@@ -112,6 +118,11 @@ def run(args: argparse.Namespace) -> None:
                 "dead_frac": dead,
                 "dead_frac_random_baseline": rb,
                 "t5_threshold": t5,
+                "park0": np.nan,
+                "park1": np.nan,
+                "park2": np.nan,
+                "park3": np.nan,
+                "park4": np.nan,
                 "is_group_level": True,
                 "sanity_max_q_error": sanity["max_q_error"],
                 "sanity_max_k_error": sanity["max_k_error"],
@@ -120,9 +131,10 @@ def run(args: argparse.Namespace) -> None:
         print(f"{args.model} layer={layer} kv_head={kv_head} band={band_name} group_dead={dead:.3g} group_rand={rb:.3g}")
 
     df = pd.DataFrame(rows)
-    parquet_path = out / f"census_{args.model}.parquet"
-    csv_path = out / f"census_{args.model}.csv"
-    npz_path = out / f"spectra_{args.model}.npz"
+    suffix = f"_{args.revision}" if args.revision else ""
+    parquet_path = out / f"census_{args.model}{suffix}.parquet"
+    csv_path = out / f"census_{args.model}{suffix}.csv"
+    npz_path = out / f"spectra_{args.model}{suffix}.npz"
     try:
         df.to_parquet(parquet_path, index=False)
         print(f"wrote {parquet_path}")
@@ -145,6 +157,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--atol", type=float, default=1e-4)
     p.add_argument("--misalign-rotations", type=int, default=200, help="random orthogonal rotations for misalignment z-score")
     p.add_argument("--device", default="cpu", help="torch device for model weights and matrix work, e.g. cpu or cuda")
+    p.add_argument("--revision", default=None, help="HuggingFace checkpoint revision, e.g. step1000 for Pythia")
     return p.parse_args()
 
 
