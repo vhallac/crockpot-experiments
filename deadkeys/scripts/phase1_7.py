@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 
 from deadkeys.common.loading import load_model
-from deadkeys.scripts.phase1_6 import choose_planes, eval_metrics
+from deadkeys.scripts.phase1_6 import _PlaneMask, choose_planes, eval_metrics
 from deadkeys.scripts.plane_truncation import capture_qk_norms, get_text, select_planes
 
 # Phase 1.7 is the causal "perturb" follow-up.  Removal asks whether Qwen3 can
@@ -44,6 +44,30 @@ def _edit_planes(y: torch.Tensor, *, width: int, selected: dict[int, tuple[int, 
     return out
 
 
+class _PerturbMask:
+    """Toggleable forward hook applying a perturbation to selected RoPE planes.
+
+    The ``enabled`` flag lets ``eval_metrics`` disable the intervention to
+    recompute the unhooked base reference per chunk without accumulating 200k
+    tokens of base logits on the GPU.
+    """
+
+    __slots__ = ("selected", "width", "mode", "alpha", "gen", "enabled")
+
+    def __init__(self, selected, width, mode, alpha, gen):
+        self.selected = selected
+        self.width = width
+        self.mode = mode
+        self.alpha = alpha
+        self.gen = gen
+        self.enabled = True
+
+    def __call__(self, _module, _inputs, output):
+        if not self.enabled:
+            return None
+        return _edit_planes(output, width=self.width, selected=self.selected, mode=self.mode, alpha=self.alpha, generator=self.gen)
+
+
 @contextlib.contextmanager
 def perturbed_planes(lm, choices, *, perturb_mode: str, alpha: float, seed: int):
     layers = lm.model.model.layers
@@ -54,25 +78,28 @@ def perturbed_planes(lm, choices, *, perturb_mode: str, alpha: float, seed: int)
         by_layer_k.setdefault(c.layer, {}).setdefault(c.kv_head, set(c.planes))
         by_layer_k[c.layer][c.kv_head] &= set(c.planes)
     # A CUDA generator keeps additive noise generated on-device and reproducible.
+    # It advances only on enabled (intervened) forwards, so toggling the mask to
+    # recompute the base reference does not perturb the noise stream.
     gen = None
     device = next(lm.model.parameters()).device
     if perturb_mode == "noise":
         gen = torch.Generator(device=device)
         gen.manual_seed(seed)
+    masks: list[_PerturbMask] = []
     handles = []
     for li, layer in enumerate(layers):
         q_sel = by_layer_q.get(li, {})
         k_sel = by_layer_k.get(li, {})
         if q_sel:
-            def q_hook(_module, _inputs, output, q_sel=q_sel):
-                return _edit_planes(output, width=lm.d_head, selected=q_sel, mode=perturb_mode, alpha=alpha, generator=gen)
-            handles.append(layer.self_attn.q_proj.register_forward_hook(q_hook))
+            m = _PerturbMask(q_sel, lm.d_head, perturb_mode, alpha, gen)
+            masks.append(m)
+            handles.append(layer.self_attn.q_proj.register_forward_hook(m))
         if k_sel:
-            def k_hook(_module, _inputs, output, k_sel=k_sel):
-                return _edit_planes(output, width=lm.d_head, selected=k_sel, mode=perturb_mode, alpha=alpha, generator=gen)
-            handles.append(layer.self_attn.k_proj.register_forward_hook(k_hook))
+            m = _PerturbMask(k_sel, lm.d_head, perturb_mode, alpha, gen)
+            masks.append(m)
+            handles.append(layer.self_attn.k_proj.register_forward_hook(m))
     try:
-        yield
+        yield masks
     finally:
         for h in handles:
             h.remove()
@@ -93,7 +120,7 @@ def run(args: argparse.Namespace) -> None:
     plan = select_planes(lm, captures, tuple(args.epsilons), args.observed_tokens, device=device)
     plan.to_csv(out / "phase1_7_plane_selection_qwen3.csv", index=False)
     eval_ids = ids[:args.eval_tokens]
-    base_ppl, base_logits, _ = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens)
+    base_ppl, _ = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens)
     rows = [{"condition": "base", "subspace": "base", "perturbation": "none", "fraction": 0.0, "alpha": 0.0, "ppl": base_ppl, "ppl_delta": 0.0, "kl": 0.0, "max_logit_delta": 0.0, "top1_agreement": 1.0}]
     for frac in args.fractions:
         for subspace in ("dead", "random", "live"):
@@ -101,8 +128,8 @@ def run(args: argparse.Namespace) -> None:
             for perturb_mode in args.perturbations:
                 alphas = args.alphas if perturb_mode == "noise" else [1.0]
                 for alpha in alphas:
-                    with perturbed_planes(lm, choices, perturb_mode=perturb_mode, alpha=alpha, seed=args.seed):
-                        ppl, _, drift = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens, base_logits=base_logits)
+                    with perturbed_planes(lm, choices, perturb_mode=perturb_mode, alpha=alpha, seed=args.seed) as masks:
+                        ppl, drift = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens, masks=masks)
                     rows.append({"condition": f"perturb_{subspace}", "subspace": subspace, "perturbation": perturb_mode, "fraction": frac, "alpha": alpha, "ppl": ppl, "ppl_delta": ppl - base_ppl, **drift})
                     pd.DataFrame(rows).to_csv(out / "phase1_7_perturbation_qwen3.csv", index=False)
     print(f"wrote Phase 1.7 outputs to {out}")

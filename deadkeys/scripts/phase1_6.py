@@ -76,6 +76,32 @@ def choose_planes(lm, captures, *, mode: str, fraction: float, seed: int, device
     return choices
 
 
+class _PlaneMask:
+    """Toggleable forward hook that zeroes selected 2D RoPE planes.
+
+    The ``enabled`` flag lets ``eval_metrics`` momentarily disable the
+    intervention to recompute the unhooked (base) reference logits for the same
+    chunk, so base logits never need to be accumulated across the whole eval
+    set (which would be ~242 GB for 200k Qwen3 tokens and OOM a 22 GB GPU).
+    """
+
+    __slots__ = ("selected", "width", "enabled")
+
+    def __init__(self, selected: dict[int, tuple[int, ...] | set[int]], width: int):
+        self.selected = selected  # head (or kv_head) -> planes
+        self.width = width
+        self.enabled = True
+
+    def __call__(self, _module, _inputs, output):
+        if not self.enabled:
+            return None
+        y = output.clone()
+        for head, planes in self.selected.items():
+            for p in planes:
+                y[..., head * self.width + 2 * p : head * self.width + 2 * p + 2] = 0
+        return y
+
+
 @contextlib.contextmanager
 def removed_planes(lm, choices: list[PlaneChoice]):
     layers = lm.model.model.layers
@@ -87,40 +113,41 @@ def removed_planes(lm, choices: list[PlaneChoice]):
         # selected it; this avoids over-removing shared keys for one query head.
         by_layer_k.setdefault(c.layer, {}).setdefault(c.kv_head, set(c.planes))
         by_layer_k[c.layer][c.kv_head] &= set(c.planes)
+    masks: list[_PlaneMask] = []
     handles = []
     for li, layer in enumerate(layers):
         q_sel = by_layer_q.get(li, {})
         k_sel = by_layer_k.get(li, {})
         if q_sel:
-            def q_hook(_module, _inputs, output, q_sel=q_sel):
-                y = output.clone()
-                for h, planes in q_sel.items():
-                    for p in planes:
-                        y[..., h * lm.d_head + 2 * p : h * lm.d_head + 2 * p + 2] = 0
-                return y
-            handles.append(layer.self_attn.q_proj.register_forward_hook(q_hook))
+            m = _PlaneMask(q_sel, lm.d_head)
+            masks.append(m)
+            handles.append(layer.self_attn.q_proj.register_forward_hook(m))
         if k_sel:
-            def k_hook(_module, _inputs, output, k_sel=k_sel):
-                y = output.clone()
-                for kv, planes in k_sel.items():
-                    for p in planes:
-                        y[..., kv * lm.d_head + 2 * p : kv * lm.d_head + 2 * p + 2] = 0
-                return y
-            handles.append(layer.self_attn.k_proj.register_forward_hook(k_hook))
+            m = _PlaneMask(k_sel, lm.d_head)
+            masks.append(m)
+            handles.append(layer.self_attn.k_proj.register_forward_hook(m))
     try:
-        yield
+        yield masks
     finally:
         for h in handles:
             h.remove()
 
 
-def eval_metrics(model, ids: torch.Tensor, *, stride: int, forward_tokens: int, base_logits: list[torch.Tensor] | None = None):
-    losses, weights, logits_out = [], [], []
+def eval_metrics(model, ids: torch.Tensor, *, stride: int, forward_tokens: int, masks: list[_PlaneMask] | None = None):
+    """Streaming PPL (+ optional KL/top1/max_abs drift vs the unhooked base).
+
+    No logits are accumulated across chunks.  When ``masks`` is given the
+    intervention is active for the main forward; the base reference for the same
+    chunk is recomputed with the masks temporarily disabled, so only one chunk's
+    logits (plus its reference) are resident at any instant.  This is what lets
+    the 200k-token Qwen3 run fit on a 22 GB GPU.
+    """
+    losses, weights = [], []
     kls, max_abs, top1 = [], [], []
     max_len = min(int(getattr(model.config, "max_position_embeddings", 4096)), forward_tokens)
     device = next(model.parameters()).device
+    drift = masks is not None
     with torch.inference_mode():
-        idx = 0
         for start in range(0, max(1, len(ids) - 1), stride):
             end = min(start + max_len, len(ids))
             chunk = ids[start:end].unsqueeze(0).to(device)
@@ -131,18 +158,21 @@ def eval_metrics(model, ids: torch.Tensor, *, stride: int, forward_tokens: int, 
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), labels.reshape(-1), reduction="mean")
             n = int(labels.numel())
             losses.append(float(loss.item()) * n); weights.append(n)
-            if base_logits is None:
-                logits_out.append(logits.detach())
-            else:
-                ref = base_logits[idx].to(device)
+            if drift:
+                for m in masks:
+                    m.enabled = False
+                ref = model(chunk, use_cache=False).logits[:, :-1].float()
+                for m in masks:
+                    m.enabled = True
                 kls.append(float(F.kl_div(F.log_softmax(logits, -1), F.softmax(ref, -1), reduction="batchmean").item()))
                 max_abs.append(float((logits - ref).abs().max().item()))
                 top1.append(float((logits.argmax(-1) == ref.argmax(-1)).float().mean().item()))
-            idx += 1
+                del ref
             if end == len(ids):
                 break
     ppl = float(math.exp(sum(losses) / sum(weights))) if weights else float("nan")
-    return ppl, logits_out, {"kl": sum(kls) / len(kls) if kls else 0.0, "max_logit_delta": max(max_abs) if max_abs else 0.0, "top1_agreement": sum(top1) / len(top1) if top1 else 1.0}
+    drift_stats = {"kl": sum(kls) / len(kls) if kls else 0.0, "max_logit_delta": max(max_abs) if max_abs else 0.0, "top1_agreement": sum(top1) / len(top1) if top1 else 1.0}
+    return ppl, drift_stats
 
 
 def run(args: argparse.Namespace) -> None:
@@ -160,13 +190,13 @@ def run(args: argparse.Namespace) -> None:
     plan = select_planes(lm, captures, tuple(args.epsilons), args.observed_tokens, device=device)
     plan.to_csv(out / "phase1_6_plane_selection_qwen3.csv", index=False)
     eval_ids = ids[:args.eval_tokens]
-    base_ppl, base_logits, _ = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens)
+    base_ppl, _ = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens)
     rows = [{"condition": "base", "fraction": 0.0, "ppl": base_ppl, "ppl_delta": 0.0, "kl": 0.0, "max_logit_delta": 0.0, "top1_agreement": 1.0}]
     for frac in args.fractions:
         for mode in ("dead", "random", "live"):
             choices = choose_planes(lm, captures, mode=mode, fraction=frac, seed=args.seed, device=device)
-            with removed_planes(lm, choices):
-                ppl, _, drift = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens, base_logits=base_logits)
+            with removed_planes(lm, choices) as masks:
+                ppl, drift = eval_metrics(lm.model, eval_ids, stride=args.stride, forward_tokens=args.forward_tokens, masks=masks)
             rows.append({"condition": f"remove_{mode}", "fraction": frac, "ppl": ppl, "ppl_delta": ppl - base_ppl, **drift})
             pd.DataFrame(rows).to_csv(out / "phase1_6_removal_qwen3.csv", index=False)
     print(f"wrote Phase 1.6 outputs to {out}")
