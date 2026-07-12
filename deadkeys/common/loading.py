@@ -143,7 +143,7 @@ def sanity_check(lm: LoadedModel, *, atol: float = 1e-4) -> dict[str, float]:
                 q_ref = attn.q_norm(q_ref)
             if hasattr(attn, "k_norm"):
                 k_ref = attn.k_norm(k_ref)
-            q_ref = q_ref.reshape(1, input_ids.shape[1], lm.d_model)
+            q_ref = q_ref.reshape(1, input_ids.shape[1], lm.n_heads * lm.d_head)
             k_ref = k_ref.reshape(1, input_ids.shape[1], lm.n_kv_heads * lm.d_head)
 
         max_q = 0.0
