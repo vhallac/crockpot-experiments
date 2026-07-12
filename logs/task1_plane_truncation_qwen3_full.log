@@ -1,0 +1,4 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/311 [00:00<?, ?it/s]Loading weights:  14%|█▍        | 44/311 [00:00<00:00, 355.02it/s]Loading weights:  36%|███▌      | 112/311 [00:00<00:00, 528.72it/s]Loading weights:  54%|█████▎    | 167/311 [00:00<00:00, 536.73it/s]Loading weights:  85%|████████▍ | 263/311 [00:00<00:00, 697.78it/s]Loading weights: 100%|██████████| 311/311 [00:00<00:00, 707.91it/s]
+wrote Task 1 outputs to outputs/task1_plane_truncation_qwen3_full
