@@ -101,12 +101,15 @@ def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int |
             h.remove()
     return {key: torch.cat(parts, dim=0) for key, parts in chunks.items() if parts}
 
-def _observed_plane_norm_gate(q: torch.Tensor, k: torch.Tensor, planes: list[int], d_head: int, certified_sum: float, chunk: int = 256) -> tuple[float, float]:
+def _observed_plane_norm_gate(q: torch.Tensor, k: torch.Tensor, planes: list[int], d_head: int, certified_sum: float, chunk: int = 256, device: torch.device | None = None) -> tuple[float, float]:
     """Return max and violation rate for the rotation-safe dropped-plane norm bound."""
     if not planes:
         return 0.0, 0.0
-    q_planes = q.float().view(q.shape[0], d_head // 2, 2)[:, planes]
-    k_planes = k.float().view(k.shape[0], d_head // 2, 2)[:, planes]
+    target = device or q.device
+    q = q.to(device=target, dtype=torch.float32, non_blocking=True)
+    k = k.to(device=target, dtype=torch.float32, non_blocking=True)
+    q_planes = q.view(q.shape[0], d_head // 2, 2)[:, planes]
+    k_planes = k.view(k.shape[0], d_head // 2, 2)[:, planes]
     q_norms = torch.linalg.vector_norm(q_planes, dim=-1)
     k_norms = torch.linalg.vector_norm(k_planes, dim=-1)
     max_val = 0.0
@@ -121,13 +124,16 @@ def _observed_plane_norm_gate(q: torch.Tensor, k: torch.Tensor, planes: list[int
     return max_val, violations / total_pairs if total_pairs else 0.0
 
 
-def sink_diagnostics(lm, captures: dict[tuple[int, str], torch.Tensor]) -> pd.DataFrame:
+def sink_diagnostics(lm, captures: dict[tuple[int, str], torch.Tensor], device: torch.device | None = None) -> pd.DataFrame:
     rows = []
+    target = device or next(lm.model.parameters()).device
     for li in range(lm.n_layers):
         if (li, "k_norms") not in captures or (li, "k_sink_norms") not in captures:
             continue
-        median = captures[(li, "k_norms")].median(dim=0).values
-        sink = captures[(li, "k_sink_norms")].amax(dim=0)
+        k_norms = captures[(li, "k_norms")].to(device=target, dtype=torch.float32, non_blocking=True)
+        k_sink_norms = captures[(li, "k_sink_norms")].to(device=target, dtype=torch.float32, non_blocking=True)
+        median = k_norms.median(dim=0).values
+        sink = k_sink_norms.amax(dim=0)
         for kv in range(lm.n_kv_heads):
             for p in range(lm.d_head // 2):
                 med = float(median[kv, p].item())
@@ -143,15 +149,16 @@ def sink_diagnostics(lm, captures: dict[tuple[int, str], torch.Tensor]) -> pd.Da
     return pd.DataFrame(rows)
 
 
-def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: tuple[float, ...], observed_tokens: int) -> pd.DataFrame:
+def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: tuple[float, ...], observed_tokens: int, device: torch.device | None = None) -> pd.DataFrame:
     rows = []
+    target = device or next(lm.model.parameters()).device
     group = lm.n_heads // lm.n_kv_heads
     n_planes = lm.d_head // 2
     for li in range(lm.n_layers):
         if (li, "q_norms") not in captures:
             continue
-        q_norms = captures[(li, "q_norms")]
-        k_norms = captures[(li, "k_norms")]
+        q_norms = captures[(li, "q_norms")].to(device=target, dtype=torch.float32, non_blocking=True)
+        k_norms = captures[(li, "k_norms")].to(device=target, dtype=torch.float32, non_blocking=True)
         q_obs = captures[(li, "q_obs")]
         k_obs = captures[(li, "k_obs")]
         q_p999 = torch.quantile(q_norms, 0.999, dim=0)
@@ -172,7 +179,7 @@ def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: t
                         break
                     total = cand
                     dropped.append(p)
-                observed, violation_rate = _observed_plane_norm_gate(q_obs[:observed_tokens, h].reshape(-1, lm.d_head), k_obs[:observed_tokens, kv].reshape(-1, lm.d_head), dropped, lm.d_head, total)
+                observed, violation_rate = _observed_plane_norm_gate(q_obs[:observed_tokens, h].reshape(-1, lm.d_head), k_obs[:observed_tokens, kv].reshape(-1, lm.d_head), dropped, lm.d_head, total, device=target)
                 rows.append({
                     "layer": li,
                     "head": h,
@@ -261,12 +268,12 @@ def run(args: argparse.Namespace) -> None:
     if args.eval_tokens < 200_000 and not args.allow_smoke_under_200k:
         raise RuntimeError("Task 1 requires >=200k eval tokens; pass --allow-smoke-under-200k for smoke tests")
     captures = capture_qk_norms(lm, ids[: args.calibration_tokens], args.calibration_tokens, args.limit_layers, args.forward_tokens, args.observed_tokens)
-    plan = select_planes(lm, captures, tuple(args.epsilons), args.observed_tokens)
+    plan = select_planes(lm, captures, tuple(args.epsilons), args.observed_tokens, device=device)
     if not bool(plan["ok"].all()):
         bad = plan[~plan["ok"]].head()
         raise RuntimeError(f"observed dropped-plane norm violation rate exceeded gate; first failures:\n{bad}")
     plan.to_csv(out / "plane_truncation_qwen3.csv", index=False)
-    sink_diagnostics(lm, captures).to_csv(out / "sink_diagnostics_qwen3.csv", index=False)
+    sink_diagnostics(lm, captures, device=device).to_csv(out / "sink_diagnostics_qwen3.csv", index=False)
 
     eval_ids = ids[: args.eval_tokens]
     base_ppl = perplexity(lm.model, eval_ids, args.stride, args.forward_tokens)
