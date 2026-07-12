@@ -136,8 +136,15 @@ def sanity_check(lm: LoadedModel, *, atol: float = 1e-4) -> dict[str, float]:
             layer = lm.model.model.layers[0]
             hidden = lm.model.model.embed_tokens(input_ids)
             x = layer.input_layernorm(hidden)
-            q_ref = layer.self_attn.q_proj(x)
-            k_ref = layer.self_attn.k_proj(x)
+            attn = layer.self_attn
+            q_ref = attn.q_proj(x).view(1, input_ids.shape[1], lm.n_heads, lm.d_head)
+            k_ref = attn.k_proj(x).view(1, input_ids.shape[1], lm.n_kv_heads, lm.d_head)
+            if hasattr(attn, "q_norm"):
+                q_ref = attn.q_norm(q_ref)
+            if hasattr(attn, "k_norm"):
+                k_ref = attn.k_norm(k_ref)
+            q_ref = q_ref.reshape(1, input_ids.shape[1], lm.d_model)
+            k_ref = k_ref.reshape(1, input_ids.shape[1], lm.n_kv_heads * lm.d_head)
 
         max_q = 0.0
         max_k = 0.0
@@ -149,6 +156,12 @@ def sanity_check(lm: LoadedModel, *, atol: float = 1e-4) -> dict[str, float]:
                 q = q + hs.q_bias
             if hs.k_bias is not None:
                 k = k + hs.k_bias
+            if lm.tag in {"qwen25", "qwen3", "openllama7"}:
+                attn = lm.model.model.layers[0].self_attn
+                if hasattr(attn, "q_norm"):
+                    q = attn.q_norm(q)
+                if hasattr(attn, "k_norm"):
+                    k = attn.k_norm(k)
             q_r = q_ref[0, :, hs.head * lm.d_head : (hs.head + 1) * lm.d_head]
             if lm.n_kv_heads == lm.n_heads:
                 k_r = k_ref[0, :, hs.head * lm.d_head : (hs.head + 1) * lm.d_head]
