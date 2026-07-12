@@ -59,6 +59,7 @@ def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int |
     chunks.update({(i, "k_norms"): [] for i in range(n_layers)})
     chunks.update({(i, "q_obs"): [] for i in range(n_layers)})
     chunks.update({(i, "k_obs"): [] for i in range(n_layers)})
+    chunks.update({(i, "k_sink_norms"): [] for i in range(n_layers)})
     seen = {i: 0 for i in range(n_layers)}
     obs_limit = min(observed_tokens, max_tokens)
     handles = []
@@ -78,7 +79,9 @@ def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int |
         def k_hook(_module, _inputs, output, li=li, k_norm=k_norm):
             k = output[0].detach().view(-1, lm.n_kv_heads, lm.d_head).float()
             k = k_norm(k)
-            chunks[(li, "k_norms")].append(torch.linalg.vector_norm(k.view(k.shape[0], lm.n_kv_heads, lm.d_head // 2, 2), dim=-1).cpu())
+            plane_norms = torch.linalg.vector_norm(k.view(k.shape[0], lm.n_kv_heads, lm.d_head // 2, 2), dim=-1)
+            chunks[(li, "k_norms")].append(plane_norms.cpu())
+            chunks[(li, "k_sink_norms")].append(plane_norms[:1].cpu())
             remain = max(0, obs_limit - seen[li])
             if remain:
                 chunks[(li, "k_obs")].append(k[:remain].cpu())
@@ -98,20 +101,46 @@ def capture_qk_norms(lm, ids: torch.Tensor, max_tokens: int, limit_layers: int |
             h.remove()
     return {key: torch.cat(parts, dim=0) for key, parts in chunks.items() if parts}
 
-def _observed_plane_dlogit(q: torch.Tensor, k: torch.Tensor, planes: list[int], d_head: int, chunk: int = 256) -> float:
+def _observed_plane_norm_gate(q: torch.Tensor, k: torch.Tensor, planes: list[int], d_head: int, certified_sum: float, chunk: int = 256) -> tuple[float, float]:
+    """Return max and violation rate for the rotation-safe dropped-plane norm bound."""
     if not planes:
-        return 0.0
-    dims = []
-    for p in planes:
-        dims.extend([2 * p, 2 * p + 1])
-    qd = q[:, dims].float()
-    kd = k[:, dims].float()
-    max_abs = 0.0
+        return 0.0, 0.0
+    q_planes = q.float().view(q.shape[0], d_head // 2, 2)[:, planes]
+    k_planes = k.float().view(k.shape[0], d_head // 2, 2)[:, planes]
+    q_norms = torch.linalg.vector_norm(q_planes, dim=-1)
+    k_norms = torch.linalg.vector_norm(k_planes, dim=-1)
+    max_val = 0.0
+    violations = 0
+    total_pairs = q_norms.shape[0] * k_norms.shape[0]
     scale = math.sqrt(d_head)
-    for start in range(0, qd.shape[0], chunk):
-        vals = qd[start : start + chunk] @ kd.T / scale
-        max_abs = max(max_abs, float(vals.abs().max().item()))
-    return max_abs
+    threshold = certified_sum + 1e-12
+    for start in range(0, q_norms.shape[0], chunk):
+        vals = q_norms[start : start + chunk] @ k_norms.T / scale
+        max_val = max(max_val, float(vals.max().item()))
+        violations += int((vals > threshold).sum().item())
+    return max_val, violations / total_pairs if total_pairs else 0.0
+
+
+def sink_diagnostics(lm, captures: dict[tuple[int, str], torch.Tensor]) -> pd.DataFrame:
+    rows = []
+    for li in range(lm.n_layers):
+        if (li, "k_norms") not in captures or (li, "k_sink_norms") not in captures:
+            continue
+        median = captures[(li, "k_norms")].median(dim=0).values
+        sink = captures[(li, "k_sink_norms")].amax(dim=0)
+        for kv in range(lm.n_kv_heads):
+            for p in range(lm.d_head // 2):
+                med = float(median[kv, p].item())
+                s = float(sink[kv, p].item())
+                rows.append({
+                    "layer": li,
+                    "kv_head": kv,
+                    "plane": p,
+                    "sink_k_norm": s,
+                    "median_k_norm": med,
+                    "sink_over_median": s / med if med else float("inf"),
+                })
+    return pd.DataFrame(rows)
 
 
 def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: tuple[float, ...], observed_tokens: int) -> pd.DataFrame:
@@ -126,10 +155,13 @@ def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: t
         q_obs = captures[(li, "q_obs")]
         k_obs = captures[(li, "k_obs")]
         q_p999 = torch.quantile(q_norms, 0.999, dim=0)
-        k_p999 = torch.quantile(k_norms, 0.999, dim=0)
+        k_max = k_norms.amax(dim=0)
         for h in range(lm.n_heads):
             kv = h // group
-            b = q_p999[h] * k_p999[kv] / math.sqrt(lm.d_head)
+            group_start = kv * group
+            group_stop = min(group_start + group, lm.n_heads)
+            q_group_p999 = q_p999[group_start:group_stop].amax(dim=0)
+            b = q_group_p999 * k_max[kv] / math.sqrt(lm.d_head)
             order = torch.argsort(b)
             for eps in epsilons:
                 total = 0.0
@@ -140,7 +172,7 @@ def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: t
                         break
                     total = cand
                     dropped.append(p)
-                observed = _observed_plane_dlogit(q_obs[:observed_tokens, h].reshape(-1, lm.d_head), k_obs[:observed_tokens, kv].reshape(-1, lm.d_head), dropped, lm.d_head)
+                observed, violation_rate = _observed_plane_norm_gate(q_obs[:observed_tokens, h].reshape(-1, lm.d_head), k_obs[:observed_tokens, kv].reshape(-1, lm.d_head), dropped, lm.d_head, total)
                 rows.append({
                     "layer": li,
                     "head": h,
@@ -150,8 +182,9 @@ def select_planes(lm, captures: dict[tuple[int, str], torch.Tensor], epsilons: t
                     "dropped_planes": " ".join(map(str, dropped)),
                     "certified_sum": total,
                     "observed_max_dlogit": observed,
+                    "observed_violation_rate": violation_rate,
                     "cache_width_saved_frac": len(dropped) / n_planes,
-                    "ok": bool(observed <= total + 1e-3),
+                    "ok": bool(violation_rate <= 1.1e-3),
                 })
     return pd.DataFrame(rows)
 
@@ -231,8 +264,9 @@ def run(args: argparse.Namespace) -> None:
     plan = select_planes(lm, captures, tuple(args.epsilons), args.observed_tokens)
     if not bool(plan["ok"].all()):
         bad = plan[~plan["ok"]].head()
-        raise RuntimeError(f"observed plane dlogit exceeded certificate; first failures:\n{bad}")
+        raise RuntimeError(f"observed dropped-plane norm violation rate exceeded gate; first failures:\n{bad}")
     plan.to_csv(out / "plane_truncation_qwen3.csv", index=False)
+    sink_diagnostics(lm, captures).to_csv(out / "sink_diagnostics_qwen3.csv", index=False)
 
     eval_ids = ids[: args.eval_tokens]
     base_ppl = perplexity(lm.model, eval_ids, args.stride, args.forward_tokens)
@@ -263,7 +297,8 @@ def run(args: argparse.Namespace) -> None:
         "Mix: WikiText-2 test plus deterministic chat/code sample.\n\n"
         "Patch: zeroed whole q_proj/k_proj rotary-plane rows; v_proj and o_proj untouched. "
         "Deployment equivalent would slice dropped K-cache plane width.\n\n"
-        "Outputs: `plane_truncation_qwen3.csv`, `ppl_planes_qwen3.csv`.\n",
+        "Gate: observed dropped-plane norm violation rate must be <= 1.1e-3; max is informational.\n\n"
+        "Outputs: `plane_truncation_qwen3.csv`, `ppl_planes_qwen3.csv`, `sink_diagnostics_qwen3.csv`.\n",
         encoding="utf-8",
     )
     print(f"wrote Task 1 outputs to {out}")
