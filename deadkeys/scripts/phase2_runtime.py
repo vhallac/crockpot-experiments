@@ -28,12 +28,13 @@ def _load_for_attentions(tag: str, device: torch.device):
     hf_id = MODEL_IDS[tag]
     config = AutoConfig.from_pretrained(hf_id)
     config.attn_implementation = "eager"
+    config._attn_implementation = "eager"
     try:
-        model = AutoModelForCausalLM.from_pretrained(hf_id, config=config, torch_dtype=torch.float32, low_cpu_mem_usage=True)
+        model = AutoModelForCausalLM.from_pretrained(hf_id, config=config, attn_implementation="eager", torch_dtype=torch.float32, low_cpu_mem_usage=True)
     except ImportError as exc:
         if "Accelerate" not in str(exc):
             raise
-        model = AutoModelForCausalLM.from_pretrained(hf_id, config=config, torch_dtype=torch.float32)
+        model = AutoModelForCausalLM.from_pretrained(hf_id, config=config, attn_implementation="eager", torch_dtype=torch.float32)
     model.to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained(hf_id)
     if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
@@ -55,11 +56,17 @@ def _prompt(tokenizer, prefill_tokens: int) -> tuple[str, int | None]:
         text += base
     text += "\n" + QUESTION
     ids = tokenizer(text, add_special_tokens=False)["input_ids"][:prefill_tokens]
-    needle_ids = tokenizer(NEEDLE, add_special_tokens=False)["input_ids"]
+    needle_variants = [
+        tokenizer(NEEDLE, add_special_tokens=False)["input_ids"],
+        tokenizer(" " + NEEDLE, add_special_tokens=False)["input_ids"],
+    ]
     needle_pos = None
-    for i in range(0, max(0, len(ids) - len(needle_ids) + 1)):
-        if ids[i : i + len(needle_ids)] == needle_ids:
-            needle_pos = i
+    for needle_ids in needle_variants:
+        for i in range(0, max(0, len(ids) - len(needle_ids) + 1)):
+            if ids[i : i + len(needle_ids)] == needle_ids:
+                needle_pos = i
+                break
+        if needle_pos is not None:
             break
     return tokenizer.decode(ids), needle_pos
 
@@ -147,6 +154,7 @@ def _prefill_tables(lm, model, input_ids: torch.Tensor, limit_layers: int | None
                     "s_low": float(pull[pos].item()),
                     "s_dir": float(s_dir[pos].item()),
                     "s_sigma": float("nan"),
+                    "score": float(s_dir[pos].item()),
                     "key_norm": float(k_norm[pos].item()),
                     "v_norm": float(v_norm[pos].item()),
                     "attn_mass": 0.0,
@@ -154,8 +162,8 @@ def _prefill_tables(lm, model, input_ids: torch.Tensor, limit_layers: int | None
     return pd.DataFrame(rows)
 
 
-def _decode_attention_mass(model, input_ids: torch.Tensor, limit_layers: int | None, limit_heads: int | None, decode_tokens: int, recency_window: int):
-    masses = defaultdict(float)
+def _decode_attention_mass(model, input_ids: torch.Tensor, limit_layers: int | None, limit_heads: int | None, decode_tokens: int, recency_window: int) -> np.ndarray:
+    mass: torch.Tensor | None = None
     with torch.inference_mode():
         out = model(input_ids=input_ids, use_cache=True)
         past = out.past_key_values
@@ -170,18 +178,21 @@ def _decode_attention_mass(model, input_ids: torch.Tensor, limit_layers: int | N
             keep_upto = min(prefill_len, max(0, q_abs - recency_window))
             if keep_upto == 0:
                 continue
-            for li, attn in enumerate(out.attentions[: limit_layers or len(out.attentions)]):
+            layer_count = min(len(out.attentions), limit_layers or len(out.attentions))
+            first = out.attentions[0]
+            if first is None:
+                raise RuntimeError("attention weights are None; eager attention is required")
+            head_count = min(first.shape[1], limit_heads or first.shape[1])
+            if mass is None:
+                mass = torch.zeros((layer_count, head_count, prefill_len), device=first.device, dtype=torch.float32)
+            for li, attn in enumerate(out.attentions[:layer_count]):
                 if attn is None:
                     raise RuntimeError("attention weights are None; eager attention is required")
-                # [batch, query_heads, q_len=1, kv_len]
-                layer_attn = attn[0, :, -1, :keep_upto].float()
-                n_heads = layer_attn.shape[0]
-                max_heads = min(n_heads, limit_heads or n_heads)
-                for h in range(max_heads):
-                    vals = layer_attn[h]
-                    for pos, val in enumerate(vals):
-                        masses[(li, h, pos)] += float(val.item())
-    return masses
+                # [batch, query_heads, q_len=1, kv_len]; accumulate on GPU in one slice.
+                mass[li, :, :keep_upto] += attn[0, :head_count, -1, :keep_upto].float()
+    if mass is None:
+        return np.zeros((0, 0, input_ids.shape[1]), dtype=np.float32)
+    return mass.cpu().numpy()
 
 
 def run(args: argparse.Namespace) -> Path:
@@ -200,11 +211,14 @@ def run(args: argparse.Namespace) -> Path:
 
     df = _prefill_tables(lm, model, input_ids, args.limit_layers, args.limit_heads)
     masses = _decode_attention_mass(model, input_ids, args.limit_layers, args.limit_heads, args.decode_tokens, args.recency_window)
-    if masses:
-        idx = {(int(r["layer"]), int(r["head"]), int(r["position"])): i for i, r in df.iterrows()}
-        for key, mass in masses.items():
-            if key in idx:
-                df.at[idx[key], "attn_mass"] = mass
+    if masses.size:
+        layers = df["layer"].to_numpy(dtype=np.int64)
+        heads = df["head"].to_numpy(dtype=np.int64)
+        positions = df["position"].to_numpy(dtype=np.int64)
+        valid = (layers < masses.shape[0]) & (heads < masses.shape[1]) & (positions < masses.shape[2])
+        attn_mass = np.zeros(len(df), dtype=np.float32)
+        attn_mass[valid] = masses[layers[valid], heads[valid], positions[valid]]
+        df["attn_mass"] = attn_mass
     if needle_pos is None:
         df["is_needle"] = False
     else:
