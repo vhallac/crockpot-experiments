@@ -68,7 +68,7 @@ def hidden_inputs(lm, input_ids: torch.Tensor, max_tokens: int) -> dict[int, tor
 
     for li, module in enumerate(modules):
         def hook(_module, inputs, _output, li=li):
-            chunks[li].append(inputs[0][0].detach().cpu())
+            chunks[li].append(inputs[0][0].detach())
         handles.append(module.register_forward_hook(hook))
 
     limit = min(max_tokens, input_ids.numel())
@@ -85,9 +85,10 @@ def hidden_inputs(lm, input_ids: torch.Tensor, max_tokens: int) -> dict[int, tor
 
 def decompose_heads(lm, *, limit_layers: int | None = None, limit_heads: int | None = None) -> list[HeadDecomp]:
     out = []
+    device = next(lm.model.parameters()).device
     for hs in iter_heads(lm, limit_layers=limit_layers, limit_heads=limit_heads):
-        A = hs.A.float().cpu()
-        B = hs.B.float().cpu()
+        A = hs.A.detach().to(device=device, dtype=torch.float32)
+        B = hs.B.detach().to(device=device, dtype=torch.float32)
         U_A, S_A, Vh_A = torch.linalg.svd(A, full_matrices=False)
         U_B, S_B, Vh_B = torch.linalg.svd(B, full_matrices=False)
         C = torch.diag(S_A) @ (U_A.T @ U_B) @ torch.diag(S_B)
@@ -98,8 +99,8 @@ def decompose_heads(lm, *, limit_layers: int | None = None, limit_heads: int | N
             ln = lm.model.gpt_neox.layers[hs.layer].input_layernorm
         else:
             raise NotImplementedError(f"Phase 1.5 decomposition not implemented for {lm.tag}")
-        gamma = ln.weight.detach().float().cpu()
-        beta = ln.bias.detach().float().cpu()
+        gamma = ln.weight.detach().to(device=device, dtype=torch.float32)
+        beta = ln.bias.detach().to(device=device, dtype=torch.float32)
         norm_bound = float(gamma.abs().max().item() * math.sqrt(lm.d_model) + beta.norm().item())
         out.append(HeadDecomp(
             layer=hs.layer,
@@ -115,8 +116,8 @@ def decompose_heads(lm, *, limit_layers: int | None = None, limit_heads: int | N
             S_B=S_B,
             U_A=U_A,
             U_B=U_B,
-            q_bias=torch.zeros_like(S_A) if hs.q_bias is None else hs.q_bias.float().cpu(),
-            k_bias=torch.zeros_like(S_B) if hs.k_bias is None else hs.k_bias.float().cpu(),
+            q_bias=torch.zeros_like(S_A) if hs.q_bias is None else hs.q_bias.detach().to(device=device, dtype=torch.float32),
+            k_bias=torch.zeros_like(S_B) if hs.k_bias is None else hs.k_bias.detach().to(device=device, dtype=torch.float32),
             uniform_norm_bound=norm_bound,
         ))
     return out
@@ -133,7 +134,7 @@ def rank_for_epsilon(sig: torch.Tensor, q_bound: float, k_bound: float, d_head: 
 
 def factors_for_rank(hd: HeadDecomp, r: int) -> tuple[torch.Tensor, torch.Tensor]:
     if r == 0:
-        return torch.empty(0, hd.A.shape[1]), torch.empty(0, hd.A.shape[1])
+        return torch.empty(0, hd.A.shape[1], device=hd.A.device), torch.empty(0, hd.A.shape[1], device=hd.A.device)
     root = torch.sqrt(hd.Sig[:r]).diag()
     wq = root @ (hd.V_A @ hd.P[:, :r]).T
     wk = root @ (hd.V_B @ hd.Qt.T[:, :r]).T
@@ -319,7 +320,7 @@ def census_guided_ranks(decomps: list[HeadDecomp], census_path: Path | None, dea
             d, _ = dead_fraction(hd.A, hd.U_B, hd.S_B, samples=dead_samples, seed=seed + 1000 * hd.layer + hd.head)
         target = (1.0 - d) * float(hd.S_B.square().sum().item())
         cum = torch.cumsum(hd.S_B.square(), dim=0)
-        r = int(torch.searchsorted(cum, torch.tensor(target), right=False).item()) + 1
+        r = int(torch.searchsorted(cum, torch.tensor(target, device=cum.device), right=False).item()) + 1
         ranks[(hd.layer, hd.head)] = max(1, min(r, hd.Sig.numel()))
     return ranks
 
@@ -341,38 +342,51 @@ def eval_rank_mode(mode: str, label: str, ranks: dict[tuple[int, int], int], bas
     }
 
 
+def _batched_random_orthogonal(samples: int, dim: int, gen: torch.Generator, device: torch.device) -> torch.Tensor:
+    """Generate Haar-ish orthogonal bases in one QR call on the target device."""
+    q, r = torch.linalg.qr(torch.randn(samples, dim, dim, generator=gen, device=device))
+    signs = torch.sign(torch.diagonal(r, dim1=-2, dim2=-1))
+    signs[signs == 0] = 1
+    return q * signs.unsqueeze(-2)
+
+
 def null_model(decomps: list[HeadDecomp], samples: int, dead_samples: int, depths: tuple[int, ...], seed: int) -> pd.DataFrame:
     rows = []
-    gen = torch.Generator(device="cpu")
+    device = decomps[0].A.device if decomps else torch.device("cpu")
+    gen = torch.Generator(device=device)
     gen.manual_seed(seed)
-    for hd in decomps:
+    for hi, hd in enumerate(decomps, start=1):
+        print(f"null_model head {hi}/{len(decomps)} layer={hd.layer} head={hd.head} device={device}", flush=True)
         measured_dead, _ = dead_fraction(hd.A, hd.U_B, hd.S_B, samples=dead_samples, seed=seed + 1000 * hd.layer + hd.head)
+        dim = hd.A.shape[0]
         for depth in depths:
-            k = min(depth, hd.A.shape[0])
+            k = min(depth, dim)
             parks = torch.sum(hd.U_A[:, :k] * hd.U_B[:, :k], dim=0).abs().clamp(max=0.999)
+            QA = _batched_random_orthogonal(samples, dim, gen, device)
+            QB = torch.empty_like(QA)
+            used: list[torch.Tensor] = []
+            for i, p in enumerate(parks):
+                base = QA[:, :, i]
+                noise = torch.randn(samples, dim, generator=gen, device=device)
+                for u in used + [base]:
+                    noise = noise - (noise * u).sum(dim=1, keepdim=True) * u
+                noise = noise / noise.norm(dim=1, keepdim=True).clamp_min(1e-12)
+                QB[:, :, i] = p * base + torch.sqrt(1 - p * p) * noise
+                used.append(QB[:, :, i])
+            if k < dim:
+                rest = torch.randn(samples, dim, dim - k, generator=gen, device=device)
+                for u in [QA[:, :, i] for i in range(k)] + used:
+                    rest = rest - u.unsqueeze(2) * torch.bmm(u.unsqueeze(1), rest)
+                Qrest, _ = torch.linalg.qr(rest)
+                QB[:, :, k:] = Qrest[:, :, : dim - k]
+            # Build synthetic heads directly from their left singular bases.
+            # This preserves the intended QA/QB alignment while avoiding an
+            # extra per-sample SVD in the null model hot path. QA/QB generation
+            # is batched, so CUDA does one larger QR instead of many tiny ones.
+            A_syn = QA * hd.S_A.view(1, 1, dim)
             vals = []
             for si in range(samples):
-                QA, _ = torch.linalg.qr(torch.randn(hd.A.shape[0], hd.A.shape[0], generator=gen))
-                QB = torch.empty_like(QA)
-                used = []
-                for i, p in enumerate(parks):
-                    base = QA[:, i]
-                    noise = torch.randn(hd.A.shape[0], generator=gen)
-                    for u in used + [base]:
-                        noise = noise - (noise @ u) * u
-                    noise = noise / noise.norm().clamp_min(1e-12)
-                    QB[:, i] = p * base + torch.sqrt(1 - p * p) * noise
-                    used.append(QB[:, i])
-                if k < hd.A.shape[0]:
-                    rest = torch.randn(hd.A.shape[0], hd.A.shape[0] - k, generator=gen)
-                    for u in list(QA[:, :k].T) + used:
-                        rest = rest - u[:, None] @ (u[None, :] @ rest)
-                    Qrest, _ = torch.linalg.qr(rest)
-                    QB[:, k:] = Qrest[:, : hd.A.shape[0] - k]
-                A_syn = torch.diag(hd.S_A) @ QA.T
-                B_syn = torch.diag(hd.S_B) @ QB.T
-                U_Bs, S_Bs, _ = torch.linalg.svd(B_syn, full_matrices=False)
-                d, _ = dead_fraction(A_syn, U_Bs, S_Bs, samples=dead_samples, seed=seed + 17 * si + depth)
+                d, _ = dead_fraction(A_syn[si], QB[si], hd.S_B, samples=dead_samples, seed=seed + 17 * si + depth)
                 vals.append(d)
             arr = np.array(vals, dtype=float)
             std = float(arr.std(ddof=1)) if len(arr) > 1 else float("nan")
@@ -434,7 +448,7 @@ def run(args: argparse.Namespace) -> None:
         raise RuntimeError("--device cuda requested, but torch.cuda.is_available() is false")
     lm = load_model(args.model, device=device)
     print("sanity", sanity_check(lm))
-    print(f"device {device}")
+    print(f"device {device}; model_device={next(lm.model.parameters()).device}; cuda_available={torch.cuda.is_available()}", flush=True)
     ids = get_text(lm.tokenizer, args.eval_tokens)
     if ids.numel() < 200_000 and not args.allow_smoke_under_200k:
         raise RuntimeError("Phase 1.5 spec requires >=200k eval tokens; pass --allow-smoke-under-200k for bounded smoke tests")

@@ -47,9 +47,10 @@ RunPod migration / startup procedure:
 1. Keep `dead-weight-migration` halted when idle. Current verified halted state: `desiredStatus: EXITED`.
 2. If the original pod cannot resume because its host has no free GPU capacity, create/deploy a replacement pod in RunPod with the same network volume attached at creation time. Network volumes for pods are effectively chosen at deployment time; do not expect to attach one later to an existing pod.
 3. Prefer same datacenter / compatible GPU when possible so the existing network volume is available. Name the replacement clearly, e.g. `dead-weight-migration`.
-4. After deployment, query the pod by name via GraphQL and record its new pod id, GPU, image, and runtime SSH ports here. The current migration pod id is `lszgheen2t7qor`.
-5. Before installing dependencies or downloading models, run `./scripts/runpod-persistent-cache-setup` inside the pod so Hugging Face, torch, pip, uv, Triton, and CUDA virtualenv data live under `/workspace/dead-keys-census-cache` on the network volume.
-6. For cross-datacenter moves, RunPod's documented path is two running pods and `rsync` between their `/workspace` mounts; this is separate from simply deploying a replacement pod against the same existing volume.
+4. For ad-hoc replacement pod generation when the latest pod is unavailable, prefer GPU `RTX A5000` or `L4`, CPU at most 6 cores, image `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`, RAM around 60 GB, and disk around 30 GB.
+5. After deployment, query the pod by name via GraphQL and record its new pod id, GPU, image, and runtime SSH ports here. The current migration pod id is `lszgheen2t7qor`.
+6. Before installing dependencies or downloading models, run `./scripts/runpod-persistent-cache-setup` inside the pod so Hugging Face, torch, pip, uv, Triton, and CUDA virtualenv data live under `/workspace/dead-keys-census-cache` on the network volume.
+7. For cross-datacenter moves, RunPod's documented path is two running pods and `rsync` between their `/workspace` mounts; this is separate from simply deploying a replacement pod against the same existing volume.
 
 RunPod SSH after migration:
 

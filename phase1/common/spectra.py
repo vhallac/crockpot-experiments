@@ -60,18 +60,19 @@ def misalignment_z_score(S_A: torch.Tensor, S_B: torch.Tensor, raw: torch.Tensor
     """Spec §3.2 random-orthogonal baseline for the raw misalignment index."""
     if rotations <= 1:
         return float("nan")
-    S_A = S_A.detach().cpu()
-    S_B = S_B.detach().cpu()
-    raw = raw.detach().cpu()
+    device = S_A.device
+    S_A = S_A.detach().to(dtype=torch.float32, device=device)
+    S_B = S_B.detach().to(dtype=torch.float32, device=device)
+    raw = raw.detach().to(dtype=torch.float32, device=device)
     d = S_A.numel()
     denom = torch.sum(S_A * S_B).clamp_min(1e-30)
-    gen = torch.Generator(device="cpu")
+    gen = torch.Generator(device=device)
     gen.manual_seed(seed)
     vals = []
     diag_a = torch.diag(S_A)
     diag_b = torch.diag(S_B)
     for _ in range(rotations):
-        Q, R = torch.linalg.qr(torch.randn(d, d, generator=gen, dtype=torch.float32))
+        Q, R = torch.linalg.qr(torch.randn(d, d, generator=gen, dtype=torch.float32, device=device))
         signs = torch.sign(torch.diag(R))
         signs[signs == 0] = 1
         Q = Q * signs.unsqueeze(0)
