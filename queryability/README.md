@@ -37,8 +37,22 @@ This is a weights-only experiment. It can say that a direction is geometrically 
 
 ## Smoke command
 
+With the project `uv` environment (installs the heavy ROCm/CUDA torch wheel):
+
 ```bash
 uv run python -m queryability.scripts.weights \
+  --model gpt2 \
+  --limit-layers 1 \
+  --limit-heads 1 \
+  --output-dir outputs/queryability_smoke
+```
+
+On the local NixOS host where the ROCm wheel install is blocked by disk
+space, use the CPU-only nix-shell wrapper instead (this experiment is
+weights-only and needs no GPU):
+
+```bash
+./scripts/nix-cpu-run -m queryability.scripts.weights \
   --model gpt2 \
   --limit-layers 1 \
   --limit-heads 1 \
@@ -51,3 +65,9 @@ Expected outputs:
 outputs/queryability_smoke/queryability_gpt2.csv
 outputs/queryability_smoke/queryability_spectra_gpt2.npz
 ```
+
+The paired spectrum `S_QTK` has `d_model` singular values, but since
+`rank(W_Q^T W_K) <= d_head`, only `d_head` of them are nonzero; the rest
+are ~0. For GPT-2 layer 0 head 0 this gives `paired_rank=64` (= d_head)
+and `paired_erank~57`, consistent with a full-rank head whose paired
+interaction dimension is bounded by the head width.
