@@ -1,6 +1,6 @@
 ---
 name: runpod-usage
-description: Operate RunPod pods for dead-keys-census: query, resume, stop, migrate to replacement pods, discover SSH endpoints, configure persistent caches, run GPU smoke tests, stop stray workloads, and generate pods on demand in the same datacenter as a network volume.
+description: "Operate RunPod pods for dead-keys-census: query, resume, stop, migrate to replacement pods, discover SSH endpoints, configure persistent caches, run GPU smoke tests, stop stray workloads, and generate pods on demand in the same datacenter as a network volume."
 ---
 
 # RunPod Usage
