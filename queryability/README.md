@@ -24,9 +24,17 @@ The question is not only whether `W_Q` or `W_K` have small singular directions i
 
 If so, those directions are weakly visible to all queries that can be produced through `W_Q`, in the weights-only linear sense.
 
-## First target: GPT-2 weights-only paired SVD
+## Scope: raw pre-RoPE weights-only paired SVD
 
-GPT-2 is the simplest starting model because it has no RoPE. The first experiment computes, per layer/head:
+GPT-2 is the simplest starting model because it has no RoPE. Pythia and Qwen can also be run through the same raw calculation, but the result must be interpreted as **pre-RoPE projection-weight geometry**:
+
+- Pythia has partial RoPE, so only part of each head is subsequently rotated at runtime.
+- Qwen3 has full RoPE and QK norm; this script does not fold the non-linear `q_norm` / `k_norm` into the SVD.
+- RoPE-aware or activation-conditioned queryability needs a separate experiment; do not infer runtime long-range behavior directly from this raw SVD.
+
+For RoPE models the CLI intentionally requires `--allow-rope-raw` so a remote run records that interpretation instead of silently producing easy-to-misread data.
+
+The experiment computes, per layer/head:
 
 1. the per-head `W_Q` and `W_K` slices using the existing `deadkeys` loading code;
 2. `M = W_Q.T @ W_K`;
@@ -64,6 +72,7 @@ Expected outputs:
 ```text
 outputs/queryability_smoke/queryability_gpt2.csv
 outputs/queryability_smoke/queryability_spectra_gpt2.npz
+outputs/queryability_smoke/queryability_manifest_gpt2.json
 ```
 
 The paired spectrum `S_QTK` has `d_model` singular values, but since
@@ -71,3 +80,29 @@ The paired spectrum `S_QTK` has `d_model` singular values, but since
 are ~0. For GPT-2 layer 0 head 0 this gives `paired_rank=64` (= d_head)
 and `paired_erank~57`, consistent with a full-rank head whose paired
 interaction dimension is bounded by the head width.
+
+## Later RunPod raw-SVD commands
+
+Do not use these locally unless the weights are already cached; they download larger models. On a RunPod CUDA host, use the project CUDA wrapper so PyTorch/CUDA installs and Hugging Face weights live in the persistent cache configured by `scripts/runpod-persistent-cache-setup`:
+
+```bash
+DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
+  ./scripts/cuda-run -m queryability.scripts.weights \
+    --model pythia410 \
+    --limit-layers 1 \
+    --limit-heads 1 \
+    --device cuda \
+    --allow-rope-raw \
+    --output-dir outputs/queryability_raw_pythia410_smoke
+
+DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
+  ./scripts/cuda-run -m queryability.scripts.weights \
+    --model qwen3 \
+    --limit-layers 1 \
+    --limit-heads 1 \
+    --device cuda \
+    --allow-rope-raw \
+    --output-dir outputs/queryability_raw_qwen3_smoke
+```
+
+For full runs, remove the layer/head limits only after the one-head smoke writes CSV, NPZ, and manifest files and the console confirms `requested_device=cuda` with a real CUDA device.
