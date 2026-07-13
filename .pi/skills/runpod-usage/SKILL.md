@@ -96,33 +96,37 @@ TRIGGER: Need shell access to a running pod.
 
 ACTION:
 
-1. Query `runtime.ports` live.
-2. Prefer public TCP SSH endpoint when available.
-3. If public TCP SSH fails or is unavailable, use the RunPod web UI Connect/SSH command for the full proxy username.
+1. Query live pod state and include `machine.podHostId` in the GraphQL selection.
+2. Use the proxy username from `machine.podHostId`; do not use public IP / `root@<ip>` SSH as the normal path for this project.
+3. If `machine.podHostId` is missing, query/introspect the pod/machine fields or use the RunPod UI Connect/SSH command to recover the full proxy username, then document the finding.
 
-Public TCP shape:
+Required proxy-user discovery:
 
 ```bash
-ssh -p <publicPort> root@<public-ip> -i ~/.ssh/id_ed25519
+curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
+  -H 'content-type: application/json' \
+  --data-binary '{"query":"query { myself { pods { id name desiredStatus machine { podHostId gpuDisplayName } } } }"}' \
+  | jq '.data.myself.pods[] | select(.name|test("dead-weight")) | {id,name,desiredStatus,podHostId:.machine.podHostId,gpu:.machine.gpuDisplayName}'
 ```
 
 Proxy shape:
 
 ```bash
-ssh <pod-id>-<suffix>@ssh.runpod.io -i ~/.ssh/id_ed25519
+ssh -tt <machine.podHostId>@ssh.runpod.io -i ~/.ssh/id_ed25519
 ```
 
 For scripted proxy commands, allocate a PTY:
 
 ```bash
 printf '%s\n' 'cd /workspace/dead-keys-census && nvidia-smi' \
-  | ssh -tt <pod-id>-<suffix>@ssh.runpod.io -i ~/.ssh/id_ed25519
+  | ssh -tt <machine.podHostId>@ssh.runpod.io -i ~/.ssh/id_ed25519
 ```
 
 NOTES:
 
-- The pod id alone is not enough for the `ssh.runpod.io` username; the suffix comes from the RunPod UI Connect command.
-- Runtime IPs and ports can change after restart; do not reuse stale values without querying.
+- `machine.podHostId` already includes the pod id and random suffix, e.g. `<pod-id>-<suffix>`.
+- The pod id alone is not enough for the `ssh.runpod.io` username.
+- Runtime IPs and public ports can change after restart and have repeatedly led to wrong-path debugging here; do not prefer or retry `root@<public-ip>` for this project unless the user explicitly asks for the public TCP endpoint.
 
 ## Persistent Cache Setup on Network Volume
 
@@ -284,7 +288,9 @@ AND candidate.memoryTotalGb >= requested memory
 
 CREATE TEMPLATE:
 
-Before running this mutation, verify exact input fields against current RunPod docs/schema. The important invariant is `networkVolumeId` plus same datacenter selection.
+Before running this mutation, verify exact input fields against current RunPod docs/schema.
+
+CRITICAL: When `networkVolumeId` is set, `volumeMountPath` MUST also be set to a valid absolute path (this project uses `/workspace`). Omitting `volumeMountPath` causes RunPod to deploy the pod with a `null` mount path, the network volume never attaches, and the container silently fails to start (`runtime` stays `null`, no public IP). The required invariant is: `networkVolumeId` + `volumeMountPath: "/workspace"` + same datacenter selection.
 
 ```bash
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
@@ -302,6 +308,7 @@ curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphq
       "minMemoryInGb": <memory-gb>,
       "dataCenterId": "<volume-datacenter-id>",
       "networkVolumeId": "<network-volume-id>",
+      "volumeMountPath": "/workspace",
       "imageName": "<image>",
       "containerDiskInGb": 50,
       "ports": "22/tcp"
