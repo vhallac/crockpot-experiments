@@ -59,11 +59,13 @@ The checklist report should track:
 |------|-------------|-------|--------------|----------|
 ```
 
+Checklist items are finer-grained than the Process sections below; each Process heading states which checklist items it covers. All step references outside the checklist (including the Failure Loop) use Process step numbers.
+
 Completion is based on evidence in this checklist plus command output, not on a verbal claim that the process was followed.
 
 ## Process
 
-### 1. Accept the Experiment Spec
+### 1. Accept the Experiment Spec (checklist item 1)
 
 TRIGGER: User provides or points to an experiment spec.
 
@@ -74,7 +76,7 @@ ACTION:
 
 OUTPUT: Checklist entry with spec path or quoted source, plus assumptions that affect the run.
 
-### 2. Prepare the Experiment
+### 2. Prepare the Experiment (checklist item 2)
 
 TRIGGER: The spec is accepted and implementation or setup is required.
 
@@ -87,7 +89,7 @@ VERIFY:
 - Run the relevant local checks or smoke command.
 - Record exact commands and important output paths in the checklist.
 
-### 3. Draft the Pre-run Lab Notebook Entry
+### 3. Draft the Pre-run Lab Notebook Entry (checklist item 3)
 
 TRIGGER: The experiment is prepared, before committing or running the full experiment.
 
@@ -124,7 +126,7 @@ _Pending._
 
 OUTPUT: Notebook path and entry heading in the checklist.
 
-### 4. Commit the Pre-run State, Then Run
+### 4. Commit the Pre-run State, Then Run (checklist items 4-5)
 
 TRIGGER: The notebook pre-run entry and experiment setup are ready.
 
@@ -135,9 +137,10 @@ ACTION:
 VERIFY:
 - Record `git status --short` before/after as relevant.
 - Record the pre-run commit SHA.
-- Record the exact run command, environment notes, start/end time, and output directory.
+- Record the exact run command, start/end time, and output directory.
+- Record the execution environment concretely: random seeds (or note that the run is deterministic/seedless), hardware identity (GPU or CPU model, driver/runtime version when relevant), the wrapper or launcher used, and model names with pinned revisions. "Environment notes" without these are not sufficient for reproducibility.
 
-### 5. Package and Publish Outputs Externally
+### 5. Package and Publish Outputs Externally (checklist items 6-7)
 
 TRIGGER: The experiment run produced outputs that should be preserved or shared.
 
@@ -151,7 +154,7 @@ VERIFY:
 - Download or inspect the published asset list.
 - Verify checksums when practical.
 
-### 6. Analyse Outputs
+### 6. Analyse Outputs (checklist item 8)
 
 TRIGGER: Outputs are available locally or published.
 
@@ -162,12 +165,13 @@ ACTION:
 
 OUTPUT: Analysis summary, links/paths to reports, and interpretation notes for the notebook.
 
-### 7. Complete the Lab Notebook and Commit
+### 7. Complete the Lab Notebook and Commit (checklist items 9-10)
 
 TRIGGER: Output analysis is complete or an external analysis report has been received.
 
 ACTION:
 - Fill in notebook Results, Analysis, Conclusion / Next Step, and final provenance.
+- Backfill the `Pre-run commit` field in the pre-run provenance now: the SHA cannot exist inside the commit it names, so it is written into the notebook here and lands in the final commit.
 - Include links to published outputs, checksums, publication identifier, run command, and relevant commit SHAs.
 - Commit the completed notebook and any small curated artifacts intended for git.
 
@@ -180,8 +184,8 @@ VERIFY:
 
 Failures due to bugs or bad setup do not invalidate the process. Use a bounded redo loop:
 
-- If implementation/setup is wrong: redo steps 2 and 4, then rerun.
-- If the experiment spec changes: redo steps 1, 2, 3, and 4.
+- If implementation/setup is wrong: redo Process steps 2 and 4 (checklist items 2, 4-5), then rerun.
+- If the experiment spec changes: redo Process steps 1-4 (checklist items 1-5).
 - If the notebook design summary is still accurate, do not rewrite it just because code bugs were fixed.
 - Log every loop in the checklist with cause, changed files, new commit SHA, and verification evidence.
 

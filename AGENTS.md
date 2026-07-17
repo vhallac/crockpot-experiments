@@ -19,9 +19,17 @@ Every experiment group must have a README or equivalent preamble that states:
 3. how to run a local smoke test;
 4. how generated outputs are handled.
 
+Reproducible runs record their lab notebook entries in `experiments/<experiment-id>/NOTEBOOK.md`, newest entry first. The notebook is a durable git artifact: commit the pre-run entry before the run and the completed entry after analysis, per the reproducible-research skill.
+
 Experiment implementations live under `experiments/<experiment-id>/`. If an experiment contains an importable package, place that package inside the experiment directory and add the experiment package roots to `PYTHONPATH` for direct module execution.
 
 Each experiment's own `spec.md`/README is authoritative for that experiment. Do not treat `experiments/dead-keys/spec.md` as global guidance outside the dead-key experiment group.
+
+## Reproducible experiment methodology
+
+Use the project skill `.pi/skills/reproducible-research` as the procedural source of truth for full experiment runs: pre-run lab notebook entries, pre-run commits, external output publication, analysis, and completion evidence. Sections below supply the project-specific parameters that skill defers to (notebook path, publication medium, tag convention, scratch area).
+
+Per-run throw-away checklists and other disposable reports belong under `temp/`, which is the repository's scratch convention and is ignored by git.
 
 ## Environment and package management
 
@@ -48,6 +56,14 @@ Generated experiment outputs are valuable but can become huge. Default policy:
 - For paper-bound results, create a small curated directory such as `paper-artifacts/<experiment-id>/` or an experiment-local `artifacts/` directory, with provenance pointing back to the external/raw run location.
 - If raw results need preservation, store them outside git in external storage and commit a manifest with paths, hashes, model revisions, command lines, and dates.
 - For reproducible-research publication in this repository, use GitHub Release assets as the default external publication medium for packaged outputs, unless the user chooses another store for a run.
+
+GitHub Release conventions for reproducible runs:
+
+- Tag: `run/<experiment-id>/<YYYYMMDD>`; append `-2`, `-3`, … for additional same-day runs of the same experiment.
+- Create releases with the `gh` CLI (for example `gh release create <tag> <assets...> --notes-file <notes>`); mark them as pre-release if the analysis is not yet complete.
+- Release notes must reference the pre-run commit SHA, the final commit SHA once available, and the run command.
+- Upload a `SHA256SUMS` file alongside the packaged assets. The same hashes go into the committed run manifest, so the release and the git-side manifest can verify each other.
+- Post-publication verification: list assets (`gh release view <tag> --json assets`) and re-download at least the checksum file to confirm integrity.
 
 ## Local and host-specific wrappers
 
