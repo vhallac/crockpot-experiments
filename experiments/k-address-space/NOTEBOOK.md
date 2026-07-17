@@ -152,7 +152,7 @@ The implementation change is execution-only: `_capture_gpt2_k()` no longer copie
 Run on RunPod L4 from a committed repository state, using only non-interactive external-IP SSH command arguments:
 
 ```bash
-PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run \
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_VENV=/workspace/dead-keys-census-cache/venvs/cuda-system DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run \
   -m kaddress.scripts.address_purity \
   --model gpt2 \
   --device cuda \
@@ -179,12 +179,34 @@ A valid full run should produce 144 per-head rows (12 layers × 12 heads), a man
 
 ### Results
 
-_Pending run._
+Run completed on RunPod `dead-weight-m1-replacement-20260717190712` using the existing `/workspace/dead-keys-census-cache/venvs/cuda-system` CUDA venv with `DEAD_KEYS_CUDA_SKIP_INSTALL=1`. The erroneous `/workspace/dead-keys-census-cache/venvs/cuda-lite` environment was removed before rerun.
+
+Outputs under `outputs/k_address_space_m1_gpt2_full_cuda_20260717/`:
+
+- `kaddress_m1_gpt2.csv` — 12,438 bytes; SHA256 `e3f976f94f7e3b38be37a39477e4ecd6af947c6545324a732cb97ff9d7f3e07d`
+- `kaddress_manifest_gpt2.json` — 647 bytes; SHA256 `fc9cb196224c3d64e3bbb1bd4d8fe107384c122e13c8bd050eefe8f0fcbd4588`
+- `kaddress_mentions_gpt2.npz` — 48,325,922 bytes; SHA256 `7154ddd904a5878d28895959ee61298e6e1437f69e39efc7882d347f9cb76c7b`
+
+Manifest highlights: `limit_docs=999`, `doc_count=36`, `mention_token_rows=193536`, `max_doc_tokens=829`, `requested_device=cuda`, `cuda_available=true`, `cuda_device=NVIDIA L4`, `torch=2.8.0+cu128`.
+
+During the full rerun, external `nvidia-smi` sampling observed the process on GPU with 91% GPU utilization, 4,170 MiB GPU memory used, and PID 1542 using 4,164 MiB.
 
 ### Analysis
 
-_Pending output analysis._
+The implemented Track A / M1 GPT-2 full CUDA run produced 144 per-head rows and found `address_heads_m1=0/144` under the current threshold requiring AUC > 0.9 against both same-type/different-referent and position-matched controls.
+
+Aggregate AUCs across heads were modest: mean same-referent-vs-same-type-different-referent AUC `0.502206`; mean same-referent-vs-position-matched-different-referent AUC `0.128059`.
+
+Top same-type AUC rows remained far below the address-head threshold. Best observed row was layer 3 head 4 with same-type AUC `0.614722` and position-matched AUC `0.386818`.
+
+### Published Measurements
+
+Published as a GitHub release artifact bundle:
+
+- Release: https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-gpt2-full-cuda-20260717
+- Bundle: `k_address_space_m1_gpt2_full_cuda_20260717.tgz` — 47,079,221 bytes; SHA256 `b60dbd9e0693002cc6fe76baff497f2d6260d2606622f7149670bd218028bce4`
+- Per-file checksums are attached as `SHA256SUMS` in the release.
 
 ### Conclusion / Next Step
 
-_Pending._
+This run is a valid CUDA execution of the current implemented GPT-2 Track A / M1 slice, not an environmental failure. It does not show address heads by the pre-registered M1 threshold in GPT-2 for this implemented synthetic slice. RoPE models are not expected to rescue this specific observation; if anything, RoPE makes a clean fixed K-address-space interpretation harder. Next step is to decide whether to extend the implementation toward the remaining spec items or revise the synthetic Track A slice before moving to RoPE models.
