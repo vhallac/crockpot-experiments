@@ -47,6 +47,7 @@ Generated experiment outputs are valuable but can become huge. Default policy:
 - Commit small, durable artifacts only when useful: README findings, run manifests, compact summary tables, plots selected for a paper, and scripts that reproduce the result.
 - For paper-bound results, create a small curated directory such as `paper-artifacts/<experiment-id>/` or an experiment-local `artifacts/` directory, with provenance pointing back to the external/raw run location.
 - If raw results need preservation, store them outside git in external storage and commit a manifest with paths, hashes, model revisions, command lines, and dates.
+- For reproducible-research publication in this repository, use GitHub Release assets as the default external publication medium for packaged outputs, unless the user chooses another store for a run.
 
 ## Local and host-specific wrappers
 

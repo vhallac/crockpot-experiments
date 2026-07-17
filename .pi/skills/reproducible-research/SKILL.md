@@ -142,23 +142,12 @@ VERIFY:
 TRIGGER: The experiment run produced outputs that should be preserved or shared.
 
 ACTION:
-- Package raw/generated outputs as release assets or another external artifact store, rather than committing bulky outputs to git.
-- For GitHub-based projects, prefer GitHub Releases when suitable. Use `gh` if available and authenticated; otherwise use the project’s chosen publication mechanism.
+- Package raw/generated outputs as an artifact bundle for external publication, rather than committing bulky outputs to git.
+- Check local project instructions (for example `AGENTS.md`) for the chosen publication medium, such as GitHub Releases, object storage, a model/dataset registry, or another artifact store.
 - Generate checksums before upload.
 
-Suggested GitHub Release flow:
-
-```bash
-# choose a meaningful tag, e.g. exp-<experiment-id>-<YYYYMMDD>
-sha256sum <artifact-files> > SHA256SUMS
-
-gh release create <tag> <artifact-files> SHA256SUMS \
-  --title "<experiment title>" \
-  --notes-file <release-notes.md>
-```
-
 VERIFY:
-- Record release URL or artifact location.
+- Record publication URL, artifact location, or publication identifier.
 - Download or inspect the published asset list.
 - Verify checksums when practical.
 
@@ -179,7 +168,7 @@ TRIGGER: Output analysis is complete or an external analysis report has been rec
 
 ACTION:
 - Fill in notebook Results, Analysis, Conclusion / Next Step, and final provenance.
-- Include links to published outputs, checksums, release tag, run command, and relevant commit SHAs.
+- Include links to published outputs, checksums, publication identifier, run command, and relevant commit SHAs.
 - Commit the completed notebook and any small curated artifacts intended for git.
 
 VERIFY:
@@ -212,7 +201,7 @@ Durable Artifacts:
 - Notebook: <path>
 - Pre-run commit: <sha>
 - Final commit: <sha>
-- Published outputs: <release/artifact URL>
+- Published outputs: <publication/artifact URL>
 - Checksums: <path or URL>
 
 Verification:
