@@ -109,29 +109,32 @@ curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphq
   | jq '.data.myself.pods[] | select(.name|test("dead-weight")) | {id,name,desiredStatus,podHostId:.machine.podHostId,gpu:.machine.gpuDisplayName}'
 ```
 
-Proxy shapes:
+Proxy shape:
 
 ```bash
-# Non-interactive one-shot command. This is the default for agent automation.
-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-  <machine.podHostId>@ssh.runpod.io -i ~/.ssh/id_ed25519 -- \
-  'bash -lc '\''cd /workspace/dead-keys-census && nvidia-smi'\'''
-
-# True interactive work only. Use pilotty (or another PTY supervisor), not a raw tool call.
-pilotty spawn -- ssh -tt <machine.podHostId>@ssh.runpod.io -i ~/.ssh/id_ed25519
+# RunPod proxy access is interactive. Drive it through pilotty, never a raw bash tool call.
+pilotty spawn --name runpod-ssh -- \
+  ssh -tt <machine.podHostId>@ssh.runpod.io -i ~/.ssh/id_ed25519
 ```
 
 CRITICAL COMMAND-EXECUTION RULES:
 
+- Treat `ssh.runpod.io` proxy sessions as interactive-only in this harness.
+  Empirically, the proxy rejects no-PTY SSH (`Your SSH client doesn't support
+  PTY`) and ignores SSH command arguments even with `-tt`, leaving a login shell
+  at the root prompt.
 - Do **not** pipe commands into `ssh -tt`, for example `printf ... | ssh -tt ...`.
   On the RunPod proxy this opens an interactive login shell, echoes the text into
   that shell, and can leave the agent tool call stuck at a root prompt.
-- For scripted work, pass the command as an SSH argument after `--`, usually as
-  `bash -lc '<command>'`. Add a local tool timeout for every remote command.
-- For long-running jobs, the one-shot command should start a remote supervisor
-  (`nohup`, `setsid`, `tmux`, etc.), print the PID/log path, and exit.
-- If interaction is genuinely required, use `pilotty`; never open raw interactive
-  SSH in a normal `bash` tool call.
+- Do **not** run raw `ssh -tt ...@ssh.runpod.io` in a normal `bash` tool call.
+  Use `pilotty` for proxy access so prompts, screen state, and cleanup are
+  controlled explicitly.
+- For long-running jobs launched through pilotty, type a command that starts a
+  remote supervisor (`nohup`, `setsid`, `tmux`, etc.), prints the PID/log path,
+  returns to the prompt, then verify with a separate command in the same PTY.
+- If a true non-interactive SSH command is required, first verify a non-proxy
+  endpoint supports it with a harmless bounded command; do not assume the
+  RunPod proxy supports command execution.
 
 NOTES:
 
