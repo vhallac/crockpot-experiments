@@ -15,14 +15,18 @@ The primary predictions are:
 
 ## How to execute
 
-Implementation is not present yet. When added, it should follow the repository experiment methodology:
+The first implemented slice runs Track A + M1 address purity for GPT-2 `k_pre` keys:
 
 ```bash
-uv sync
-uv run python -m <k_address_space_module> --model gpt2 --limit-docs 2 --output-dir outputs/k_address_space_smoke_gpt2
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.address_purity \
+  --model gpt2 \
+  --limit-docs 2 \
+  --limit-layers 1 \
+  --limit-heads 1 \
+  --output-dir outputs/k_address_space_m1_gpt2_smoke
 ```
 
-Before full runs, implement and pass the sanity gates in `spec.md`, especially key reconstruction from `k_pre` + RoPE to `k_post` and a perturbation check that proves the gate can fail.
+Before full runs, implement and pass the remaining sanity gates in `spec.md`, especially key reconstruction from `k_pre` + RoPE to `k_post` and a perturbation check that proves the gate can fail for RoPE models.
 
 ## Result policy
 
