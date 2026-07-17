@@ -94,7 +94,7 @@ A full implemented run should produce 144 per-head rows (12 layers × 12 heads),
 
 - Spec: `experiments/k-address-space/spec.md`
 - Code branch: `main`
-- Pre-run commit: _pending commit before run_
+- Pre-run commit: `1dbe4e6` for the first attempt; redo fix commit pending after failed attempt.
 - Planned output location: `outputs/k_address_space_m1_gpt2_full_20260717`
 - Random seed: default script seed `0`
 - Environment: RunPod NVIDIA L4 via `scripts/cuda-run`
@@ -102,11 +102,28 @@ A full implemented run should produce 144 per-head rows (12 layers × 12 heads),
 
 ### Results
 
-_Pending run._
+First RunPod attempt failed before producing usable outputs. The process was stopped after it stayed CPU-bound and logged a GPT-2 context warning:
+
+- Active process: `python3 -m kaddress.scripts.address_purity ...`, PID 875, about 102% CPU.
+- GPU: 0% utilization during inspection.
+- Warning: `Token indices sequence length is longer than the specified maximum sequence length for this model (1507 > 1024)`.
+- Output directory: no result files produced.
+
+Redo fix: Track A filler is now inserted once per update round instead of after every referent sentence, long filler was shortened, tokenization uses explicit `truncation=True, max_length=...`, an over-budget generator guard fails fast, and M1 pair collection is vectorized per document.
+
+Verification before relaunch:
+
+```text
+36 Track A docs; max GPT-2 tokens = 829; docs over 950 = 0
+outputs/k_address_space_m1_gpt2_fix_smoke/ written by 2-doc smoke
+outputs/k_address_space_m1_gpt2_fix_full_localcheck/ written by 36-doc 1-layer/1-head check
+```
+
+Full rerun results are pending.
 
 ### Analysis
 
-_Pending output analysis._
+_Pending successful rerun output analysis._
 
 ### Conclusion / Next Step
 

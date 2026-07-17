@@ -55,7 +55,7 @@ def generate_track_a(*, seed: int = 0, limit_docs: int | None = None) -> list[Do
                     parts: list[str] = []
                     mentions: list[Mention] = []
                     mention_counts = {name: 0 for name in chosen}
-                    filler = " The room is quiet." if gap == "short" else " The room is quiet while the clock ticks and the observer writes another neutral note."
+                    filler = " The room is quiet." if gap == "short" else " The room stays quiet while the observer writes a neutral note."
                     for update_idx in range(n_updates):
                         order = chosen[:]
                         rng.shuffle(order)
@@ -81,7 +81,7 @@ def generate_track_a(*, seed: int = 0, limit_docs: int | None = None) -> list[Do
                                 )
                             )
                             mention_counts[name] += 1
-                            _append(parts, filler)
+                        _append(parts, filler)
                     _append(parts, f" Question: where is {probe} now?")
                     docs.append(
                         Document(

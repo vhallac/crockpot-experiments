@@ -28,8 +28,14 @@ def _environment_summary(device: torch.device) -> dict[str, Any]:
     }
 
 
-def _token_positions_for_mentions(tokenizer: Any, doc: Document) -> list[dict[str, Any]]:
-    encoded = tokenizer(doc.text, return_offsets_mapping=True, return_tensors="pt")
+def _token_positions_for_mentions(tokenizer: Any, doc: Document, *, max_length: int) -> tuple[list[dict[str, Any]], dict[str, torch.Tensor]]:
+    encoded = tokenizer(
+        doc.text,
+        return_offsets_mapping=True,
+        return_tensors="pt",
+        truncation=True,
+        max_length=max_length,
+    )
     offsets = encoded.pop("offset_mapping")[0].tolist()
     rows: list[dict[str, Any]] = []
     for mention in doc.mentions:
@@ -82,13 +88,13 @@ def _extract_mentions(lm: Any, docs: list[Document], *, device: torch.device, ma
     rows: list[dict[str, Any]] = []
     vectors: list[np.ndarray] = []
     for doc in docs:
-        mention_rows, encoded = _token_positions_for_mentions(lm.tokenizer, doc)
+        mention_rows, encoded = _token_positions_for_mentions(lm.tokenizer, doc, max_length=max_length)
         if not mention_rows:
             continue
-        input_ids = encoded["input_ids"][:, :max_length].to(device)
+        input_ids = encoded["input_ids"].to(device)
         attention_mask = encoded.get("attention_mask")
         if attention_mask is not None:
-            attention_mask = attention_mask[:, :max_length].to(device)
+            attention_mask = attention_mask.to(device)
         mention_rows = [r for r in mention_rows if r["token_pos"] < input_ids.shape[1]]
         if not mention_rows:
             continue
@@ -148,20 +154,29 @@ def _summarize_auc(frame: pd.DataFrame) -> pd.DataFrame:
         diff_ref_same_type: list[float] = []
         diff_ref_position_matched: list[float] = []
         diff_surface_same_ref: list[float] = []
-        for i in range(len(meta)):
-            for j in range(i + 1, len(meta)):
-                if meta.loc[i, "doc_id"] != meta.loc[j, "doc_id"]:
-                    continue
-                sim = float(sims[i, j])
-                same = meta.loc[i, "referent_id"] == meta.loc[j, "referent_id"]
-                if same:
-                    same_ref.append(sim)
-                    if meta.loc[i, "surface_form"] != meta.loc[j, "surface_form"]:
-                        diff_surface_same_ref.append(sim)
-                elif meta.loc[i, "referent_type"] == meta.loc[j, "referent_type"]:
-                    diff_ref_same_type.append(sim)
-                    if abs(int(meta.loc[i, "token_pos"]) - int(meta.loc[j, "token_pos"])) <= 25:
-                        diff_ref_position_matched.append(sim)
+        for _, doc_meta in meta.groupby("doc_id", sort=False):
+            doc_idx = doc_meta.index.to_numpy(dtype=np.int64)
+            if len(doc_idx) < 2:
+                continue
+            i_rel, j_rel = np.triu_indices(len(doc_idx), k=1)
+            i_abs = doc_idx[i_rel]
+            j_abs = doc_idx[j_rel]
+            doc_sims = sims[i_abs, j_abs]
+            refs = doc_meta["referent_id"].to_numpy()
+            types = doc_meta["referent_type"].to_numpy()
+            surfaces = doc_meta["surface_form"].to_numpy()
+            positions = doc_meta["token_pos"].to_numpy(dtype=np.int64)
+            same = refs[i_rel] == refs[j_rel]
+            same_type = types[i_rel] == types[j_rel]
+            diff_surface = surfaces[i_rel] != surfaces[j_rel]
+            position_matched = np.abs(positions[i_rel] - positions[j_rel]) <= 25
+            same_ref.extend(doc_sims[same].astype(float).tolist())
+            diff_surface_same_ref.extend(doc_sims[same & diff_surface].astype(float).tolist())
+            diff_same_type = (~same) & same_type
+            diff_ref_same_type.extend(doc_sims[diff_same_type].astype(float).tolist())
+            diff_ref_position_matched.extend(doc_sims[diff_same_type & position_matched].astype(float).tolist())
+        auc_same_type = _auc(same_ref, diff_ref_same_type)
+        auc_position = _auc(same_ref, diff_ref_position_matched)
         rows.append(
             {
                 "layer": int(layer),
@@ -169,12 +184,10 @@ def _summarize_auc(frame: pd.DataFrame) -> pd.DataFrame:
                 "pairs_same_ref": len(same_ref),
                 "pairs_same_type_diff_ref": len(diff_ref_same_type),
                 "pairs_position_matched_diff_ref": len(diff_ref_position_matched),
-                "auc_same_ref_vs_same_type_diff_ref": _auc(same_ref, diff_ref_same_type),
-                "auc_same_ref_vs_position_matched_diff_ref": _auc(same_ref, diff_ref_position_matched),
+                "auc_same_ref_vs_same_type_diff_ref": auc_same_type,
+                "auc_same_ref_vs_position_matched_diff_ref": auc_position,
                 "auc_diff_surface_same_ref_vs_same_type_diff_ref": _auc(diff_surface_same_ref, diff_ref_same_type),
-                "address_head_m1": bool(
-                    _auc(same_ref, diff_ref_same_type) > 0.9 and _auc(same_ref, diff_ref_position_matched) > 0.9
-                ),
+                "address_head_m1": bool(auc_same_type > 0.9 and auc_position > 0.9),
             }
         )
     return pd.DataFrame(rows)
@@ -189,6 +202,14 @@ def run(args: argparse.Namespace) -> None:
 
     docs = generate_track_a(seed=args.seed, limit_docs=args.limit_docs)
     lm = load_model(args.model, device=device, revision=args.revision)
+    doc_token_lengths = [len(lm.tokenizer(doc.text).input_ids) for doc in docs]
+    over_budget = [(doc.doc_id, length) for doc, length in zip(docs, doc_token_lengths, strict=True) if length > args.max_length]
+    if over_budget:
+        examples = ", ".join(f"{doc_id}={length}" for doc_id, length in over_budget[:5])
+        raise RuntimeError(
+            f"Track A generator produced {len(over_budget)} docs over --max-length={args.max_length}; "
+            f"examples: {examples}"
+        )
     if lm.tag != "gpt2":
         raise NotImplementedError("the first implemented address-purity slice is gpt2-only")
     mention_frame = _extract_mentions(lm, docs, device=device, max_length=args.max_length)
@@ -215,6 +236,8 @@ def run(args: argparse.Namespace) -> None:
         "limit_layers": args.limit_layers,
         "limit_heads": args.limit_heads,
         "doc_count": len(docs),
+        "max_doc_tokens": max(doc_token_lengths) if doc_token_lengths else 0,
+        "max_length": args.max_length,
         "mention_token_rows": int(len(mention_frame)),
         "environment": _environment_summary(device),
     }
