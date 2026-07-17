@@ -66,10 +66,13 @@ def _capture_gpt2_k(lm: Any, input_ids: torch.Tensor, attention_mask: torch.Tens
         def hook(_module: torch.nn.Module, _inputs: tuple[torch.Tensor, ...], output: torch.Tensor) -> None:
             _q, k, _v = output.detach().float().split(lm.d_model, dim=-1)
             k = k.view(k.shape[0], k.shape[1], lm.n_heads, lm.d_head)
+            # Keep keys on the requested execution device.  The previous version
+            # copied every layer to CPU here, so the run only touched CUDA during
+            # the brief model forward and then did all analysis with NumPy/pandas.
             if layer_idx == len(captured):
-                captured.append(k.cpu())
+                captured.append(k)
             else:
-                captured[layer_idx] = k.cpu()
+                captured[layer_idx] = k
 
         return hook
 
@@ -110,57 +113,55 @@ def _extract_mentions(lm: Any, docs: list[Document], *, device: torch.device, ma
                     out_row["head"] = head
                     out_row["vector_idx"] = len(vectors)
                     rows.append(out_row)
-                    vectors.append(k_by_layer[layer, pos, head].numpy())
+                    vectors.append(k_by_layer[layer, pos, head])
     frame = pd.DataFrame(rows)
-    frame.attrs["vectors"] = np.stack(vectors).astype(np.float32) if vectors else np.zeros((0, lm.d_head), dtype=np.float32)
+    if vectors:
+        frame.attrs["vectors"] = torch.stack(vectors).to(dtype=torch.float32)
+    else:
+        device = next(lm.model.parameters()).device
+        frame.attrs["vectors"] = torch.zeros((0, lm.d_head), dtype=torch.float32, device=device)
     return frame
 
 
-def _cosine_matrix(x: np.ndarray) -> np.ndarray:
-    centered = x - x.mean(axis=0, keepdims=True)
-    norms = np.linalg.norm(centered, axis=1, keepdims=True)
-    centered = centered / np.clip(norms, 1e-12, None)
+def _cosine_matrix(x: torch.Tensor) -> torch.Tensor:
+    centered = x - x.mean(dim=0, keepdim=True)
+    norms = torch.linalg.vector_norm(centered, dim=1, keepdim=True).clamp_min(1e-12)
+    centered = centered / norms
     return centered @ centered.T
 
 
-def _auc(positive: list[float], negative: list[float]) -> float:
-    if not positive or not negative:
+def _concat_or_empty(parts: list[torch.Tensor], *, device: torch.device) -> torch.Tensor:
+    if not parts:
+        return torch.empty(0, dtype=torch.float32, device=device)
+    return torch.cat(parts).to(dtype=torch.float32)
+
+
+def _auc(positive: torch.Tensor, negative: torch.Tensor) -> float:
+    if positive.numel() == 0 or negative.numel() == 0:
         return float("nan")
-    scores = np.asarray(positive + negative, dtype=np.float64)
-    labels = np.asarray([1] * len(positive) + [0] * len(negative), dtype=np.int32)
-    order = np.argsort(scores, kind="mergesort")
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.arange(1, len(scores) + 1, dtype=np.float64)
-    # Average ranks for ties.
-    unique_scores, inverse = np.unique(scores, return_inverse=True)
-    for idx in range(len(unique_scores)):
-        tied = inverse == idx
-        if tied.sum() > 1:
-            ranks[tied] = ranks[tied].mean()
-    pos_ranks = ranks[labels == 1].sum()
-    n_pos = len(positive)
-    n_neg = len(negative)
-    return float((pos_ranks - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+    cmp = positive[:, None] - negative[None, :]
+    auc = (cmp.gt(0).to(torch.float32) + 0.5 * cmp.eq(0).to(torch.float32)).mean()
+    return float(auc.detach().cpu().item())
 
 
 def _summarize_auc(frame: pd.DataFrame) -> pd.DataFrame:
     vectors = frame.attrs["vectors"]
     rows: list[dict[str, Any]] = []
     for (layer, head), group in frame.groupby(["layer", "head"]):
-        idx = group["vector_idx"].to_numpy(dtype=np.int64)
-        sims = _cosine_matrix(vectors[idx])
+        idx = torch.as_tensor(group["vector_idx"].to_numpy(dtype=np.int64), device=vectors.device)
+        sims = _cosine_matrix(vectors.index_select(0, idx))
         meta = group.reset_index(drop=True)
-        same_ref: list[float] = []
-        diff_ref_same_type: list[float] = []
-        diff_ref_position_matched: list[float] = []
-        diff_surface_same_ref: list[float] = []
+        same_ref_parts: list[torch.Tensor] = []
+        diff_ref_same_type_parts: list[torch.Tensor] = []
+        diff_ref_position_matched_parts: list[torch.Tensor] = []
+        diff_surface_same_ref_parts: list[torch.Tensor] = []
         for _, doc_meta in meta.groupby("doc_id", sort=False):
             doc_idx = doc_meta.index.to_numpy(dtype=np.int64)
             if len(doc_idx) < 2:
                 continue
             i_rel, j_rel = np.triu_indices(len(doc_idx), k=1)
-            i_abs = doc_idx[i_rel]
-            j_abs = doc_idx[j_rel]
+            i_abs = torch.as_tensor(doc_idx[i_rel], device=vectors.device)
+            j_abs = torch.as_tensor(doc_idx[j_rel], device=vectors.device)
             doc_sims = sims[i_abs, j_abs]
             refs = doc_meta["referent_id"].to_numpy()
             types = doc_meta["referent_type"].to_numpy()
@@ -170,20 +171,27 @@ def _summarize_auc(frame: pd.DataFrame) -> pd.DataFrame:
             same_type = types[i_rel] == types[j_rel]
             diff_surface = surfaces[i_rel] != surfaces[j_rel]
             position_matched = np.abs(positions[i_rel] - positions[j_rel]) <= 25
-            same_ref.extend(doc_sims[same].astype(float).tolist())
-            diff_surface_same_ref.extend(doc_sims[same & diff_surface].astype(float).tolist())
-            diff_same_type = (~same) & same_type
-            diff_ref_same_type.extend(doc_sims[diff_same_type].astype(float).tolist())
-            diff_ref_position_matched.extend(doc_sims[diff_same_type & position_matched].astype(float).tolist())
+            same_t = torch.as_tensor(same, dtype=torch.bool, device=vectors.device)
+            diff_surface_t = torch.as_tensor(diff_surface, dtype=torch.bool, device=vectors.device)
+            diff_same_type_t = torch.as_tensor((~same) & same_type, dtype=torch.bool, device=vectors.device)
+            position_matched_t = torch.as_tensor(position_matched, dtype=torch.bool, device=vectors.device)
+            same_ref_parts.append(doc_sims[same_t])
+            diff_surface_same_ref_parts.append(doc_sims[same_t & diff_surface_t])
+            diff_ref_same_type_parts.append(doc_sims[diff_same_type_t])
+            diff_ref_position_matched_parts.append(doc_sims[diff_same_type_t & position_matched_t])
+        same_ref = _concat_or_empty(same_ref_parts, device=vectors.device)
+        diff_surface_same_ref = _concat_or_empty(diff_surface_same_ref_parts, device=vectors.device)
+        diff_ref_same_type = _concat_or_empty(diff_ref_same_type_parts, device=vectors.device)
+        diff_ref_position_matched = _concat_or_empty(diff_ref_position_matched_parts, device=vectors.device)
         auc_same_type = _auc(same_ref, diff_ref_same_type)
         auc_position = _auc(same_ref, diff_ref_position_matched)
         rows.append(
             {
                 "layer": int(layer),
                 "head": int(head),
-                "pairs_same_ref": len(same_ref),
-                "pairs_same_type_diff_ref": len(diff_ref_same_type),
-                "pairs_position_matched_diff_ref": len(diff_ref_position_matched),
+                "pairs_same_ref": int(same_ref.numel()),
+                "pairs_same_type_diff_ref": int(diff_ref_same_type.numel()),
+                "pairs_position_matched_diff_ref": int(diff_ref_position_matched.numel()),
                 "auc_same_ref_vs_same_type_diff_ref": auc_same_type,
                 "auc_same_ref_vs_position_matched_diff_ref": auc_position,
                 "auc_diff_surface_same_ref_vs_same_type_diff_ref": _auc(diff_surface_same_ref, diff_ref_same_type),
@@ -246,7 +254,11 @@ def run(args: argparse.Namespace) -> None:
     vectors_path = out / f"kaddress_mentions_{args.model}.npz"
     summary.to_csv(summary_path, index=False)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    np.savez_compressed(vectors_path, vectors=mention_frame.attrs["vectors"], rows=mention_frame.to_json(orient="records"))
+    np.savez_compressed(
+        vectors_path,
+        vectors=mention_frame.attrs["vectors"].detach().cpu().numpy(),
+        rows=mention_frame.to_json(orient="records"),
+    )
     print(f"wrote {summary_path}")
     print(f"wrote {manifest_path}")
     print(f"wrote {vectors_path}")

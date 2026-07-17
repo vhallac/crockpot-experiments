@@ -134,3 +134,57 @@ No scientific result is available from the interrupted full run. The failure is 
 ### Conclusion / Next Step
 
 Conclude this attempt as failed. Patch the M1 implementation so captured key tensors remain on the requested device and the cosine/AUC summarization can run on CUDA, then create a new pre-run entry and rerun only after GPU-use verification.
+
+## 2026-07-17 — K-address-space M1 GPT-2 full CUDA rerun after GPU patch
+
+### Question / Hypothesis
+
+Does the implemented Track A / M1 address-purity slice show same-referent key-neighborhood signal across all GPT-2 layers and heads on the full deterministic Track A generator output, when the extraction and analysis path keeps key vectors and pairwise cosine/AUC computation on CUDA?
+
+### Experiment Design Summary
+
+This is a redo of the interrupted GPT-2 M1 full implemented Track A run. The scientific design is unchanged: deterministic Track A documents, GPT-2 `k_pre`, all 12 layers and 12 heads, head-mean-centered cosine, and pairwise AUC against same-type/different-referent and position-matched controls.
+
+The implementation change is execution-only: `_capture_gpt2_k()` no longer copies keys to CPU, mention vectors are stored as torch tensors on the requested device, cosine matrices are computed with torch, and AUC scoring uses torch tensors before final CSV/NPZ serialization.
+
+### Planned Procedure
+
+Run on RunPod L4 from a committed repository state, using only non-interactive external-IP SSH command arguments:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run \
+  -m kaddress.scripts.address_purity \
+  --model gpt2 \
+  --device cuda \
+  --limit-docs 999 \
+  --output-dir outputs/k_address_space_m1_gpt2_full_cuda_20260717
+```
+
+Before accepting the run as valid, verify from outside the process that the manifest reports `requested_device: cuda`, `cuda_available: true`, and an NVIDIA L4 device, and sample `nvidia-smi` during execution for nonzero GPU memory/utilization.
+
+### Expected Signal / Interpretation Plan
+
+A valid full run should produce 144 per-head rows (12 layers × 12 heads), a manifest, and compact mention vectors. Address-head calls require AUC > 0.9 against both control classes. Diff-surface AUC remains the lexical-vs-semantic diagnostic. If GPU utilization remains absent after this patch, treat the attempt as another setup/implementation failure rather than a scientific result.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/spec.md`
+- Code branch: `main`
+- Pre-run commit: pending
+- Planned output location: `outputs/k_address_space_m1_gpt2_full_cuda_20260717`
+- Random seed: default script seed `0`
+- Environment: RunPod NVIDIA L4 via `scripts/cuda-run`
+- Model: `gpt2` via Hugging Face default revision
+- Local verification before commit: 2-doc smoke and 36-doc/1-layer local CPU checks passed with the torch execution path.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
