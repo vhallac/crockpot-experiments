@@ -1,5 +1,7 @@
 # Queryability experiments
 
+## What this measures
+
 This experiment family studies the paired geometry of a transformer's query and key maps.
 
 For one attention head, ignoring RoPE and attention scaling:
@@ -24,6 +26,10 @@ The question is not only whether `W_Q` or `W_K` have small singular directions i
 
 If so, those directions are weakly visible to all queries that can be produced through `W_Q`, in the weights-only linear sense.
 
+## Expected signal
+
+The expected signal is a per-head paired bilinear map with sharply bounded interaction rank and possible near-null key-producing residual directions. For GPT-2 layer 0 head 0, the smoke result already showed `paired_rank=64` and `paired_erank~57`, consistent with a full-rank head whose paired interaction dimension is bounded by the head width.
+
 ## Scope: raw pre-RoPE weights-only paired SVD
 
 GPT-2 is the simplest starting model because it has no RoPE. Pythia and Qwen can also be run through the same raw calculation, but the result must be interpreted as **pre-RoPE projection-weight geometry**:
@@ -43,7 +49,9 @@ The experiment computes, per layer/head:
 
 This is a weights-only experiment. It can say that a direction is geometrically weak or impossible for the paired maps. It cannot yet say whether real activations visit that direction during inference.
 
-## Smoke command
+## How to execute
+
+### Smoke command
 
 With the project `uv` environment (installs the heavy ROCm/CUDA torch wheel):
 
@@ -80,6 +88,10 @@ The paired spectrum `S_QTK` has `d_model` singular values, but since
 are ~0. For GPT-2 layer 0 head 0 this gives `paired_rank=64` (= d_head)
 and `paired_erank~57`, consistent with a full-rank head whose paired
 interaction dimension is bounded by the head width.
+
+## Result policy
+
+Write generated queryability outputs under `outputs/`. Do not commit full `.npz`, CSV, or manifest result sets by default unless they are intentionally curated as a small paper artifact.
 
 ## Later RunPod raw-SVD commands
 

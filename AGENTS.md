@@ -1,32 +1,77 @@
-# Dead Keys Census — Project Notes
+# Transformer Mechanistic Experiments — Agent Notes
 
-## Layout
+## Repository purpose
 
-- `dead_key_census_spec.md` — source specification.
-- `deadkeys/` — Phase 1 weights-only census implementation.
-  - `common/loading.py` — HuggingFace model loading, per-architecture Q/K slicing, sanity checks.
-  - `common/spectra.py` — SVD, effective rank, dead-fraction, random baseline math.
-  - `common/rope.py` — RoPE band partition helpers.
-  - `scripts/census.py` — CLI for Phase 1 census.
-  - `scripts/plots.py` — CLI for Phase 1 plots from parquet/CSV output.
-- `outputs/` — generated census tables, spectra `.npz`, and plots.
-- `requirements-runpod-cuda.txt` — CUDA dependency set for NVIDIA RunPod hosts.
-- `scripts/cuda-run`, `scripts/cuda-python` — dedicated CUDA virtualenv wrappers for RunPod; they do not alter the local ROCm environment.
-- `scripts/runpod-persistent-cache-setup` — in-pod setup script that moves heavyweight model/package caches to the RunPod network volume.
+This repository is an experiment collection for transformer-mechanistic probes, not a single-purpose dead-key project. Keep experiment groups independently understandable, but reuse shared loading, execution, and RunPod infrastructure where practical.
 
-## Environment
+Current experiment groups:
 
-Use `uv` / `uvx`; do not install packages as root.
+- `deadkeys/` — original dead-key census and follow-on RoPE/intervention phases. See `deadkeys/README.md` and `dead_key_census_spec.md`.
+- `queryability/` — paired `W_Q^T W_K` query/key geometry. See `queryability/README.md`.
+- `experiments/k-address-space/` — pre-registered K-space/content-address experiment. See `experiments/k-address-space/README.md` and `spec.md`.
 
-Typical commands:
+## Experiment documentation standard
+
+Every experiment group must have a README or equivalent preamble that states:
+
+1. what it measures;
+2. what signal or outcome it expects;
+3. how to run a local smoke test;
+4. how generated outputs are handled.
+
+For new experiments, prefer `experiments/<experiment-id>/` for specs and early design notes. Promote to a top-level Python package only when implementation code exists and reuse justifies it.
+
+Each experiment's own `spec.md`/README is authoritative for that experiment. Do not treat `dead_key_census_spec.md` as global guidance outside `deadkeys/`.
+
+## Environment and package management
+
+Use `uv` / `uvx`; do not create ad-hoc `venv` directories and do not install packages as root.
+
+Typical local setup:
 
 ```bash
 uv sync
-uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
-uv run python -m deadkeys.scripts.plots --input outputs/census_gpt2.parquet --model gpt2
+uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --output-dir outputs/deadkeys_smoke_gpt2
+uv run python -m queryability.scripts.weights --model gpt2 --limit-layers 1 --limit-heads 1 --output-dir outputs/queryability_smoke_gpt2
 ```
 
-### RunPod NVIDIA/CUDA environment
+The checked-in `pyproject.toml` / `uv.lock` are currently pinned for ROCm PyTorch. On NixOS, generic `uv` Python binaries may not execute; use project wrappers where documented.
+
+## Generated results and paper artifacts
+
+Generated experiment outputs are valuable but can become huge. Default policy:
+
+- Write raw/generated outputs under `outputs/<experiment-id-or-run-id>/`.
+- Keep `outputs/` ignored by git.
+- Do not commit raw `.npz`, parquet, CSV, logs, model dumps, or full extraction directories unless explicitly curated.
+- Commit small, durable artifacts only when useful: README findings, run manifests, compact summary tables, plots selected for a paper, and scripts that reproduce the result.
+- For paper-bound results, create a small curated directory such as `paper-artifacts/<experiment-id>/` or an experiment-local `artifacts/` directory, with provenance pointing back to the external/raw run location.
+- If raw results need preservation, store them outside git in external storage and commit a manifest with paths, hashes, model revisions, command lines, and dates.
+
+## Local and host-specific wrappers
+
+Prefer wrappers over hand-built environments:
+
+```bash
+./scripts/rocm-run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+./scripts/rocm-python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+./scripts/nix-cpu-run -m queryability.scripts.weights --model gpt2 --limit-layers 1 --limit-heads 1 --output-dir outputs/queryability_smoke_gpt2
+```
+
+Use smoke-test limits before full-model runs:
+
+- `--limit-layers 1`
+- `--limit-heads 1`
+- small samples/doc limits appropriate to the experiment
+
+Verify outputs externally before reporting success, for example:
+
+```bash
+test -d outputs/<run-id>
+find outputs/<run-id> -maxdepth 1 -type f | sort
+```
+
+## RunPod NVIDIA/CUDA environment
 
 Use the project skill `.pi/skills/runpod-usage` as the procedural source of truth for RunPod lifecycle, SSH access, pod creation, network-volume handling, persistent-cache setup, CUDA smoke tests, workload stopping, and cost hygiene.
 
@@ -46,8 +91,7 @@ Non-secret RunPod metadata discovered for this project:
 - Current desired status for idle project pods: keep `EXITED`
 - Local RunPod credential env var: `RUNPOD_API_KEY` (do not print or commit value)
 - In-pod GitHub credential env var: `RUNPOD_SECRET_GITHUB_TOKEN` (do not print or commit value)
-- Local `~/.ssh/config`: no `dead-weight`, `runpod`, or pod-id host entry was present during discovery.
-- Reusable private RunPod template: `dead-keys-census-cuda` (id `1zpm2v05rn`).
+- Reusable private RunPod template: `dead-keys-census-cuda` (id `1zpm2v05rn`)
 
 Ad-hoc replacement pod preferences when the latest pod is unavailable:
 
@@ -59,7 +103,7 @@ Ad-hoc replacement pod preferences when the latest pod is unavailable:
 - Prefer the same datacenter / compatible GPU when possible so the existing network volume is available.
 - Attach the network volume at pod creation/deployment time; do not expect to attach one later to an existing pod.
 
-Project paths and cache parameters for RunPod:
+Project paths and cache parameters for RunPod remain legacy-named until the repo/image rename is deliberately performed:
 
 - Repository path in pods: `/workspace/dead-keys-census`
 - Persistent cache root: `/workspace/dead-keys-census-cache`
@@ -71,10 +115,9 @@ Project paths and cache parameters for RunPod:
 - To reuse that venv without reinstalling heavyweight wheels: `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run ...`
 - A failed install into `/workspace/dead-keys-census-cache/uv` hit `Quota exceeded`; prefer the existing venv above unless intentionally rebuilding caches.
 
-RunPod project command examples:
+CUDA sanity check inside a RunPod host after following the RunPod skill:
 
 ```bash
-# CUDA sanity check inside a RunPod host, after following the runpod-usage skill.
 ./scripts/cuda-run - <<'PY'
 import torch
 print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))
@@ -82,26 +125,11 @@ x = torch.ones(16, device='cuda') + 2
 torch.cuda.synchronize()
 print(x.device, x[:3].cpu().tolist())
 PY
-
-# Phase 1 smoke only; do not use full defaults until this shows CUDA use.
-./scripts/cuda-run -m deadkeys.scripts.census \
-  --model pythia410 --limit-layers 1 --limit-heads 1 \
-  --samples 256 --misalign-rotations 2 --device cuda \
-  --output-dir outputs/smoke_pythia_gpu
-
-# Phase 1.5 Pythia certificate/null smoke only. PPL/truncated-attention eval is
-# currently implemented for GPT-2 only, so Pythia smoke uses --skip-ppl.
-./scripts/cuda-run -m deadkeys.scripts.phase1_5 \
-  --model pythia410 --limit-layers 1 --limit-heads 1 \
-  --eval-tokens 1024 --calibration-tokens 256 --observed-tokens 128 \
-  --null-samples 2 --null-dead-samples 128 --null-depths 5 \
-  --allow-smoke-under-200k --skip-ppl --device cuda \
-  --output-dir outputs/phase1_5_smoke_pythia_gpu
 ```
 
 Discovery note: on 2026-07-10, `podResume` for the original `dead-weight` pod failed with `There are not enough free GPUs on the host machine to start this pod`; the replacement `dead-weight-migration` pod was created and configured instead.
 
-### ROCm PyTorch on AMD Radeon 890M
+## ROCm PyTorch on AMD Radeon 890M
 
 This project is pinned to ROCm PyTorch in `pyproject.toml` / `uv.lock`:
 
@@ -116,40 +144,12 @@ export HSA_OVERRIDE_GFX_VERSION=11.0.0
 export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 ```
 
-Prefer the project wrappers, which set both variables automatically:
+Prefer the project wrappers, which set both variables automatically.
 
-```bash
-./scripts/rocm-run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
-./scripts/rocm-python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
-```
+## Development hygiene
 
-ROCm verification command:
-
-```bash
-./scripts/rocm-run python - <<'PY'
-import torch
-print(torch.__version__, torch.version.hip, torch.cuda.is_available(), torch.cuda.get_device_name(0))
-x = torch.ones(16, device='cuda') + 2
-torch.cuda.synchronize()
-print(x.device, x[:3].cpu().tolist())
-PY
-```
-
-If parquet support is unavailable, the census script also writes CSV.
-
-## Ways of working
-
-- Treat `dead_key_census_spec.md` as authoritative.
-- Keep all Phase 1 code under `deadkeys/` unless explicitly asked otherwise.
-- Run the §6.4 q/k reconstruction sanity check before trusting census outputs.
-- Never pool raw scores across heads.
-- Use smoke-test limits before full-model runs:
-  - `--limit-layers 1`
-  - `--limit-heads 1`
-  - smaller `--samples`, e.g. `1024`
-- Verify outputs externally before reporting success, e.g.:
-
-```bash
-test -f outputs/census_gpt2.parquet || test -f outputs/census_gpt2.csv
-find outputs -maxdepth 1 -type f | sort
-```
+- Keep code/test or code/smoke updates together for each experiment change.
+- Make surgical changes; do not rename packages, RunPod images, or remote paths unless the task is specifically an infra rename.
+- Preserve legacy names in operational docs until the actual image/template/path migration is complete.
+- Before full runs, execute the experiment-specific sanity gates from its README/spec.
+- Before claiming completion, verify with real commands and report the evidence.
