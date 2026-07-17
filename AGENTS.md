@@ -26,68 +26,55 @@ uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-h
 uv run python -m deadkeys.scripts.plots --input outputs/census_gpt2.parquet --model gpt2
 ```
 
-### RunPod `dead-weight` / `dead-weight-migration` NVIDIA/CUDA environment
+### RunPod NVIDIA/CUDA environment
 
-Non-secret RunPod metadata discovered 2026-07-10:
+Use the project skill `.pi/skills/runpod-usage` as the procedural source of truth for RunPod lifecycle, SSH access, pod creation, network-volume handling, persistent-cache setup, CUDA smoke tests, workload stopping, and cost hygiene.
+
+Keep this section limited to project-specific parameters and historical facts.
+
+Non-secret RunPod metadata discovered for this project:
 
 - Original pod name: `dead-weight`
 - Original pod id: `6mwc5q4jwwcgw9`
-- Migration pod name: `dead-weight-migration`
-- Migration pod id: `lszgheen2t7qor`
-- Migration pod SSH user discovered from RunPod SSH command: `lszgheen2t7qor-64410ed2`
-- GPU display name from RunPod API: `RTX A4500`
-- Machine type: secure cloud GPU pod
-- Current desired status after investigation: keep `EXITED`
+- First migration pod name: `dead-weight-migration`
+- First migration pod id: `lszgheen2t7qor`
+- First migration pod GPU from RunPod API: `RTX A4500`
+- First migration pod machine type: secure cloud GPU pod
+- Additional migration pod name: `dead-weight-migration-2`
+- Additional migration pod id: `6r332ke14n1lpx`
+- Additional migration pod GPU: NVIDIA L4
+- Current desired status for idle project pods: keep `EXITED`
 - Local RunPod credential env var: `RUNPOD_API_KEY` (do not print or commit value)
 - In-pod GitHub credential env var: `RUNPOD_SECRET_GITHUB_TOKEN` (do not print or commit value)
 - Local `~/.ssh/config`: no `dead-weight`, `runpod`, or pod-id host entry was present during discovery.
+- Reusable private RunPod template: `dead-keys-census-cuda` (id `1zpm2v05rn`).
 
-RunPod migration / startup procedure:
+Ad-hoc replacement pod preferences when the latest pod is unavailable:
 
-1. Keep `dead-weight-migration` halted when idle. Current verified halted state: `desiredStatus: EXITED`.
-2. If the original pod cannot resume because its host has no free GPU capacity, create/deploy a replacement pod in RunPod with the same network volume attached at creation time. Network volumes for pods are effectively chosen at deployment time; do not expect to attach one later to an existing pod.
-3. Prefer same datacenter / compatible GPU when possible so the existing network volume is available. Name the replacement clearly, e.g. `dead-weight-migration`.
-4. For ad-hoc replacement pod generation when the latest pod is unavailable, prefer GPU `RTX A5000` or `L4`, CPU at most 6 cores, image `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`, RAM around 60 GB, and disk around 30 GB.
-5. After deployment, query the pod by name via GraphQL and record its new pod id, GPU, image, and runtime SSH ports here. The current migration pod id is `lszgheen2t7qor`.
-6. Before installing dependencies or downloading models, run `./scripts/runpod-persistent-cache-setup` inside the pod so Hugging Face, torch, pip, uv, Triton, and CUDA virtualenv data live under `/workspace/dead-keys-census-cache` on the network volume.
-7. For cross-datacenter moves, RunPod's documented path is two running pods and `rsync` between their `/workspace` mounts; this is separate from simply deploying a replacement pod against the same existing volume.
+- GPU: `RTX A5000` or `L4`
+- CPU: at most 6 cores
+- Container image: `ghcr.io/vhallac/dead-keys-census-runpod:latest` (public GHCR image for this project)
+- RAM: around 60 GB
+- Disk: around 30 GB
+- Prefer the same datacenter / compatible GPU when possible so the existing network volume is available.
+- Attach the network volume at pod creation/deployment time; do not expect to attach one later to an existing pod.
 
-RunPod SSH after migration:
+Project paths and cache parameters for RunPod:
 
-1. First query runtime ports from GraphQL; while the pod is `EXITED`, `runtime` is `null`, so IP/ports are unavailable until it is running.
-2. Prefer the public TCP SSH endpoint from `runtime.ports`: `ssh -p <publicPort> root@<public-ip> -i ~/.ssh/id_ed25519`. During discovery this was `root@213.173.98.71 -p 19159`, but runtime IP/port can change after migration/restart.
-3. If public TCP SSH auth fails or is unavailable, use the RunPod web UI Connect/SSH command. It shows the complete random proxy user, e.g. `ssh <pod-id>-<suffix>@ssh.runpod.io -i ~/.ssh/id_ed25519`.
-4. The migration proxy user discovered for `lszgheen2t7qor` was `lszgheen2t7qor-64410ed2`.
-5. The pod id alone is available from GraphQL, but the extra random `ssh.runpod.io` suffix was not present in the basic `myself { pods { ... runtime { ports ... } } }` response. Treat the UI Connect command as the reliable source for that suffix.
-6. The `ssh.runpod.io` proxy requires a PTY; for scripted commands, pipe commands into `ssh -tt <user>@ssh.runpod.io -i ~/.ssh/id_ed25519` rather than using plain non-interactive `ssh <host> command`.
+- Repository path in pods: `/workspace/dead-keys-census`
+- Persistent cache root: `/workspace/dead-keys-census-cache`
+- Setup script: `./scripts/runpod-persistent-cache-setup`
+- Cache env file: `~/.dead-keys-census-runpod-env`
+- CUDA wrappers: `scripts/cuda-run`, `scripts/cuda-python`
+- CUDA venv override: `DEAD_KEYS_CUDA_VENV=/path/to/venv`
+- Existing compatible CUDA venv observed on `dead-weight-migration-2`: `/venv-deadkeys`
+- To reuse that venv without reinstalling heavyweight wheels: `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run ...`
+- A failed install into `/workspace/dead-keys-census-cache/uv` hit `Quota exceeded`; prefer the existing venv above unless intentionally rebuilding caches.
 
-The local `pyproject.toml` / `uv.lock` remain pinned for ROCm.
-
-Before installing dependencies or downloading models in the pod, make heavyweight downloads persistent on the network volume:
-
-```bash
-# Inside the pod. Auto-detects common RunPod network volume mounts such as /workspace.
-./scripts/runpod-persistent-cache-setup
-
-# If auto-detection fails, set the network-volume path explicitly:
-DEAD_KEYS_PERSISTENT_CACHE_ROOT=/workspace/dead-keys-census-cache ./scripts/runpod-persistent-cache-setup
-
-# Load the generated cache environment in the current shell if needed:
-. ~/.dead-keys-census-runpod-env
-```
-
-This configures:
-
-- `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `TRANSFORMERS_CACHE` for model downloads.
-- `TORCH_HOME` for PyTorch hub/checkpoint cache.
-- `PIP_CACHE_DIR` for Python wheels, including large PyTorch/CUDA wheels.
-- `UV_CACHE_DIR` for uv package cache.
-- `TRITON_CACHE_DIR` for Triton kernels.
-- `DEAD_KEYS_CUDA_VENV` under the persistent cache root, so the CUDA virtualenv itself survives pod restarts/rebuilds.
-
-For NVIDIA RunPod hosts, use the dedicated CUDA environment files instead:
+RunPod project command examples:
 
 ```bash
+# CUDA sanity check inside a RunPod host, after following the runpod-usage skill.
 ./scripts/cuda-run - <<'PY'
 import torch
 print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))
@@ -96,12 +83,6 @@ torch.cuda.synchronize()
 print(x.device, x[:3].cpu().tolist())
 PY
 
-./scripts/cuda-run -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --device cuda
-```
-
-Pythia GPU smoke tests on RunPod:
-
-```bash
 # Phase 1 smoke only; do not use full defaults until this shows CUDA use.
 ./scripts/cuda-run -m deadkeys.scripts.census \
   --model pythia410 --limit-layers 1 --limit-heads 1 \
@@ -118,54 +99,7 @@ Pythia GPU smoke tests on RunPod:
   --output-dir outputs/phase1_5_smoke_pythia_gpu
 ```
 
-Verify GPU use during a smoke test from another shell with:
-
-```bash
-nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv
-pgrep -af 'deadkeys.scripts.(census|phase1_5)|pythia' || true
-```
-
-CUDA wrapper details:
-
-- `scripts/cuda-run` sources `~/.dead-keys-census-runpod-env` if present, then creates/uses `DEAD_KEYS_CUDA_VENV` if set; otherwise it falls back to `.venv-cuda`.
-- Override the venv path with `DEAD_KEYS_CUDA_VENV=/path/to/venv`.
-- Override Python with `DEAD_KEYS_CUDA_PYTHON=python3.11` if the pod has multiple Python versions.
-- If a compatible CUDA virtualenv already exists on a pod, use it without reinstalling heavyweight wheels: `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run ...`.
-- The wrapper avoids changing the ROCm `uv` environment used on the local AMD machine.
-
-RunPod API helpers:
-
-```bash
-# Query non-secret pod state for original and migration pods
-curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
-  -H 'content-type: application/json' \
-  --data-binary '{"query":"query { myself { pods { id name desiredStatus imageName containerDiskInGb volumeInGb volumeMountPath ports runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName cpuCount memoryTotal secureCloud machineType } } } }"}' \
-  | jq '.data.myself.pods[] | select(.name|test("dead-weight"))'
-
-# Resume migration pod
-curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
-  -H 'content-type: application/json' \
-  --data-binary '{"query":"mutation { podResume(input: {podId: \"lszgheen2t7qor\"}) { id name desiredStatus } }"}'
-
-# Stop migration pod when finished; verify desiredStatus is EXITED afterward
-curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
-  -H 'content-type: application/json' \
-  --data-binary '{"query":"mutation { podStop(input: {podId: \"lszgheen2t7qor\"}) { id name desiredStatus } }"}'
-```
-
 Discovery note: on 2026-07-10, `podResume` for the original `dead-weight` pod failed with `There are not enough free GPUs on the host machine to start this pod`; the replacement `dead-weight-migration` pod was created and configured instead.
-
-### RunPod `dead-weight-migration-2` notes
-
-Verified 2026-07-11:
-
-- Pod name: `dead-weight-migration-2`
-- Pod id: `6r332ke14n1lpx`
-- GPU: NVIDIA L4
-- Public SSH endpoint at verification time: `ssh -p 30002 root@213.173.105.20 -i ~/.ssh/id_ed25519`
-- A compatible CUDA environment existed at `/venv-deadkeys` with CUDA PyTorch; use `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1` to avoid reinstalling multi-GB wheels.
-- A failed install into `/workspace/dead-keys-census-cache/uv` hit `Quota exceeded`; prefer the existing venv above unless intentionally rebuilding caches.
-
 
 ### ROCm PyTorch on AMD Radeon 890M
 

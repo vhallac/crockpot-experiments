@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 from pathlib import Path
 
 import numpy as np
@@ -8,7 +9,7 @@ import pandas as pd
 import torch
 
 from deadkeys.common.loading import MODEL_IDS, iter_heads, load_model, sanity_check
-from deadkeys.common.rope import Band, rope_bands
+from deadkeys.common.rope import Band, rope_bands, rotary_dim
 from deadkeys.common.spectra import group_dead_fraction, group_random_baseline, head_metrics, random_baseline
 
 
@@ -42,6 +43,20 @@ def run(args: argparse.Namespace) -> None:
     spectra: dict[str, np.ndarray] = {}
     group_cache: dict[tuple[int, int, str], dict[str, object]] = {}
     bands = _rows_for_bands(lm.config, lm.tag, lm.d_head)
+    d_rot = rotary_dim(lm.config, lm.d_head, lm.tag)
+    half_rot = d_rot // 2 if d_rot > 0 else 0
+    manifest_rows = []
+    for band in bands:
+        manifest_rows.append(
+            {
+                "model": args.model,
+                "band": band.name,
+                "dims": " ".join(map(str, band.dims)),
+                "dim_count": len(band.dims),
+                "rotate_half_pairs": "" if band.planes is None else " ".join(f"({p},{p + half_rot})" for p in band.planes),
+                "pair_indices": "" if band.planes is None else " ".join(map(str, band.planes)),
+            }
+        )
 
     for hs in iter_heads(lm, limit_layers=args.limit_layers, limit_heads=args.limit_heads):
         for band in bands:
@@ -66,6 +81,8 @@ def run(args: argparse.Namespace) -> None:
                     "head": hs.head,
                     "kv_head": hs.kv_head,
                     "band": band.name,
+                    "band_dims": " ".join(map(str, band.dims)),
+                    "band_planes": "" if band.planes is None else " ".join(map(str, band.planes)),
                     "S_A_sum": float(metrics.S_A.sum()),
                     "S_B_sum": float(metrics.S_B.sum()),
                     "S_M_sum": float(metrics.S_M.sum()),
@@ -107,6 +124,8 @@ def run(args: argparse.Namespace) -> None:
                 "head": -1,
                 "kv_head": kv_head,
                 "band": band_name,
+                "band_dims": np.nan,
+                "band_planes": np.nan,
                 "S_A_sum": np.nan,
                 "S_B_sum": np.nan,
                 "S_M_sum": np.nan,
@@ -142,8 +161,58 @@ def run(args: argparse.Namespace) -> None:
         print(f"parquet write failed: {exc}")
     df.to_csv(csv_path, index=False)
     np.savez_compressed(npz_path, **spectra)
+    manifest_path = out / "bands_manifest.csv"
+    pd.DataFrame(manifest_rows).to_csv(manifest_path, index=False)
+    report_path = out / "REPORT.md"
+    report_lines = [
+        f"# Task 4 band census rerun — {args.model}",
+        "",
+        "## Scope",
+        "Band census only. Rotary bands use HuggingFace rotate_half pairing: partner of dim i is i + d_rot/2.",
+        "",
+        "## Outputs",
+        f"- `{csv_path.name}`",
+        f"- `{npz_path.name}`",
+        "- `bands_manifest.csv`",
+        "",
+        "## Anomaly log",
+    ]
+    anomalies = []
+    if args.model.startswith("pythia"):
+        dc = next((r for r in manifest_rows if r["band"] == "dc"), None)
+        if dc is None or dc["dim_count"] != 48:
+            anomalies.append(f"Pythia DC band dim_count is {None if dc is None else dc['dim_count']}, expected 48.")
+    if args.prior_output_dir:
+        prior = Path(args.prior_output_dir)
+        identical = []
+        for path in [csv_path, manifest_path, npz_path]:
+            other = prior / path.name
+            if other.exists() and filecmp.cmp(path, other, shallow=False):
+                identical.append(path.name)
+        if identical:
+            anomalies.append("Bit-identical to prior run for: " + ", ".join(identical) + ".")
+        else:
+            report_lines.extend(["", f"Prior comparison directory: `{prior}`; no compared output was bit-identical."])
+    if anomalies:
+        report_lines.extend(f"- {item}" for item in anomalies)
+    else:
+        report_lines.append("- No anomalies detected by this script.")
+    report_lines.extend(
+        [
+            "",
+            "## Run parameters",
+            f"- samples: {args.samples}",
+            f"- misalign_rotations: {args.misalign_rotations}",
+            f"- device: {args.device}",
+            f"- sanity_max_q_error: {sanity['max_q_error']:.6g}",
+            f"- sanity_max_k_error: {sanity['max_k_error']:.6g}",
+        ]
+    )
+    report_path.write_text("\n".join(report_lines) + "\n")
     print(f"wrote {csv_path}")
     print(f"wrote {npz_path}")
+    print(f"wrote {manifest_path}")
+    print(f"wrote {report_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -158,6 +227,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--misalign-rotations", type=int, default=200, help="random orthogonal rotations for misalignment z-score")
     p.add_argument("--device", default="cpu", help="torch device for model weights and matrix work, e.g. cpu or cuda")
     p.add_argument("--revision", default=None, help="HuggingFace checkpoint revision, e.g. step1000 for Pythia")
+    p.add_argument("--prior-output-dir", default=None, help="optional previous output directory to compare for bit-identical artifacts")
     return p.parse_args()
 
 

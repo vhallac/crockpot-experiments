@@ -135,11 +135,29 @@ def sanity_check(lm: LoadedModel, *, atol: float = 1e-4) -> dict[str, float]:
             k_ref = proj[:, :, :, 1, :].reshape(1, input_ids.shape[1], lm.d_model)
         else:
             layer = lm.model.model.layers[0]
-            hidden = lm.model.model.embed_tokens(input_ids)
-            x = layer.input_layernorm(hidden)
             attn = layer.self_attn
-            q_ref = attn.q_proj(x).view(1, input_ids.shape[1], lm.n_heads, lm.d_head)
-            k_ref = attn.k_proj(x).view(1, input_ids.shape[1], lm.n_kv_heads, lm.d_head)
+            captured: dict[str, torch.Tensor] = {}
+
+            def save_output(name: str):
+                def hook(_module, _inputs, output):
+                    captured[name] = output.detach().float()
+
+                return hook
+
+            handles = [
+                layer.input_layernorm.register_forward_hook(save_output("ln")),
+                attn.q_proj.register_forward_hook(save_output("q_proj")),
+                attn.k_proj.register_forward_hook(save_output("k_proj")),
+            ]
+            try:
+                lm.model(input_ids=input_ids, use_cache=False)
+            finally:
+                for handle in handles:
+                    handle.remove()
+
+            x = captured["ln"]
+            q_ref = captured["q_proj"].view(1, input_ids.shape[1], lm.n_heads, lm.d_head)
+            k_ref = captured["k_proj"].view(1, input_ids.shape[1], lm.n_kv_heads, lm.d_head)
             if hasattr(attn, "q_norm"):
                 q_ref = attn.q_norm(q_ref)
             if hasattr(attn, "k_norm"):
