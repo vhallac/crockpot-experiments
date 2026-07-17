@@ -170,7 +170,7 @@ A valid full run should produce 144 per-head rows (12 layers × 12 heads), a man
 
 - Spec: `experiments/k-address-space/spec.md`
 - Code branch: `main`
-- Pre-run commit: pending
+- Pre-run commit: `6797a78` (`Keep k-address M1 analysis on torch device`)
 - Planned output location: `outputs/k_address_space_m1_gpt2_full_cuda_20260717`
 - Random seed: default script seed `0`
 - Environment: RunPod NVIDIA L4 via `scripts/cuda-run`
