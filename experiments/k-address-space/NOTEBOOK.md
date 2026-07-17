@@ -119,12 +119,18 @@ outputs/k_address_space_m1_gpt2_fix_smoke/ written by 2-doc smoke
 outputs/k_address_space_m1_gpt2_fix_full_localcheck/ written by 36-doc 1-layer/1-head check
 ```
 
-Full rerun results are pending.
+Full rerun did not reach successful output analysis. It was user-interrupted after external observation showed the rerun was still not making meaningful use of the GPU.
+
+Second failure record:
+
+- Failure mode: user interrupt due to lack of sustained GPU utilization.
+- Root cause carried forward from the interrupted run: the forward pass used CUDA, but `_capture_gpt2_k()` copied every layer's keys to CPU immediately with `k.cpu()`, and the downstream cosine/AUC work used pandas/NumPy on CPU.
+- Protocol outcome: this experiment attempt is concluded as failed; the next attempt must keep captured keys and pairwise analysis on CUDA and verify GPU utilization before treating the run as valid.
 
 ### Analysis
 
-_Pending successful rerun output analysis._
+No scientific result is available from the interrupted full run. The failure is an implementation/execution failure, not evidence for or against K-space address purity.
 
 ### Conclusion / Next Step
 
-_Pending._
+Conclude this attempt as failed. Patch the M1 implementation so captured key tensors remain on the requested device and the cosine/AUC summarization can run on CUDA, then create a new pre-run entry and rerun only after GPU-use verification.
