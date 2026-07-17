@@ -3,6 +3,13 @@ set -euo pipefail
 
 # Dedicated CUDA environment for NVIDIA RunPod hosts. This keeps the local
 # ROCm-pinned uv environment intact while installing CUDA PyTorch separately.
+#
+# Caching strategy:
+# - DEAD_KEYS_CUDA_VENV points to a shared venv on the network volume
+#   (set by scripts/runpod-persistent-cache-setup). All experiments reuse it.
+# - First invocation in a pod installs deps from requirements-runpod-cuda.txt.
+# - Subsequent invocations skip install because the venv already exists.
+# - DEAD_KEYS_CUDA_SKIP_INSTALL=1 bypasses the install step entirely.
 CALLER_DEAD_KEYS_CUDA_VENV="${DEAD_KEYS_CUDA_VENV:-}"
 CALLER_DEAD_KEYS_CUDA_PYTHON="${DEAD_KEYS_CUDA_PYTHON:-}"
 if [[ -f "$HOME/.dead-keys-census-runpod-env" ]]; then
