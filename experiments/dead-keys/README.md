@@ -20,13 +20,13 @@ Use the repository `uv` environment for local setup and the project wrappers for
 
 ```bash
 uv sync
-uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --output-dir outputs/deadkeys_smoke_gpt2
+PYTHONPATH=experiments/dead-keys uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --output-dir outputs/deadkeys_smoke_gpt2
 ```
 
 On local ROCm hosts, prefer:
 
 ```bash
-./scripts/rocm-run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --output-dir outputs/deadkeys_smoke_gpt2
+PYTHONPATH=experiments/dead-keys ./scripts/rocm-run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --output-dir outputs/deadkeys_smoke_gpt2
 ```
 
 On RunPod CUDA hosts, follow `AGENTS.md` and `.pi/skills/runpod-usage`, then use `scripts/cuda-run`.

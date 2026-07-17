@@ -56,7 +56,7 @@ This is a weights-only experiment. It can say that a direction is geometrically 
 With the project `uv` environment (installs the heavy ROCm/CUDA torch wheel):
 
 ```bash
-uv run python -m queryability.scripts.weights \
+PYTHONPATH=experiments/dead-keys:experiments/queryability uv run python -m queryability.scripts.weights \
   --model gpt2 \
   --limit-layers 1 \
   --limit-heads 1 \
@@ -68,7 +68,7 @@ space, use the CPU-only nix-shell wrapper instead (this experiment is
 weights-only and needs no GPU):
 
 ```bash
-./scripts/nix-cpu-run -m queryability.scripts.weights \
+PYTHONPATH=experiments/dead-keys:experiments/queryability ./scripts/nix-cpu-run -m queryability.scripts.weights \
   --model gpt2 \
   --limit-layers 1 \
   --limit-heads 1 \
@@ -99,7 +99,7 @@ Do not use these locally unless the weights are already cached; they download la
 
 ```bash
 DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
-  ./scripts/cuda-run -m queryability.scripts.weights \
+  PYTHONPATH=experiments/dead-keys:experiments/queryability ./scripts/cuda-run -m queryability.scripts.weights \
     --model pythia410 \
     --limit-layers 1 \
     --limit-heads 1 \
@@ -108,7 +108,7 @@ DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
     --output-dir outputs/queryability_raw_pythia410_smoke
 
 DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
-  ./scripts/cuda-run -m queryability.scripts.weights \
+  PYTHONPATH=experiments/dead-keys:experiments/queryability ./scripts/cuda-run -m queryability.scripts.weights \
     --model qwen3 \
     --limit-layers 1 \
     --limit-heads 1 \

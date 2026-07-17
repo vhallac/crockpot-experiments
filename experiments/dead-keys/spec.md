@@ -377,18 +377,19 @@ Plots: wedge scatter grid (per head), sieve-loss curves, needle percentile heatm
 ## 5. Suggested repository layout
 
 ```
-deadkeys/
-  common/
-    loading.py        # model loading, per-arch weight slicing (§6), verification
-    rope.py           # frequency ladder, band partition, R_δ construction
-    spectra.py        # §3.2–3.3 computations
-  scripts/
-    01_census.py      # Phase 1, all models, CPU. args: --model TAG
-    02_census_plots.py
-    03_collect_runtime.py   # Phase 2 §4.1 capture. args: --model TAG --text FILE
-    04_wedge.py             # Phase 2 §4.2–4.4 analysis + plots
-  outputs/            # parquet, npz, pdf
-  texts/              # input corpus + needle
+experiments/dead-keys/
+  README.md
+  spec.md
+  deadkeys/
+    common/
+      loading.py        # model loading, per-arch weight slicing (§6), verification
+      rope.py           # frequency ladder, band partition, R_δ construction
+      spectra.py        # §3.2–3.3 computations
+    scripts/
+      census.py         # Phase 1, all models, CPU. args: --model TAG
+      plots.py
+      phase2_runtime.py # Phase 2 §4.1 capture. args: --model TAG --text FILE
+  ../../outputs/        # generated parquet, npz, pdf; ignored by git
 ```
 
 Dependencies: `torch` (CPU fine), `transformers`, `numpy`, `pandas`, `pyarrow`,

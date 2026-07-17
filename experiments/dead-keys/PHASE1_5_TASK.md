@@ -2,7 +2,7 @@
 
 ## Goal memory
 - Final artefacts: `truncation_gpt2.csv`, `ppl_curve_gpt2.csv`, `null_model_gpt2.csv`, and plots.
-- Source inputs: `dead_key_census_spec.md`, GPT-2 HF model, Phase 1 loading/spectra helpers.
+- Source inputs: `experiments/dead-keys/spec.md`, GPT-2 HF model, Phase 1 loading/spectra helpers.
 - Quality expectations: GPT-2 only, no training, verify generated outputs externally.
 - Must not lose: original GPT-2 attention scaling by `sqrt(d_head)`; V/O paths untouched in conceptual patch/eval.
 

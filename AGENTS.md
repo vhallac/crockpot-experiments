@@ -6,8 +6,8 @@ This repository is an experiment collection for transformer-mechanistic probes, 
 
 Current experiment groups:
 
-- `deadkeys/` — original dead-key census and follow-on RoPE/intervention phases. See `deadkeys/README.md` and `dead_key_census_spec.md`.
-- `queryability/` — paired `W_Q^T W_K` query/key geometry. See `queryability/README.md`.
+- `experiments/dead-keys/` — original dead-key census and follow-on RoPE/intervention phases. See `experiments/dead-keys/README.md` and `spec.md`.
+- `experiments/queryability/` — paired `W_Q^T W_K` query/key geometry. See `experiments/queryability/README.md`.
 - `experiments/k-address-space/` — pre-registered K-space/content-address experiment. See `experiments/k-address-space/README.md` and `spec.md`.
 
 ## Experiment documentation standard
@@ -19,9 +19,9 @@ Every experiment group must have a README or equivalent preamble that states:
 3. how to run a local smoke test;
 4. how generated outputs are handled.
 
-For new experiments, prefer `experiments/<experiment-id>/` for specs and early design notes. Promote to a top-level Python package only when implementation code exists and reuse justifies it.
+Experiment implementations live under `experiments/<experiment-id>/`. If an experiment contains an importable package, place that package inside the experiment directory and add the experiment package roots to `PYTHONPATH` for direct module execution.
 
-Each experiment's own `spec.md`/README is authoritative for that experiment. Do not treat `dead_key_census_spec.md` as global guidance outside `deadkeys/`.
+Each experiment's own `spec.md`/README is authoritative for that experiment. Do not treat `experiments/dead-keys/spec.md` as global guidance outside the dead-key experiment group.
 
 ## Environment and package management
 
@@ -31,8 +31,8 @@ Typical local setup:
 
 ```bash
 uv sync
-uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --output-dir outputs/deadkeys_smoke_gpt2
-uv run python -m queryability.scripts.weights --model gpt2 --limit-layers 1 --limit-heads 1 --output-dir outputs/queryability_smoke_gpt2
+PYTHONPATH=experiments/dead-keys uv run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024 --output-dir outputs/deadkeys_smoke_gpt2
+PYTHONPATH=experiments/dead-keys:experiments/queryability uv run python -m queryability.scripts.weights --model gpt2 --limit-layers 1 --limit-heads 1 --output-dir outputs/queryability_smoke_gpt2
 ```
 
 The checked-in `pyproject.toml` / `uv.lock` are currently pinned for ROCm PyTorch. On NixOS, generic `uv` Python binaries may not execute; use project wrappers where documented.
@@ -53,9 +53,9 @@ Generated experiment outputs are valuable but can become huge. Default policy:
 Prefer wrappers over hand-built environments:
 
 ```bash
-./scripts/rocm-run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
-./scripts/rocm-python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
-./scripts/nix-cpu-run -m queryability.scripts.weights --model gpt2 --limit-layers 1 --limit-heads 1 --output-dir outputs/queryability_smoke_gpt2
+PYTHONPATH=experiments/dead-keys ./scripts/rocm-run python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+PYTHONPATH=experiments/dead-keys ./scripts/rocm-python -m deadkeys.scripts.census --model gpt2 --limit-layers 1 --limit-heads 1 --samples 1024
+PYTHONPATH=experiments/dead-keys:experiments/queryability ./scripts/nix-cpu-run -m queryability.scripts.weights --model gpt2 --limit-layers 1 --limit-heads 1 --output-dir outputs/queryability_smoke_gpt2
 ```
 
 Use smoke-test limits before full-model runs:
