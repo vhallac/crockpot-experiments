@@ -1,6 +1,6 @@
 ---
 name: runpod-usage
-description: "Operate RunPod pods for dead-keys-census: query, resume, stop, migrate to replacement pods, discover SSH endpoints, configure persistent caches, run GPU smoke tests, stop stray workloads, and generate pods on demand in the same datacenter as a network volume."
+description: "Operate RunPod pods: query, resume, stop, migrate to replacement pods, discover SSH endpoints (external IP primary), configure persistent caches, run GPU smoke tests, stop stray workloads, and generate pods on demand in the same datacenter as a network volume."
 ---
 
 # RunPod Usage
@@ -94,53 +94,108 @@ VERIFY: Query state and confirm `desiredStatus` is `EXITED`.
 
 TRIGGER: Need shell access to a running pod.
 
-ACTION:
+Two access paths exist; prefer external-IP SSH (primary) over the proxy (fallback).
 
-1. Query live pod state and include `machine.podHostId` in the GraphQL selection.
-2. Use the proxy username from `machine.podHostId`; do not use public IP / `root@<ip>` SSH as the normal path for this project.
-3. If `machine.podHostId` is missing, query/introspect the pod/machine fields or use the RunPod UI Connect/SSH command to recover the full proxy username, then document the finding.
+### Primary: External IP SSH (recommended)
 
-Required proxy-user discovery:
+This path gives you true one-shot command execution, SCP/SFTP, and IDE remote
+development. It requires `sshd` to be running inside the pod with your public
+key authorized.
+
+QUERY for public SSH endpoint:
 
 ```bash
 curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
   -H 'content-type: application/json' \
-  --data-binary '{"query":"query { myself { pods { id name desiredStatus machine { podHostId gpuDisplayName } } } }"}' \
-  | jq '.data.myself.pods[] | select(.name|test("dead-weight")) | {id,name,desiredStatus,podHostId:.machine.podHostId,gpu:.machine.gpuDisplayName}'
+  --data-binary '{"query":"query { myself { pods { id name desiredStatus runtime { ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName podHostId } } } }"}' \
+  | jq '.data.myself.pods[] | select(.name|test("dead-weight")) | {id,name,desiredStatus,ports:[.runtime.ports[] | select(.isIpPublic==true and .type=="tcp")],podHostId:.machine.podHostId}'
 ```
 
-Proxy shape:
+Extract `ip` and `publicPort` from the `tcp` port entry. That is your external
+SSH endpoint.
+
+ONE-SHOT COMMAND via external IP:
 
 ```bash
-# RunPod proxy access is interactive. Drive it through pilotty, never a raw bash tool call.
-pilotty spawn --name runpod-ssh -- \
-  ssh -tt <machine.podHostId>@ssh.runpod.io -i ~/.ssh/id_ed25519
+ssh -o StrictHostKeyChecking=accept-new -p <publicPort> root@<ip> -i ~/.ssh/id_ed25519 -- 'nvidia-smi; hostname'
 ```
 
-CRITICAL COMMAND-EXECUTION RULES:
+INTERACTIVE SHELL via external IP:
 
-- Treat `ssh.runpod.io` proxy sessions as interactive-only in this harness.
-  Empirically, the proxy rejects no-PTY SSH (`Your SSH client doesn't support
-  PTY`) and ignores SSH command arguments even with `-tt`, leaving a login shell
-  at the root prompt.
-- Do **not** pipe commands into `ssh -tt`, for example `printf ... | ssh -tt ...`.
-  On the RunPod proxy this opens an interactive login shell, echoes the text into
-  that shell, and can leave the agent tool call stuck at a root prompt.
-- Do **not** run raw `ssh -tt ...@ssh.runpod.io` in a normal `bash` tool call.
-  Use `pilotty` for proxy access so prompts, screen state, and cleanup are
-  controlled explicitly.
-- For long-running jobs launched through pilotty, type a command that starts a
-  remote supervisor (`nohup`, `setsid`, `tmux`, etc.), prints the PID/log path,
-  returns to the prompt, then verify with a separate command in the same PTY.
-- If a true non-interactive SSH command is required, first verify a non-proxy
-  endpoint supports it with a harmless bounded command; do not assume the
-  RunPod proxy supports command execution.
+```bash
+ssh -p <publicPort> root@<ip> -i ~/.ssh/id_ed25519
+```
+
+LONG-RUNNING JOBS via external IP:
+
+```bash
+ssh -p <publicPort> root@<ip> -i ~/.ssh/id_ed25519 -- 'nohup <command> > /tmp/job.log 2>&1 & echo PID=$!'
+```
+
+### sshd Auto-Start via PUBLIC_KEY
+
+The official `runpod/pytorch` image (and the project's GHCR image) ships with
+`openssh-server` installed. If the `PUBLIC_KEY` environment variable is set on
+the pod or template, the container's `start.sh` auto-generates host keys,
+writes the key to `~/.ssh/authorized_keys`, and starts `sshd` — all before the
+pod reaches `RUNNING` state.
+
+This means: set `PUBLIC_KEY` once on the template, and every pod deployed from
+it has external-IP SSH ready out of the box.
+
+MANUAL sshd START (if PUBLIC_KEY was not set):
+
+```bash
+# Run once via the proxy or web terminal to bootstrap:
+ssh-keygen -A
+cat ~/.ssh/id_ed25519.pub > /root/.ssh/authorized_keys   # or echo "$(cat ~/.ssh/id_ed25519.pub)"
+/usr/sbin/sshd -p 22
+# External-IP SSH now works for the lifetime of this pod session.
+```
+
+VERIFY sshd is listening:
+
+```bash
+ssh -p <publicPort> root@<ip> -i ~/.ssh/id_ed25519 -- 'ss -tlnp | grep 22'
+```
+
+### Fallback: ssh.runpod.io Proxy
+
+Use the proxy only when external-IP SSH is unavailable (e.g., no TCP port
+mapping, or sshd won't start). The proxy is interactive-only: it rejects
+no-PTY SSH and ignores command arguments.
+
+Proxy access:
+
+```bash
+# Query podHostId (proxy username):
+curl -sS -H "Authorization: Bearer $RUNPOD_API_KEY" https://api.runpod.io/graphql \
+  -H 'content-type: application/json' \
+  --data-binary '{"query":"query { myself { pods { id name desiredStatus machine { podHostId } } } }"}' \
+  | jq '.data.myself.pods[] | select(.name|test("dead-weight")) | .machine.podHostId'
+
+# Interactive session (use pilotty to control prompts):
+pilotty spawn --name runpod-ssh -- \
+  ssh -tt <podHostId>@ssh.runpod.io -i ~/.ssh/id_ed25519
+```
+
+Proxy limitations:
+
+- No one-shot commands (`ssh ... -- 'cmd'` is silently ignored).
+- No SCP, SFTP, or non-interactive tooling.
+- `ssh -T` is rejected with "Your SSH client doesn't support PTY".
+- Pipe/heredoc input echoes into a login shell; do not use for automation.
+
+When using the proxy for interactive work, launch long-running jobs through a
+supervisor (`tmux`, `nohup`, `setsid`) so they survive proxy disconnection.
 
 NOTES:
 
-- `machine.podHostId` already includes the pod id and random suffix, e.g. `<pod-id>-<suffix>`.
-- The pod id alone is not enough for the `ssh.runpod.io` username.
-- Runtime IPs and public ports can change after restart and have repeatedly led to wrong-path debugging here; do not prefer or retry `root@<public-ip>` for this project unless the user explicitly asks for the public TCP endpoint.
+- `machine.podHostId` = `<pod-id>-<random-suffix>`; it is the proxy username.
+- External IP and public port can change after pod restart — always query live
+  state before connecting.
+- The container has no init system; `sshd` started manually does not survive a
+  pod stop/resume cycle. Set `PUBLIC_KEY` on the template for persistent sshd.
 
 ## Persistent Cache Setup on Network Volume
 
@@ -380,8 +435,10 @@ cat > /tmp/deadkeys_template.json <<'JSON'
   "containerDiskInGb": 30,
   "dockerEntrypoint": [],
   "dockerStartCmd": [],
-  "env": {},
-  "imageName": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+  "env": {
+    "PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP...  # replace with actual public key"
+  },
+  "imageName": "ghcr.io/vhallac/dead-keys-census-runpod:latest",
   "isPublic": false,
   "isServerless": false,
   "name": "dead-keys-census-cuda",

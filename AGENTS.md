@@ -31,6 +31,57 @@ Use the project skill `.pi/skills/reproducible-research` as the procedural sourc
 
 Per-run throw-away checklists and other disposable reports belong under `temp/`, which is the repository's scratch convention and is ignored by git.
 
+## Cross-experiment caching via network volume
+
+Python CUDA libraries (PyTorch, transformers, etc.) and model parameters are
+large downloads (5+ GB). They MUST live on the RunPod network volume so new
+pods and new experiments reuse them without re-downloading.
+
+### What lives on the network volume
+
+| Resource | Network-volume path | Notes |
+|----------|-------------------|-------|
+| CUDA uv venv | `$DEAD_KEYS_CUDA_VENV` (default: `<cache-root>/venvs/cuda`) | Single shared venv for all experiments; installed once per requirements change |
+| HuggingFace models | `$HF_HOME` (default: `<cache-root>/huggingface`) | Downloaded automatically by transformers on first use |
+| HuggingFace datasets | `$HF_HOME` | Downloaded automatically by datasets on first use |
+| Torch extensions | `$TORCH_HOME` (default: `<cache-root>/torch`) | Compiled Triton kernels etc. |
+| Triton cache | `$TRITON_CACHE_DIR` (default: `<cache-root>/triton`) | Triton compiled kernels |
+| uv/pip caches | `$UV_CACHE_DIR`, `$PIP_CACHE_DIR` | Package wheels |
+
+### Per-pod initialization
+
+When a new pod starts (even one from a saved template), the network volume is
+mounted at `/workspace` but the cache environment variables are not yet set.
+Run the setup script once:
+
+```bash
+cd /workspace/crockpot-experiments  # or /workspace/dead-keys-census (legacy)
+./scripts/runpod-persistent-cache-setup
+. ~/.dead-keys-census-runpod-env
+```
+
+After this, `./scripts/cuda-run` automatically uses the shared network-volume
+venv. The first `cuda-run` invocation in a new pod installs packages into that
+venv if needed; subsequent invocations (and invocations from other experiments)
+skip the install step because the venv already exists.
+
+### New experiments reuse the shared venv
+
+Each experiment under `experiments/<id>/` uses the same `./scripts/cuda-run`
+wrapper, which points to the same `DEAD_KEYS_CUDA_VENV` on the network volume.
+If an experiment needs additional Python packages beyond what is in
+`requirements-runpod-cuda.txt`, add them there — they are installed once and
+shared across all experiments.
+
+### Skipping reinstallation
+
+Set `DEAD_KEYS_CUDA_SKIP_INSTALL=1` to skip the `uv pip install` step if you
+know the venv is current:
+
+```bash
+DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m experiment.script --model gpt2
+```
+
 ## Environment and package management
 
 Use `uv` / `uvx`; do not create ad-hoc `venv` directories and do not install packages as root.
@@ -130,6 +181,7 @@ Project paths and cache parameters for RunPod remain legacy-named until the repo
 - CUDA venv override: `DEAD_KEYS_CUDA_VENV=/path/to/venv`
 - Existing compatible CUDA venv observed on `dead-weight-migration-2`: `/venv-deadkeys`
 - To reuse that venv without reinstalling heavyweight wheels: `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run ...`
+- The shared CUDA venv on the network volume is the primary venv for all experiments; avoid creating per-experiment venvs.
 - A failed install into `/workspace/dead-keys-census-cache/uv` hit `Quota exceeded`; prefer the existing venv above unless intentionally rebuilding caches.
 
 CUDA sanity check inside a RunPod host after following the RunPod skill:
