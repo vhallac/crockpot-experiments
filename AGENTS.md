@@ -31,6 +31,8 @@ Use the project skill `.pi/skills/reproducible-research` as the procedural sourc
 
 Per-run throw-away checklists and other disposable reports belong under `temp/`, which is the repository's scratch convention and is ignored by git.
 
+When drafting or completing a reproducible-run entry in `experiments/<experiment-id>/NOTEBOOK.md`, also add or update a `mini_mem` note for the current experiment. Keep it short-lived and operational: experiment id, notebook path/heading, checklist path, current process step, output/publication target, and next required action. Delete the note once the experiment is complete and the final notebook update is committed.
+
 ## Cross-experiment caching via network volume
 
 Python CUDA libraries (PyTorch, transformers, etc.) and model parameters are
