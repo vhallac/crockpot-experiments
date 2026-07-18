@@ -1,5 +1,85 @@
 # K-address-space lab notebook
 
+## 2026-07-18 — K-address-space M1 Pythia full CUDA run
+
+### Question / Hypothesis
+
+Does the M1 address-purity measurement (same-referent cosine AUC against controls) show address heads in Pythia-410m's `k_pre` (pre-RoPE) or `k_post` (post-RoPE) keys, and does partial RoPE (25% rotary dims) reduce address purity relative to pre-rotation keys?
+
+### Experiment Design Summary
+
+Full Track A extraction for Pythia-410m: 36 documents, all 24 layers, all 16 heads, both `k_pre` (hooked from `query_key_value` output) and `k_post` (extracted from `past_key_values` via `use_cache=True`).
+
+Key implementation additions over the GPT-2 slice:
+- `_capture_pythia_k()`: hook `query_key_value` for `k_pre`, extract `k_post` from cache
+- `_rope_sanity_gate()`: reconstruct `k_post` from `k_pre` using from-scratch partial RoPE (config `rotary_pct=0.25`, `rotary_ndims=16/64`), verify against cached `k_post` (rel err ≤ 1e-3), confirm static dims match, perturbation check proves gate can fail
+- `_extract_mentions()` dispatches by model tag, stores `key_variant` column
+- `_summarize_auc()` groups by `(layer, head, key_variant)`
+
+### Planned Procedure
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_VENV=/workspace/dead-keys-census-cache/venvs/cuda-system DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run \
+  -m kaddress.scripts.address_purity \
+  --model pythia410 \
+  --device cuda \
+  --limit-docs 999 \
+  --output-dir outputs/k_address_space_m1_pythia410_full_cuda_20260718
+```
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/spec.md`
+- Code branch: `main`
+- Pre-run commit: `64cb36f` (`Fix RoPE sanity gate: compute cos/sin from config frequencies`)
+- Planned output location: `outputs/k_address_space_m1_pythia410_full_cuda_20260718`
+- Random seed: default script seed `0`
+- Environment: RunPod NVIDIA L4 (EU-RO-1), `deadd-keys-census-cuda` template (`1zpm2v05rn`), volume `dead-weight` (`sndrrdckku`), venv `/workspace/dead-keys-census-cache/venvs/cuda-system`
+- Model: `EleutherAI/pythia-410m` via Hugging Face default revision
+- Pod: `hlh4s9gxn0luyk`, $0.39/hr, L4, 6 vCPU, 62GB RAM
+- Local smoke verification: 1/2 doc CPU smoke with sanity gate PASS before GPU run
+
+### Results
+
+Run completed on RunPod L4. GPU utilization verified at 97% during extraction.
+
+Outputs under `outputs/k_address_space_m1_pythia410_full_cuda_20260718/`:
+
+- `kaddress_m1_pythia410.csv` — 68,889 bytes; SHA256 `3af266fe209bcf34948762f4688646eea311a24ace73c56e77f42ff07f35639c`
+- `kaddress_manifest_pythia410.json` — 681 bytes; SHA256 `1bcd5f300d0f9c57fd2671f0dca7e45237008d70987ffdadb29b7449ae061b3f`
+- `kaddress_mentions_pythia410.npz` — 272,372,400 bytes; SHA256 `a1c305714744b714304c8915f2dae9712d48d1f231261028d1e9426e9cb9bc81`
+
+Manifest highlights: `doc_count=36`, `mention_token_rows=1087488`, `max_doc_tokens=841`, `requested_device=cuda`, `cuda_available=true`, `cuda_device=NVIDIA L4`, `torch=2.8.0+cu128`.
+
+RoPE sanity gate: `max_rel_err=0.00e+00`, `static_match=True`, `perturb_fails=True` → **PASS**.
+
+**Address heads: 0/768 (0/384 per variant).**
+
+| Variant | Mean AUC vs same-type | Mean AUC vs pos-matched | Mean diff-surface AUC | Max same-type AUC |
+|---------|----------------------|------------------------|----------------------|-------------------|
+| k_pre   | 0.5404               | 0.3708                 | 0.2833               | 0.6526 (L9 H9)    |
+| k_post  | 0.5294               | 0.1742                 | 0.3951               | 0.6558 (L9 H9)    |
+
+AUC delta (pre − post): mean = +0.0111, 272/384 heads (70.8%) have pre > post. RoPE rotation slightly reduces same-referent purity on average, consistent with the namespace hypothesis direction, but the effect is tiny.
+
+Position-matched AUC collapses for k_post (0.3708 → 0.1742), indicating that RoPE does scatter keys by position — but this affects controls as much as same-referent pairs.
+
+Diff-surface AUC is very low for k_pre (0.283) — the discriminating M2 test shows minimal semantic addressing. For k_post, diff-surface AUC is actually higher (0.395) but still far below address-head threshold.
+
+### Analysis
+
+No address heads found by the pre-registered M1 threshold (AUC > 0.9 against both controls) in Pythia-410m for either k_pre or k_post. The best observed same-type AUC is 0.656, substantially below the 0.9 address-head cutoff.
+
+This result aligns with the GPT-2 M1 run (0/144 address heads) and does not contradict the spec's scale caveat: semantic addressing may emerge at larger scales (> 7B) and absence at 410M–0.6B is not absence at scale.
+
+Modest support for the namespace hypothesis direction: k_pre purity > k_post purity in 70.8% of heads, and position-matched AUC drops sharply after RoPE (0.371 → 0.174). However, the mean delta (+0.011) is negligible in magnitude.
+
+### Conclusion / Next Step
+
+This run is a valid CUDA extraction of Pythia-410m Track A / M1 for both k_pre and k_post. It does not show address heads by the pre-registered threshold.
+
+The trio census now has two of three models (GPT-2, Pythia-410m); Qwen3-0.6B remains for the full spec sweep.
+
 ## 2026-07-17 — K-address-space M1 GPT-2 smoke
 
 ### Question / Hypothesis
