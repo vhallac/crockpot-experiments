@@ -182,21 +182,17 @@ def _rope_sanity_gate(
     max_seq_len = k_pre.shape[1]
     device = k_pre.device
 
-    # Get cos, sin from layer 0's rotary embedding for exact frequency match.
-    layer0 = lm.model.gpt_neox.layers[0]
-    rotary_emb = layer0.attention.rotary_emb
-    # rotary_emb.forward(x, position_ids) returns (cos, sin).
-    dummy = k_pre[0:1, :, 0:1, :]  # [1, seq, 1, d_head]
-    position_ids = torch.arange(max_seq_len, device=device, dtype=torch.long).unsqueeze(0)
-    cos, sin = rotary_emb(dummy, position_ids)
+    # Compute RoPE cos/sin from scratch using config frequencies.
+    # GPTNeoX partial RoPE: only first rotary_ndims are rotated.
+    base = float(getattr(config, "rotary_emb_base", 10000))
+    inv_freq = 1.0 / (base ** (torch.arange(0, rotary_ndims, 2, device=device).float() / rotary_ndims))
+    position_ids = torch.arange(max_seq_len, device=device, dtype=torch.float32).unsqueeze(0)
+    freqs = torch.outer(position_ids.squeeze(0), inv_freq)  # [seq, rotary_ndims//2]
+    emb = torch.cat((freqs, freqs), dim=-1)  # [seq, rotary_ndims]
+    cos = emb.cos().unsqueeze(0).unsqueeze(2)  # [1, seq, 1, rotary_ndims]
+    sin = emb.sin().unsqueeze(0).unsqueeze(2)  # [1, seq, 1, rotary_ndims]
 
-    # Broadcast cos/sin: from [batch, seq, rotary_ndims] to [batch, seq, 1, rotary_ndims]
-    # so they broadcast over the head dimension of k_pre [layer, seq, head, d_head].
-    if cos.dim() == 3:
-        cos = cos.unsqueeze(2)  # [batch, seq, rotary_ndims] → [batch, seq, 1, rotary_ndims]
-        sin = sin.unsqueeze(2)
-
-    # Reconstruct k_post
+    # Reconstruct k_post (cos/sin already shaped [1, seq, 1, rotary_ndims]).
     k_post_recon = _apply_partial_rope(k_pre, cos, sin, rotary_ndims)
 
     # Relative error
