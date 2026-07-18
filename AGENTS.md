@@ -141,7 +141,7 @@ find outputs/<run-id> -maxdepth 1 -type f | sort
 
 ## RunPod NVIDIA/CUDA environment
 
-Use the project skill `.pi/skills/runpod-usage` as the procedural source of truth for RunPod lifecycle, SSH access, pod creation, network-volume handling, persistent-cache setup, CUDA smoke tests, workload stopping, and cost hygiene.
+Global skills `~/.pi/agent/skills/runpod-usage` (concepts, methodology, GPU selection, storage) and `~/.pi/agent/skills/runpodctl` (CLI for pod create/list/stop/delete, SSH, templates) are the procedural source of truth for all RunPod operations. Do not replicate procedural instructions here.
 
 Keep this section limited to project-specific parameters and historical facts.
 
@@ -160,7 +160,7 @@ Non-secret RunPod metadata discovered for this project:
 - Local RunPod credential env var: `RUNPOD_API_KEY` (do not print or commit value)
 - In-pod GitHub credential env var: `RUNPOD_SECRET_GITHUB_TOKEN` (do not print or commit value)
 - Reusable private RunPod template: `dead-keys-census-cuda` (id `1zpm2v05rn`)
-- When creating or refreshing that template via the runpod-usage skill, set template `env.PUBLIC_KEY` to the currently active local SSH public key: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC3+THEulpHy8+xqtiB0GEbsZM9GGrHEKmRTNrcqOAfx vedat@cowork.thinkerer.net` (`~/.ssh/id_ed25519.pub`, fingerprint `SHA256:Ln1JafG0riXUGmk8Dj85yxP7HgqoE49hOEtqYOIBrRI`).
+- When creating or refreshing that template (see `~/.pi/agent/skills/runpodctl` for template commands), set template `env.PUBLIC_KEY` to the currently active local SSH public key: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC3+THEulpHy8+xqtiB0GEbsZM9GGrHEKmRTNrcqOAfx vedat@cowork.thinkerer.net` (`~/.ssh/id_ed25519.pub`, fingerprint `SHA256:Ln1JafG0riXUGmk8Dj85yxP7HgqoE49hOEtqYOIBrRI`).
 
 Ad-hoc replacement pod preferences when the latest pod is unavailable:
 
