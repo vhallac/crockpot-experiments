@@ -87,9 +87,157 @@ def _capture_gpt2_k(lm: Any, input_ids: torch.Tensor, attention_mask: torch.Tens
     return torch.stack(captured, dim=0)[:, 0, :, :, :]  # [layer, seq, head, d_head]
 
 
+# --- RoPE utilities (Pythia partial Rotary Position Embedding) ---
+
+def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Rotate half the hidden dims: [x1, x2] → [-x2, x1]."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def _apply_partial_rope(
+    x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, rotary_ndims: int
+) -> torch.Tensor:
+    """Apply rotary position embedding to the first `rotary_ndims` of x.
+
+    x:      [..., d_head]
+    cos,sin: [1, seq, 1, rotary_ndims] or broadcastable
+    Returns: [..., d_head], first rotary_ndims rotated, rest passed through.
+    """
+    x_rot = x[..., :rotary_ndims]
+    x_pass = x[..., rotary_ndims:]
+    x_rot = x_rot * cos + _rotate_half(x_rot) * sin
+    return torch.cat((x_rot, x_pass), dim=-1)
+
+
+def _capture_pythia_k(
+    lm: Any, input_ids: torch.Tensor, attention_mask: torch.Tensor | None
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Capture k_pre and k_post for Pythia (GPTNeoX with partial RoPE).
+
+    k_pre:  raw key projection before RoPE (hooked from query_key_value output).
+    k_post: rotated key actually cached (extracted from past_key_values).
+
+    Returns (k_pre, k_post) each shaped [layer, seq, head, d_head].
+    """
+    k_pre_list: list[torch.Tensor] = []
+
+    def make_hook(layer_idx: int):
+        def hook(_module: torch.nn.Module, _inputs: tuple[torch.Tensor, ...], output: torch.Tensor) -> None:
+            qkv = output.detach().float()
+            # GPTNeoX QKV interleaving: [batch, seq, n_heads * 3 * d_head] → [batch, seq, n_heads, 3, d_head]
+            qkv = qkv.view(output.shape[0], output.shape[1], lm.n_heads, 3, lm.d_head)
+            k = qkv[:, :, :, 1, :]  # [batch, seq, n_heads, d_head]
+            if layer_idx == len(k_pre_list):
+                k_pre_list.append(k)
+            else:
+                k_pre_list[layer_idx] = k
+        return hook
+
+    handles = []
+    for li, layer in enumerate(lm.model.gpt_neox.layers):
+        handles.append(layer.attention.query_key_value.register_forward_hook(make_hook(li)))
+    try:
+        with torch.no_grad():
+            output = lm.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=True)
+    finally:
+        for h in handles:
+            h.remove()
+
+    k_pre = torch.stack(k_pre_list, dim=0)[:, 0, :, :, :]  # [layer, seq, head, d_head]
+
+    # Extract k_post from past_key_values (the keys actually cached after RoPE).
+    pkv = output.past_key_values
+    if hasattr(pkv, "key_cache"):
+        # DynamicCache (transformers ≥ 4.45)
+        k_post_list = [pkv.key_cache[i].detach().float() for i in range(lm.n_layers)]
+    else:
+        # Legacy tuple of (key, value) tuples
+        k_post_list = [layer_kv[0].detach().float() for layer_kv in pkv]
+    # Cache key shape: [batch, n_heads, seq, d_head] → permute to [batch, seq, n_heads, d_head]
+    k_post = torch.stack(
+        [k.permute(0, 2, 1, 3) for k in k_post_list], dim=0
+    )[:, 0, :, :, :]  # [layer, seq, head, d_head]
+
+    return k_pre, k_post
+
+
+def _rope_sanity_gate(
+    lm: Any, k_pre: torch.Tensor, k_post_cache: torch.Tensor
+) -> dict[str, Any]:
+    """Verify our partial-RoPE reconstruction matches Pythia's cached k_post.
+
+    Per spec §3: reconstructed k_post from k_pre + own RoPE must match cached
+    values ≤ 1e-3 relative error. Perturb once to confirm the check *can* fail.
+    Also verifies static (non-rotated) dims of k_pre == k_post exactly.
+
+    Returns dict with keys: max_rel_err, static_dims_match, gate_can_fail,
+    bad_rel_err, rotary_ndims, pass, details.
+    """
+    head_dim = lm.d_head
+    config = lm.config
+    rotary_pct = float(getattr(config, "rotary_pct", 0.25))
+    rotary_ndims = int(head_dim * rotary_pct)
+    max_seq_len = k_pre.shape[1]
+    device = k_pre.device
+
+    # Get cos, sin from layer 0's rotary embedding for exact frequency match.
+    layer0 = lm.model.gpt_neox.layers[0]
+    rotary_emb = layer0.attention.rotary_emb
+    # rotary_emb.forward(x, position_ids) returns (cos, sin).
+    dummy = k_pre[0:1, :, 0:1, :]  # [1, seq, 1, d_head]
+    position_ids = torch.arange(max_seq_len, device=device, dtype=torch.long).unsqueeze(0)
+    cos, sin = rotary_emb(dummy, position_ids)
+
+    # Broadcast cos/sin: from [batch, seq, rotary_ndims] to [batch, seq, 1, rotary_ndims]
+    # so they broadcast over the head dimension of k_pre [layer, seq, head, d_head].
+    if cos.dim() == 3:
+        cos = cos.unsqueeze(2)  # [batch, seq, rotary_ndims] → [batch, seq, 1, rotary_ndims]
+        sin = sin.unsqueeze(2)
+
+    # Reconstruct k_post
+    k_post_recon = _apply_partial_rope(k_pre, cos, sin, rotary_ndims)
+
+    # Relative error
+    diff = (k_post_recon - k_post_cache).abs()
+    denom = k_post_cache.abs() + 1e-8
+    rel_err = diff / denom
+    max_rel_err = float(rel_err.max().item())
+
+    # Static dims must be identical
+    static_match = bool(
+        torch.allclose(k_pre[..., rotary_ndims:], k_post_cache[..., rotary_ndims:], atol=1e-6)
+    )
+
+    # Perturbation check: shift cos by 0.1 — must cause rel_err > 1e-3.
+    cos_bad = cos + 0.1
+    k_bad = _apply_partial_rope(k_pre, cos_bad, sin, rotary_ndims)
+    bad_diff = (k_bad - k_post_cache).abs()
+    bad_rel_err = float((bad_diff / (k_post_cache.abs() + 1e-8)).max().item())
+    gate_can_fail = bad_rel_err > 1e-3
+
+    passed = max_rel_err <= 1e-3 and static_match and gate_can_fail
+    return {
+        "max_rel_err": max_rel_err,
+        "static_dims_match": static_match,
+        "gate_can_fail": gate_can_fail,
+        "bad_rel_err": bad_rel_err,
+        "rotary_ndims": rotary_ndims,
+        "pass": passed,
+        "details": (
+            f"rotary_ndims={rotary_ndims}/{head_dim}  "
+            f"max_rel_err={max_rel_err:.2e}  "
+            f"static_match={static_match}  "
+            f"perturb_fails={gate_can_fail}  "
+            f"→ {'PASS' if passed else 'FAIL'}"
+        ),
+    }
+
+
 def _extract_mentions(lm: Any, docs: list[Document], *, device: torch.device, max_length: int) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    vectors: list[np.ndarray] = []
+    vectors: list[torch.Tensor] = []
     for doc in docs:
         mention_rows, encoded = _token_positions_for_mentions(lm.tokenizer, doc, max_length=max_length)
         if not mention_rows:
@@ -101,24 +249,39 @@ def _extract_mentions(lm: Any, docs: list[Document], *, device: torch.device, ma
         mention_rows = [r for r in mention_rows if r["token_pos"] < input_ids.shape[1]]
         if not mention_rows:
             continue
-        if lm.tag != "gpt2":
-            raise NotImplementedError("first runnable slice currently supports gpt2 k_pre extraction")
-        k_by_layer = _capture_gpt2_k(lm, input_ids, attention_mask)
-        for row in mention_rows:
-            pos = int(row["token_pos"])
-            for layer in range(lm.n_layers):
-                for head in range(lm.n_heads):
-                    out_row = dict(row)
-                    out_row["layer"] = layer
-                    out_row["head"] = head
-                    out_row["vector_idx"] = len(vectors)
-                    rows.append(out_row)
-                    vectors.append(k_by_layer[layer, pos, head])
+        if lm.tag == "gpt2":
+            k_all = _capture_gpt2_k(lm, input_ids, attention_mask)
+            for row in mention_rows:
+                pos = int(row["token_pos"])
+                for layer in range(lm.n_layers):
+                    for head in range(lm.n_heads):
+                        out_row = dict(row)
+                        out_row["layer"] = layer
+                        out_row["head"] = head
+                        out_row["key_variant"] = "pre"
+                        out_row["vector_idx"] = len(vectors)
+                        rows.append(out_row)
+                        vectors.append(k_all[layer, pos, head])
+        elif lm.tag.startswith("pythia"):
+            k_pre, k_post = _capture_pythia_k(lm, input_ids, attention_mask)
+            for variant, k_all in (("pre", k_pre), ("post", k_post)):
+                for row in mention_rows:
+                    pos = int(row["token_pos"])
+                    for layer in range(lm.n_layers):
+                        for head in range(lm.n_heads):
+                            out_row = dict(row)
+                            out_row["layer"] = layer
+                            out_row["head"] = head
+                            out_row["key_variant"] = variant
+                            out_row["vector_idx"] = len(vectors)
+                            rows.append(out_row)
+                            vectors.append(k_all[layer, pos, head])
+        else:
+            raise NotImplementedError(f"key extraction not implemented for {lm.tag}")
     frame = pd.DataFrame(rows)
     if vectors:
         frame.attrs["vectors"] = torch.stack(vectors).to(dtype=torch.float32)
     else:
-        device = next(lm.model.parameters()).device
         frame.attrs["vectors"] = torch.zeros((0, lm.d_head), dtype=torch.float32, device=device)
     return frame
 
@@ -147,7 +310,16 @@ def _auc(positive: torch.Tensor, negative: torch.Tensor) -> float:
 def _summarize_auc(frame: pd.DataFrame) -> pd.DataFrame:
     vectors = frame.attrs["vectors"]
     rows: list[dict[str, Any]] = []
-    for (layer, head), group in frame.groupby(["layer", "head"]):
+    group_cols = ["layer", "head"]
+    has_variant = "key_variant" in frame.columns
+    if has_variant:
+        group_cols.append("key_variant")
+    for group_keys, group in frame.groupby(group_cols):
+        if not has_variant:
+            layer, head = group_keys
+            variant = "pre"
+        else:
+            layer, head, variant = group_keys
         idx = torch.as_tensor(group["vector_idx"].to_numpy(dtype=np.int64), device=vectors.device)
         sims = _cosine_matrix(vectors.index_select(0, idx))
         meta = group.reset_index(drop=True)
@@ -185,19 +357,20 @@ def _summarize_auc(frame: pd.DataFrame) -> pd.DataFrame:
         diff_ref_position_matched = _concat_or_empty(diff_ref_position_matched_parts, device=vectors.device)
         auc_same_type = _auc(same_ref, diff_ref_same_type)
         auc_position = _auc(same_ref, diff_ref_position_matched)
-        rows.append(
-            {
-                "layer": int(layer),
-                "head": int(head),
-                "pairs_same_ref": int(same_ref.numel()),
-                "pairs_same_type_diff_ref": int(diff_ref_same_type.numel()),
-                "pairs_position_matched_diff_ref": int(diff_ref_position_matched.numel()),
-                "auc_same_ref_vs_same_type_diff_ref": auc_same_type,
-                "auc_same_ref_vs_position_matched_diff_ref": auc_position,
-                "auc_diff_surface_same_ref_vs_same_type_diff_ref": _auc(diff_surface_same_ref, diff_ref_same_type),
-                "address_head_m1": bool(auc_same_type > 0.9 and auc_position > 0.9),
-            }
-        )
+        row: dict[str, Any] = {
+            "layer": int(layer),
+            "head": int(head),
+            "pairs_same_ref": int(same_ref.numel()),
+            "pairs_same_type_diff_ref": int(diff_ref_same_type.numel()),
+            "pairs_position_matched_diff_ref": int(diff_ref_position_matched.numel()),
+            "auc_same_ref_vs_same_type_diff_ref": auc_same_type,
+            "auc_same_ref_vs_position_matched_diff_ref": auc_position,
+            "auc_diff_surface_same_ref_vs_same_type_diff_ref": _auc(diff_surface_same_ref, diff_ref_same_type),
+            "address_head_m1": bool(auc_same_type > 0.9 and auc_position > 0.9),
+        }
+        if has_variant:
+            row["key_variant"] = variant
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -218,8 +391,35 @@ def run(args: argparse.Namespace) -> None:
             f"Track A generator produced {len(over_budget)} docs over --max-length={args.max_length}; "
             f"examples: {examples}"
         )
-    if lm.tag != "gpt2":
-        raise NotImplementedError("the first implemented address-purity slice is gpt2-only")
+    if lm.tag not in ("gpt2",) and not lm.tag.startswith("pythia"):
+        raise NotImplementedError(f"address-purity extraction not implemented for {lm.tag}")
+
+    # RoPE sanity gate for Pythia (spec §3): run on first doc before full extraction.
+    if lm.tag.startswith("pythia"):
+        import warnings as _warnings
+
+        pilot_doc = docs[:1]
+        pilot_frame = _extract_mentions(lm, pilot_doc, device=device, max_length=args.max_length)
+        # Re-extract raw k_pre/k_post for the pilot doc to run the sanity gate.
+        pilot_mention_rows, pilot_encoded = _token_positions_for_mentions(
+            lm.tokenizer, pilot_doc[0], max_length=args.max_length
+        )
+        pilot_ids = pilot_encoded["input_ids"].to(device)
+        pilot_am = pilot_encoded.get("attention_mask")
+        if pilot_am is not None:
+            pilot_am = pilot_am.to(device)
+        pilot_k_pre, pilot_k_post = _capture_pythia_k(lm, pilot_ids, pilot_am)
+        gate = _rope_sanity_gate(lm, pilot_k_pre, pilot_k_post)
+        print(f"RoPE sanity gate: {gate['details']}")
+        if not gate["pass"]:
+            msg = (
+                f"RoPE sanity gate FAILED: max_rel_err={gate['max_rel_err']:.2e}, "
+                f"static_match={gate['static_dims_match']}, gate_can_fail={gate['gate_can_fail']}"
+            )
+            if args.sanity_gate_strict:
+                raise RuntimeError(msg)
+            _warnings.warn(msg + " — proceeding anyway (use --sanity-gate-strict to abort)")
+
     mention_frame = _extract_mentions(lm, docs, device=device, max_length=args.max_length)
     vectors = mention_frame.attrs["vectors"]
     if args.limit_layers is not None:
@@ -233,9 +433,10 @@ def run(args: argparse.Namespace) -> None:
     mention_frame.attrs["vectors"] = vectors[used]
 
     summary = _summarize_auc(mention_frame)
+    key_variants = "k_pre" if lm.tag == "gpt2" else "k_pre + k_post"
     manifest = {
         "script": "kaddress.scripts.address_purity",
-        "spec_slice": "Track A + M1 address purity, k_pre, head-mean-centered cosine",
+        "spec_slice": f"Track A + M1 address purity, {key_variants}, head-mean-centered cosine",
         "model": args.model,
         "hf_id": lm.hf_id,
         "revision": args.revision,
@@ -263,6 +464,10 @@ def run(args: argparse.Namespace) -> None:
     print(f"wrote {manifest_path}")
     print(f"wrote {vectors_path}")
     print(f"address_heads_m1={int(summary['address_head_m1'].sum())}/{len(summary)}")
+    if "key_variant" in summary.columns:
+        for variant in sorted(summary["key_variant"].unique()):
+            sv = summary[summary["key_variant"] == variant]
+            print(f"address_heads_m1_{variant}={int(sv['address_head_m1'].sum())}/{len(sv)}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -276,6 +481,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit-layers", type=int, default=None)
     p.add_argument("--limit-heads", type=int, default=None)
     p.add_argument("--max-length", type=int, default=950)
+    p.add_argument(
+        "--sanity-gate-strict",
+        action="store_true",
+        help="Abort if the RoPE sanity gate fails (Pythia only).",
+    )
     return p.parse_args()
 
 
