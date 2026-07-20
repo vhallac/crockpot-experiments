@@ -6,6 +6,8 @@ import sys
 import types
 
 import torch
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file as load_safetensors_file
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 
@@ -82,14 +84,29 @@ def load_model(tag: str, *, device: str | torch.device | None = None, revision: 
         _install_nope_remote_shims()
     trust_remote_code = tag == "nope-gpt-small"
     config = AutoConfig.from_pretrained(hf_id, trust_remote_code=trust_remote_code, **rev_kw)
-    model_cls = AutoModel if tag == "nope-gpt-small" else AutoModelForCausalLM
-    model = model_cls.from_pretrained(
-        hf_id,
-        torch_dtype=torch.float32,
-        low_cpu_mem_usage=True,
-        trust_remote_code=trust_remote_code,
-        **rev_kw,
-    )
+    if tag == "nope-gpt-small":
+        # The HF checkpoint stores the inner NoPEGPT weights as `body.*`,
+        # `token_embeddings.*`, ... while the Transformers wrapper expects them
+        # under `model.*`.  Load the audited wrapper class from config, then load
+        # the safetensors state dict into the inner module explicitly.
+        model = AutoModel.from_config(config, trust_remote_code=True)
+        weights_path = hf_hub_download(hf_id, "model.safetensors", **rev_kw)
+        state = load_safetensors_file(weights_path, device="cpu")
+        missing, unexpected = model.model.load_state_dict(state, strict=False)
+        allowed_missing = {"output_layer.weight"}
+        if set(missing) - allowed_missing or unexpected:
+            raise RuntimeError(
+                "NoPE weight load mismatch: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
+        model.model.output_layer.weight = model.model.token_embeddings.weight
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            hf_id,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True,
+            **rev_kw,
+        )
     if device is not None:
         model.to(torch.device(device))
     model.eval()
