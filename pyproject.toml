@@ -6,7 +6,7 @@ requires-python = ">=3.10,<3.12"
 dependencies = [
   "torch==2.9.1+rocm6.3",
   "pytorch-triton-rocm==3.5.1 ; sys_platform == 'linux'",
-  "transformers>=4.45",
+  "transformers>=4.51.0",
   "numpy>=1.26",
   "pandas>=2.1",
   "pyarrow>=14",

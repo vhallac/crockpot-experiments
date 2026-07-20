@@ -147,44 +147,94 @@ def _capture_pythia_k(
 
     k_pre = torch.stack(k_pre_list, dim=0)[:, 0, :, :, :]  # [layer, seq, head, d_head]
 
-    # Extract k_post from past_key_values (the keys actually cached after RoPE).
-    pkv = output.past_key_values
-    if hasattr(pkv, "key_cache"):
-        # DynamicCache (transformers ≥ 4.45)
-        k_post_list = [pkv.key_cache[i].detach().float() for i in range(lm.n_layers)]
-    else:
-        # Legacy tuple of (key, value) tuples
-        k_post_list = [layer_kv[0].detach().float() for layer_kv in pkv]
-    # Cache key shape: [batch, n_heads, seq, d_head] → permute to [batch, seq, n_heads, d_head]
-    k_post = torch.stack(
-        [k.permute(0, 2, 1, 3) for k in k_post_list], dim=0
-    )[:, 0, :, :, :]  # [layer, seq, head, d_head]
+    k_post = _cache_keys_to_layer_seq_head(output.past_key_values, lm.n_layers)
 
     return k_pre, k_post
+
+
+def _cache_keys_to_layer_seq_head(past_key_values: Any, n_layers: int) -> torch.Tensor:
+    """Return cached keys as [layer, seq, kv_head, d_head]."""
+    if hasattr(past_key_values, "key_cache"):
+        k_post_list = [past_key_values.key_cache[i].detach().float() for i in range(n_layers)]
+    else:
+        k_post_list = [layer_kv[0].detach().float() for layer_kv in past_key_values]
+    return torch.stack([k.permute(0, 2, 1, 3) for k in k_post_list], dim=0)[:, 0, :, :, :]
+
+
+def _capture_qwen_k(
+    lm: Any, input_ids: torch.Tensor, attention_mask: torch.Tensor | None
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Capture Qwen3 k_raw, k_pre, and cached k_post as [layer, seq, kv_head, d_head]."""
+    k_raw_list: list[torch.Tensor] = []
+    k_pre_list: list[torch.Tensor] = []
+    handles = []
+
+    def make_raw_hook(layer_idx: int):
+        def hook(_module: torch.nn.Module, _inputs: tuple[torch.Tensor, ...], output: torch.Tensor) -> None:
+            k = output.detach().float().view(output.shape[0], output.shape[1], lm.n_kv_heads, lm.d_head)
+            if layer_idx == len(k_raw_list):
+                k_raw_list.append(k)
+            else:
+                k_raw_list[layer_idx] = k
+
+        return hook
+
+    def make_norm_hook(layer_idx: int):
+        def hook(_module: torch.nn.Module, _inputs: tuple[torch.Tensor, ...], output: torch.Tensor) -> None:
+            # HF Qwen3 applies k_norm to [batch, seq, kv_head, d_head], then transposes before RoPE.
+            k = output.detach().float()
+            if layer_idx == len(k_pre_list):
+                k_pre_list.append(k)
+            else:
+                k_pre_list[layer_idx] = k
+
+        return hook
+
+    for li, layer in enumerate(lm.model.model.layers):
+        attn = layer.self_attn
+        handles.append(attn.k_proj.register_forward_hook(make_raw_hook(li)))
+        if not hasattr(attn, "k_norm"):
+            raise RuntimeError("Qwen3 sanity gate expected self_attn.k_norm, but it is missing")
+        handles.append(attn.k_norm.register_forward_hook(make_norm_hook(li)))
+    try:
+        with torch.no_grad():
+            output = lm.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=True)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    k_raw = torch.stack(k_raw_list, dim=0)[:, 0, :, :, :]
+    k_pre = torch.stack(k_pre_list, dim=0)[:, 0, :, :, :]
+    k_post = _cache_keys_to_layer_seq_head(output.past_key_values, lm.n_layers)
+    return k_raw, k_pre, k_post
 
 
 def _rope_sanity_gate(
     lm: Any, k_pre: torch.Tensor, k_post_cache: torch.Tensor
 ) -> dict[str, Any]:
-    """Verify our partial-RoPE reconstruction matches Pythia's cached k_post.
+    """Verify our RoPE reconstruction matches cached k_post.
 
     Per spec §3: reconstructed k_post from k_pre + own RoPE must match cached
     values ≤ 1e-3 relative error. Perturb once to confirm the check *can* fail.
-    Also verifies static (non-rotated) dims of k_pre == k_post exactly.
+    For partial-RoPE models, also verifies static (non-rotated) dims of k_pre ==
+    k_post exactly.
 
     Returns dict with keys: max_rel_err, static_dims_match, gate_can_fail,
     bad_rel_err, rotary_ndims, pass, details.
     """
     head_dim = lm.d_head
     config = lm.config
-    rotary_pct = float(getattr(config, "rotary_pct", 0.25))
-    rotary_ndims = int(head_dim * rotary_pct)
+    if lm.tag.startswith("pythia"):
+        rotary_ndims = min(16, head_dim)
+        rope_base_attr = "rotary_emb_base"
+    else:
+        rotary_ndims = int(head_dim * float(getattr(config, "partial_rotary_factor", 1.0)))
+        rope_base_attr = "rope_theta"
     max_seq_len = k_pre.shape[1]
     device = k_pre.device
 
     # Compute RoPE cos/sin from scratch using config frequencies.
-    # GPTNeoX partial RoPE: only first rotary_ndims are rotated.
-    base = float(getattr(config, "rotary_emb_base", 10000))
+    base = float(getattr(config, rope_base_attr, 10000))
     inv_freq = 1.0 / (base ** (torch.arange(0, rotary_ndims, 2, device=device).float() / rotary_ndims))
     position_ids = torch.arange(max_seq_len, device=device, dtype=torch.float32).unsqueeze(0)
     freqs = torch.outer(position_ids.squeeze(0), inv_freq)  # [seq, rotary_ndims//2]
@@ -201,10 +251,12 @@ def _rope_sanity_gate(
     rel_err = diff / denom
     max_rel_err = float(rel_err.max().item())
 
-    # Static dims must be identical
-    static_match = bool(
-        torch.allclose(k_pre[..., rotary_ndims:], k_post_cache[..., rotary_ndims:], atol=1e-6)
-    )
+    # Static dims must be identical for partial RoPE; full RoPE has no static dims.
+    static_match = True
+    if rotary_ndims < head_dim:
+        static_match = bool(
+            torch.allclose(k_pre[..., rotary_ndims:], k_post_cache[..., rotary_ndims:], atol=1e-6)
+        )
 
     # Perturbation check: shift cos by 0.1 — must cause rel_err > 1e-3.
     cos_bad = cos + 0.1
@@ -272,6 +324,21 @@ def _extract_mentions(lm: Any, docs: list[Document], *, device: torch.device, ma
                             out_row["vector_idx"] = len(vectors)
                             rows.append(out_row)
                             vectors.append(k_all[layer, pos, head])
+        elif lm.tag == "qwen3":
+            _k_raw, k_pre, k_post = _capture_qwen_k(lm, input_ids, attention_mask)
+            for variant, k_all in (("pre", k_pre), ("post", k_post)):
+                for row in mention_rows:
+                    pos = int(row["token_pos"])
+                    for layer in range(lm.n_layers):
+                        for kv_head in range(lm.n_kv_heads):
+                            out_row = dict(row)
+                            out_row["layer"] = layer
+                            out_row["head"] = kv_head
+                            out_row["kv_head"] = kv_head
+                            out_row["key_variant"] = variant
+                            out_row["vector_idx"] = len(vectors)
+                            rows.append(out_row)
+                            vectors.append(k_all[layer, pos, kv_head])
         else:
             raise NotImplementedError(f"key extraction not implemented for {lm.tag}")
     frame = pd.DataFrame(rows)
@@ -387,24 +454,39 @@ def run(args: argparse.Namespace) -> None:
             f"Track A generator produced {len(over_budget)} docs over --max-length={args.max_length}; "
             f"examples: {examples}"
         )
-    if lm.tag not in ("gpt2",) and not lm.tag.startswith("pythia"):
+    if lm.tag not in ("gpt2", "qwen3") and not lm.tag.startswith("pythia"):
         raise NotImplementedError(f"address-purity extraction not implemented for {lm.tag}")
 
-    # RoPE sanity gate for Pythia (spec §3): run on first doc before full extraction.
-    if lm.tag.startswith("pythia"):
+    # RoPE sanity gate for RoPE models (spec §3): run on first doc before full extraction.
+    if lm.tag.startswith("pythia") or lm.tag == "qwen3":
         import warnings as _warnings
 
         pilot_doc = docs[:1]
-        pilot_frame = _extract_mentions(lm, pilot_doc, device=device, max_length=args.max_length)
         # Re-extract raw k_pre/k_post for the pilot doc to run the sanity gate.
-        pilot_mention_rows, pilot_encoded = _token_positions_for_mentions(
+        _pilot_mention_rows, pilot_encoded = _token_positions_for_mentions(
             lm.tokenizer, pilot_doc[0], max_length=args.max_length
         )
         pilot_ids = pilot_encoded["input_ids"].to(device)
         pilot_am = pilot_encoded.get("attention_mask")
         if pilot_am is not None:
             pilot_am = pilot_am.to(device)
-        pilot_k_pre, pilot_k_post = _capture_pythia_k(lm, pilot_ids, pilot_am)
+        if lm.tag.startswith("pythia"):
+            pilot_k_pre, pilot_k_post = _capture_pythia_k(lm, pilot_ids, pilot_am)
+        else:
+            pilot_k_raw, pilot_k_pre, pilot_k_post = _capture_qwen_k(lm, pilot_ids, pilot_am)
+            group = lm.n_heads // lm.n_kv_heads
+            raw_norm = float(torch.linalg.vector_norm(pilot_k_raw, dim=-1).mean().item())
+            pre_norm = float(torch.linalg.vector_norm(pilot_k_pre, dim=-1).mean().item())
+            print(
+                "Qwen3 sanity: "
+                f"q_heads={lm.n_heads} kv_heads={lm.n_kv_heads} q_to_kv_group={group} "
+                f"hook_order=k_proj→k_norm→RoPE raw_norm_mean={raw_norm:.4f} "
+                f"pre_norm_mean={pre_norm:.4f}"
+            )
+            if lm.n_heads != 16 or lm.n_kv_heads != 8 or group != 2:
+                raise RuntimeError(
+                    f"Qwen3 GQA sanity failed: q_heads={lm.n_heads}, kv_heads={lm.n_kv_heads}, group={group}"
+                )
         gate = _rope_sanity_gate(lm, pilot_k_pre, pilot_k_post)
         print(f"RoPE sanity gate: {gate['details']}")
         if not gate["pass"]:

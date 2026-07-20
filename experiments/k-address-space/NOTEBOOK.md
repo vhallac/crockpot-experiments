@@ -1,5 +1,62 @@
 # K-address-space lab notebook
 
+## 2026-07-20 — K-address-space M1 Qwen3 full CUDA run prep
+
+### Question / Hypothesis
+
+Does Qwen3-0.6B show M1 address-purity heads when keys are measured in both Qwen3 address coordinates (`k_pre`: post-`k_norm`, pre-RoPE) and cached coordinates (`k_post`: post-RoPE), grouped by the model's 8 KV heads under GQA?
+
+### Experiment Design Summary
+
+Full Track A extraction for Qwen3-0.6B: deterministic generator output, all 28 layers, all 8 KV heads, both `k_pre` and `k_post`, head-mean-centered cosine, and pairwise M1 AUC against same-type/different-referent and position-matched controls.
+
+Preparation changes over the Pythia run:
+- `_capture_qwen_k()`: hooks Qwen3 `k_proj` for pilot raw keys, hooks `k_norm` for `k_pre`, and extracts cached `k_post` from `past_key_values`.
+- Qwen3 sanity gate confirms hook order `k_proj -> k_norm -> RoPE`, checks `num_attention_heads=16`, `num_key_value_heads=8`, Q-to-KV group size 2, reconstructs full-RoPE `k_post` from `k_pre`, and perturbs RoPE to prove the gate can fail.
+- M1 rows are grouped by KV head (`head == kv_head`) rather than Q head.
+- Runtime requirement updated to `transformers>=4.51.0` because the local Nix Transformers 4.46.2 package does not recognize `model_type=qwen3`.
+
+### Planned Procedure
+
+Run on RunPod CUDA from the pre-run commit after refreshing/installing the shared CUDA venv if needed:
+
+```bash
+cd /workspace/dead-keys-census
+./scripts/runpod-persistent-cache-setup
+. ~/.dead-keys-census-runpod-env
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-run   -m kaddress.scripts.address_purity   --model qwen3   --device cuda   --limit-docs 999   --sanity-gate-strict   --output-dir outputs/k_address_space_m1_qwen3_full_cuda_20260720
+```
+
+If reusing a known-current venv, `DEAD_KEYS_CUDA_SKIP_INSTALL=1` is acceptable only after verifying `python -c "import transformers; print(transformers.__version__)"` reports `>=4.51.0`.
+
+### Expected Signal / Interpretation Plan
+
+A valid run should produce 448 per-head rows (28 layers × 8 KV heads × 2 key variants), a manifest, compact mention vectors, and strict sanity-gate output. Address-head calls require AUC > 0.9 against both controls. Compare Qwen3 address-head count and pre/post AUC deltas to the prior GPT-2 and Pythia M1 runs; Qwen3's QK norm is expected to tighten within-referent key directions if the QK-norm prediction holds.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/spec.md`
+- Code branch: `main`
+- Pre-run commit: _pending_
+- Planned output location: `outputs/k_address_space_m1_qwen3_full_cuda_20260720`
+- Random seed: default script seed `0`
+- Environment: planned RunPod CUDA via `scripts/cuda-run`; exact pod/GPU/torch/transformers versions to be recorded at run time from the manifest
+- Model: `Qwen/Qwen3-0.6B` via Hugging Face default revision
+- Preparation checklist: `temp/repro-checklists/20260720-k-address-space-m1-qwen3.md`
+- Local verification: `py_compile` passed; GPT-2 1-doc/1-layer/1-head regression smoke passed; Pythia 1-doc/1-layer/1-head strict RoPE regression smoke passed. Local Qwen3 smoke is blocked by Nix Transformers 4.46.2 and must run in the updated CUDA venv.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-18 — K-address-space M1 Pythia full CUDA run
 
 ### Question / Hypothesis
