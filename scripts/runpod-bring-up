@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/runpod-bring-up <gpu-type>
+
+Creates a RunPod pod from the project CUDA template, attaches the project network
+volume at /workspace, waits for direct SSH to answer, then prints connection
+metadata as JSON. The default readiness timeout is 120 seconds.
+
+Environment overrides:
+  RUNPOD_API_KEY              RunPod API key. If unset, pass service/runpod-api is tried.
+  RUNPOD_BRING_UP_TIMEOUT     Readiness timeout in seconds. Default: 120.
+  RUNPOD_BRING_UP_NAME        Pod name. Default: crockpot-<gpu>-<utc timestamp>.
+  RUNPOD_TEMPLATE_ID          Template id. Default: 1zpm2v05rn.
+  RUNPOD_NETWORK_VOLUME_ID    Network volume id. Default: sndrrdckku.
+  RUNPOD_VOLUME_MOUNT_PATH    Network volume mount path. Default: /workspace.
+  RUNPOD_SSH_KEY              SSH private key. Default: ~/.ssh/id_ed25519.
+  RUNPOD_KEEP_ON_TIMEOUT      If 1, do not delete the newly-created pod on timeout.
+
+Example:
+  scripts/runpod-bring-up "NVIDIA L4"
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -ne 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+gpu_type=$1
+timeout_seconds=${RUNPOD_BRING_UP_TIMEOUT:-120}
+template_id=${RUNPOD_TEMPLATE_ID:-1zpm2v05rn}
+network_volume_id=${RUNPOD_NETWORK_VOLUME_ID:-sndrrdckku}
+volume_mount_path=${RUNPOD_VOLUME_MOUNT_PATH:-/workspace}
+ssh_key=${RUNPOD_SSH_KEY:-$HOME/.ssh/id_ed25519}
+name=${RUNPOD_BRING_UP_NAME:-crockpot-${gpu_type//[^A-Za-z0-9]/-}-$(date -u +%Y%m%d%H%M%S)}
+
+if ! [[ $timeout_seconds =~ ^[0-9]+$ ]] || [[ $timeout_seconds -le 0 ]]; then
+  echo "ERROR: RUNPOD_BRING_UP_TIMEOUT must be a positive integer" >&2
+  exit 2
+fi
+
+if [[ -z "${RUNPOD_API_KEY:-}" ]]; then
+  if command -v pass >/dev/null 2>&1 && pass show service/runpod-api >/dev/null 2>&1; then
+    RUNPOD_API_KEY=$(pass show service/runpod-api)
+    export RUNPOD_API_KEY
+  else
+    echo "ERROR: RUNPOD_API_KEY is unset and pass service/runpod-api is unavailable" >&2
+    exit 2
+  fi
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq is required" >&2
+  exit 2
+fi
+
+if [[ ! -r "$ssh_key" ]]; then
+  echo "ERROR: SSH key is not readable: $ssh_key" >&2
+  exit 2
+fi
+
+create_payload=$(mktemp)
+trap 'rm -f "$create_payload"' EXIT
+jq -n \
+  --arg name "$name" \
+  --arg template_id "$template_id" \
+  --arg gpu_type "$gpu_type" \
+  --arg network_volume_id "$network_volume_id" \
+  --arg volume_mount_path "$volume_mount_path" \
+  '{
+    name: $name,
+    templateId: $template_id,
+    gpuTypeIds: [$gpu_type],
+    gpuCount: 1,
+    cloudType: "SECURE",
+    networkVolumeId: $network_volume_id,
+    volumeMountPath: $volume_mount_path
+  }' > "$create_payload"
+
+echo "Creating RunPod pod '$name' with GPU '$gpu_type'..." >&2
+create_response=$(curl -sS --fail-with-body \
+  --request POST \
+  --url https://rest.runpod.io/v1/pods \
+  --header "Authorization: Bearer $RUNPOD_API_KEY" \
+  --header 'Content-Type: application/json' \
+  --data @"$create_payload")
+
+pod_id=$(jq -r '.id // empty' <<<"$create_response")
+if [[ -z "$pod_id" ]]; then
+  echo "ERROR: RunPod create response did not include .id" >&2
+  jq '.' <<<"$create_response" >&2 || printf '%s\n' "$create_response" >&2
+  exit 1
+fi
+
+echo "Created pod: $pod_id" >&2
+
+cleanup_on_timeout() {
+  if [[ "${RUNPOD_KEEP_ON_TIMEOUT:-0}" == "1" ]]; then
+    echo "Leaving timed-out pod in place because RUNPOD_KEEP_ON_TIMEOUT=1: $pod_id" >&2
+    return 0
+  fi
+  echo "Deleting timed-out pod: $pod_id" >&2
+  curl -sS --request DELETE \
+    --url "https://rest.runpod.io/v1/pods/$pod_id" \
+    --header "Authorization: Bearer $RUNPOD_API_KEY" >/dev/null || true
+}
+
+deadline=$((SECONDS + timeout_seconds))
+last_state='{}'
+while (( SECONDS < deadline )); do
+  graphql_payload=$(jq -n --arg id "$pod_id" '{query: "query($id: String!) { pod(input: {podId: $id}) { id name desiredStatus imageName networkVolumeId volumeMountPath runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort type } } machine { gpuDisplayName podHostId } } }", variables: {id: $id}}')
+  response=$(curl -sS --fail-with-body \
+    --url https://api.runpod.io/graphql \
+    --header "Authorization: Bearer $RUNPOD_API_KEY" \
+    --header 'content-type: application/json' \
+    --data-binary "$graphql_payload")
+  state=$(jq '.data.pod // empty' <<<"$response")
+  if [[ -n "$state" ]]; then
+    last_state=$state
+    ssh_host=$(jq -r '.runtime.ports[]? | select(.type == "tcp" and .privatePort == 22 and .isIpPublic == true) | .ip' <<<"$state" | head -1)
+    ssh_port=$(jq -r '.runtime.ports[]? | select(.type == "tcp" and .privatePort == 22 and .isIpPublic == true) | .publicPort' <<<"$state" | head -1)
+    if [[ -n "${ssh_host:-}" && -n "${ssh_port:-}" ]]; then
+      if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -i "$ssh_key" -p "$ssh_port" "root@$ssh_host" true 2>/dev/null; then
+        jq -n \
+          --arg pod_id "$pod_id" \
+          --arg name "$name" \
+          --arg gpu_type "$gpu_type" \
+          --arg ssh_host "$ssh_host" \
+          --argjson ssh_port "$ssh_port" \
+          --arg ssh_key "$ssh_key" \
+          --arg ssh_command "ssh -i $ssh_key -p $ssh_port root@$ssh_host" \
+          --argjson pod "$state" \
+          '{pod_id: $pod_id, name: $name, gpu_type: $gpu_type, ssh_host: $ssh_host, ssh_port: $ssh_port, ssh_key: $ssh_key, ssh_command: $ssh_command, pod: $pod}'
+        exit 0
+      fi
+    fi
+  fi
+  sleep 5
+done
+
+echo "ERROR: timed out after ${timeout_seconds}s waiting for SSH readiness on pod $pod_id" >&2
+echo "Last pod state:" >&2
+jq '.' <<<"$last_state" >&2 || true
+cleanup_on_timeout
+exit 124

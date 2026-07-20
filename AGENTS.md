@@ -147,6 +147,20 @@ Global skills `~/.pi/agent/skills/runpod-usage` (concepts, methodology, GPU sele
 
 Keep this section limited to project-specific parameters and historical facts.
 
+For ad-hoc replacement pod creation, use the project helper instead of hand-built
+RunPod REST/CLI calls:
+
+```bash
+scripts/runpod-bring-up "NVIDIA L4"
+```
+
+The helper creates a pod from template `1zpm2v05rn`, attaches network volume
+`sndrrdckku` at `/workspace`, waits for direct public-IP SSH readiness, and
+prints JSON containing the pod id and SSH command. It times out after 120s by
+default (`RUNPOD_BRING_UP_TIMEOUT=<seconds>` to override) and deletes the newly
+created pod on timeout unless `RUNPOD_KEEP_ON_TIMEOUT=1` is set. Use this helper
+before falling back to manual pod initialization/status checks.
+
 ### RunPod initialization timebox and recovered failure modes
 
 RunPod setup/status checks are billable. For pod initialization, runtime-port
