@@ -576,7 +576,7 @@ def run(args: argparse.Namespace) -> None:
     mention_frame.attrs["vectors"] = vectors[used]
 
     summary = _summarize_auc(mention_frame)
-    key_variants = "k_pre" if lm.tag == "gpt2" else "k_pre + k_post"
+    key_variants = "k_pre" if lm.tag in {"gpt2", "nope-gpt-small"} else "k_pre + k_post"
     manifest = {
         "script": "kaddress.scripts.address_purity",
         "spec_slice": f"Track A + M1 address purity, {key_variants}, head-mean-centered cosine",
