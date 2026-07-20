@@ -1,0 +1,15 @@
+.git
+.github
+.pi
+outputs
+logs
+temp
+.venv
+.venv-cuda
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.npz
+*.parquet
+*.csv
