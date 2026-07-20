@@ -1,5 +1,66 @@
 # K-address-space lab notebook
 
+## 2026-07-20 — K-address-space M1 NoPE-GPT-Small full CUDA run prep
+
+### Question / Hypothesis
+
+Does `andrewdalpino/NoPE-GPT-Small-Base`, a true NoPE model with no positional encoding path, show M1 address-purity heads when keys are measured directly from attention `qkv_proj` output?
+
+### Experiment Design Summary
+
+Full Track A extraction for NoPE-GPT-Small-Base: deterministic generator output, all 24 layers, all 16 heads, `k_pre` keys from the remote implementation's `SelfAttention.qkv_proj`, head-mean-centered cosine, and pairwise M1 AUC against same-type/different-referent and position-matched controls.
+
+Preparation changes over the Qwen3 run:
+- Added model tag `nope-gpt-small` for `andrewdalpino/NoPE-GPT-Small-Base`, loaded via `AutoModel` with `trust_remote_code=True` after inspecting the remote implementation.
+- Verified from remote `model.py` that `NoPEGPT.forward()` starts from `token_embeddings(x)`, feeds decoder blocks directly, and `SelfAttention` uses `qkv_proj` keys without positional embeddings, RoPE, or ALiBi.
+- Added `_capture_nope_k()` to hook each decoder block's `attention.qkv_proj` and store per-head keys.
+- Added a runtime NoPE sanity check that aborts if any module name suggests a positional/RoPE/ALiBi path.
+
+### Planned Procedure
+
+Run on RunPod CUDA from the pre-run commit:
+
+```bash
+cd /workspace/dead-keys-census
+git pull --ff-only
+./scripts/runpod-persistent-cache-setup
+. ~/.dead-keys-census-runpod-env
+DEAD_KEYS_CUDA_VENV=/workspace/dead-keys-census-cache/venvs/cuda-system \
+DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space \
+./scripts/cuda-run -m kaddress.scripts.address_purity \
+  --model nope-gpt-small --device cuda --limit-docs 999 \
+  --output-dir outputs/k_address_space_m1_nope_gpt_small_full_cuda_20260720
+```
+
+### Expected Signal / Interpretation Plan
+
+A valid run should produce 384 per-head rows (24 layers × 16 heads × 1 key variant), a manifest, compact mention vectors, and NoPE sanity output. Address-head calls require AUC > 0.9 against both controls. This is the true no-positional-encoding endpoint for the positional-encoding gradient in the spec.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/spec.md`
+- Code branch: `main`
+- Pre-run commit: _pending pre-run commit_
+- Planned output location: `outputs/k_address_space_m1_nope_gpt_small_full_cuda_20260720`
+- Random seed: default script seed `0`
+- Environment: planned RunPod CUDA via `scripts/cuda-run`; exact pod/GPU/torch/transformers versions to be recorded at run time from the manifest
+- Model: `andrewdalpino/NoPE-GPT-Small-Base` via Hugging Face default revision
+- Preparation checklist: `temp/repro-checklists/20260720-k-address-space-m1-nope-gpt-small.md`
+- Local verification: `py_compile` passed for loader and address-purity script; remote `model.py` inspection found no positional embedding/RoPE/ALiBi path.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-20 — K-address-space M1 Qwen3 full CUDA run prep
 
 ### Question / Hypothesis

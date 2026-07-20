@@ -161,6 +161,38 @@ def _cache_keys_to_layer_seq_head(past_key_values: Any, n_layers: int) -> torch.
     return torch.stack([k.permute(0, 2, 1, 3) for k in k_post_list], dim=0)[:, 0, :, :, :]
 
 
+def _capture_nope_k(lm: Any, input_ids: torch.Tensor) -> torch.Tensor:
+    """Capture NoPE-GPT raw keys as [layer, seq, head, d_head].
+
+    The inspected remote implementation has no positional embedding, RoPE, or
+    ALiBi path: token embeddings feed decoder blocks directly, and attention
+    uses qkv projection output as cached keys during prediction.
+    """
+    captured: list[torch.Tensor] = []
+    handles = []
+
+    def make_hook(layer_idx: int):
+        def hook(_module: torch.nn.Module, _inputs: tuple[torch.Tensor, ...], output: torch.Tensor) -> None:
+            _q, k, _v = output.detach().float().split(lm.d_model, dim=-1)
+            k = k.view(k.shape[0], k.shape[1], lm.n_heads, lm.d_head)
+            if layer_idx == len(captured):
+                captured.append(k)
+            else:
+                captured[layer_idx] = k
+
+        return hook
+
+    for layer_idx, block in enumerate(lm.model.model.body):
+        handles.append(block.attention.qkv_proj.register_forward_hook(make_hook(layer_idx)))
+    try:
+        with torch.no_grad():
+            lm.model(input_ids)
+    finally:
+        for handle in handles:
+            handle.remove()
+    return torch.stack(captured, dim=0)[:, 0, :, :, :]
+
+
 def _capture_qwen_k(
     lm: Any, input_ids: torch.Tensor, attention_mask: torch.Tensor | None
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -347,6 +379,19 @@ def _extract_mentions(lm: Any, docs: list[Document], *, device: torch.device, ma
                             out_row["vector_idx"] = len(vectors)
                             rows.append(out_row)
                             vectors.append(k_all[layer, pos, kv_head])
+        elif lm.tag == "nope-gpt-small":
+            k_all = _capture_nope_k(lm, input_ids)
+            for row in mention_rows:
+                pos = int(row["token_pos"])
+                for layer in range(lm.n_layers):
+                    for head in range(lm.n_heads):
+                        out_row = dict(row)
+                        out_row["layer"] = layer
+                        out_row["head"] = head
+                        out_row["key_variant"] = "pre"
+                        out_row["vector_idx"] = len(vectors)
+                        rows.append(out_row)
+                        vectors.append(k_all[layer, pos, head])
         else:
             raise NotImplementedError(f"key extraction not implemented for {lm.tag}")
     frame = pd.DataFrame(rows)
@@ -462,8 +507,20 @@ def run(args: argparse.Namespace) -> None:
             f"Track A generator produced {len(over_budget)} docs over --max-length={args.max_length}; "
             f"examples: {examples}"
         )
-    if lm.tag not in ("gpt2", "qwen3") and not lm.tag.startswith("pythia"):
+    if lm.tag not in ("gpt2", "qwen3", "nope-gpt-small") and not lm.tag.startswith("pythia"):
         raise NotImplementedError(f"address-purity extraction not implemented for {lm.tag}")
+
+    if lm.tag == "nope-gpt-small":
+        has_positional_path = any(
+            "pos" in name.lower() or "rope" in name.lower() or "alibi" in name.lower()
+            for name, _module in lm.model.named_modules()
+        )
+        if has_positional_path:
+            raise RuntimeError("NoPE sanity failed: found a positional/RoPE/ALiBi-named module")
+        print(
+            "NoPE sanity: token_embeddings feed decoder body directly; "
+            "SelfAttention.qkv_proj keys are used without positional embedding, RoPE, or ALiBi"
+        )
 
     # RoPE sanity gate for RoPE models (spec §3): run on first doc before full extraction.
     if lm.tag.startswith("pythia") or lm.tag == "qwen3":

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 
 MODEL_IDS = {
@@ -14,6 +14,7 @@ MODEL_IDS = {
     "openllama7": "openlm-research/open_llama_7b",
     "qwen25": "Qwen/Qwen2.5-0.5B",
     "qwen3": "Qwen/Qwen3-0.6B",
+    "nope-gpt-small": "andrewdalpino/NoPE-GPT-Small-Base",
 }
 
 
@@ -47,17 +48,25 @@ def load_model(tag: str, *, device: str | torch.device | None = None, revision: 
         raise ValueError(f"unknown model tag {tag!r}; choose one of {sorted(MODEL_IDS)}")
     hf_id = MODEL_IDS[tag]
     rev_kw = {} if revision is None else {"revision": revision}
-    config = AutoConfig.from_pretrained(hf_id, **rev_kw)
-    model = AutoModelForCausalLM.from_pretrained(hf_id, torch_dtype=torch.float32, low_cpu_mem_usage=True, **rev_kw)
+    trust_remote_code = tag == "nope-gpt-small"
+    config = AutoConfig.from_pretrained(hf_id, trust_remote_code=trust_remote_code, **rev_kw)
+    model_cls = AutoModel if tag == "nope-gpt-small" else AutoModelForCausalLM
+    model = model_cls.from_pretrained(
+        hf_id,
+        torch_dtype=torch.float32,
+        low_cpu_mem_usage=True,
+        trust_remote_code=trust_remote_code,
+        **rev_kw,
+    )
     if device is not None:
         model.to(torch.device(device))
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(hf_id, **rev_kw)
 
-    d_model = int(getattr(config, "hidden_size", getattr(config, "n_embd", 0)))
-    n_heads = int(getattr(config, "num_attention_heads", getattr(config, "n_head", 0)))
+    d_model = int(getattr(config, "hidden_size", getattr(config, "n_embd", getattr(config, "embedding_dimensions", 0))))
+    n_heads = int(getattr(config, "num_attention_heads", getattr(config, "n_head", getattr(config, "num_heads", 0))))
     n_kv_heads = int(getattr(config, "num_key_value_heads", n_heads))
-    n_layers = int(getattr(config, "num_hidden_layers", getattr(config, "n_layer", 0)))
+    n_layers = int(getattr(config, "num_hidden_layers", getattr(config, "n_layer", getattr(config, "num_layers", 0))))
     d_head = int(getattr(config, "head_dim", d_model // n_heads))
     return LoadedModel(tag, hf_id, model, tokenizer, config, n_layers, n_heads, n_kv_heads, d_model, d_head)
 
@@ -91,6 +100,16 @@ def iter_heads(lm: LoadedModel, limit_layers: int | None = None, limit_heads: in
             b = None if qkv.bias is None else qkv.bias.detach().float().view(lm.n_heads, 3, lm.d_head)
             for h in range(min(lm.n_heads, limit_heads or lm.n_heads)):
                 yield HeadSpec(li, h, h, W[h, 0], W[h, 1], None if b is None else b[h, 0], None if b is None else b[h, 1])
+        return
+
+    if tag == "nope-gpt-small":
+        layers = lm.model.model.body
+        for li, layer in enumerate(layers[: limit_layers or len(layers)]):
+            qkv = layer.attention.qkv_proj
+            Wq, Wk, _ = qkv.weight.detach().float().split(lm.d_model, dim=0)
+            for h in range(min(lm.n_heads, limit_heads or lm.n_heads)):
+                s, e = h * lm.d_head, (h + 1) * lm.d_head
+                yield HeadSpec(li, h, h, Wq[s:e], Wk[s:e])
         return
 
     if tag in {"qwen25", "qwen3", "openllama7"}:
@@ -133,6 +152,12 @@ def sanity_check(lm: LoadedModel, *, atol: float = 1e-4) -> dict[str, float]:
             proj = layer.attention.query_key_value(x).view(1, input_ids.shape[1], lm.n_heads, 3, lm.d_head)
             q_ref = proj[:, :, :, 0, :].reshape(1, input_ids.shape[1], lm.d_model)
             k_ref = proj[:, :, :, 1, :].reshape(1, input_ids.shape[1], lm.d_model)
+        elif lm.tag == "nope-gpt-small":
+            layer = lm.model.model.body[0]
+            hidden = lm.model.model.token_embeddings(input_ids)
+            x = layer.norm1(hidden)
+            proj = layer.attention.qkv_proj(x)
+            q_ref, k_ref, _ = proj.split(lm.d_model, dim=-1)
         else:
             layer = lm.model.model.layers[0]
             attn = layer.self_attn
