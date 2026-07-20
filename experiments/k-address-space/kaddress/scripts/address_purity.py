@@ -245,11 +245,14 @@ def _rope_sanity_gate(
     # Reconstruct k_post (cos/sin already shaped [1, seq, 1, rotary_ndims]).
     k_post_recon = _apply_partial_rope(k_pre, cos, sin, rotary_ndims)
 
-    # Relative error
+    # Relative error.  Use a tensor-level L2 relative error for the gate:
+    # an elementwise max relative error is dominated by near-zero coordinates
+    # and can falsely fail fp32 Qwen3 reconstructions despite tiny absolute
+    # differences.  Keep the elementwise max as a diagnostic.
     diff = (k_post_recon - k_post_cache).abs()
-    denom = k_post_cache.abs() + 1e-8
-    rel_err = diff / denom
-    max_rel_err = float(rel_err.max().item())
+    rel_l2_err = float((torch.linalg.vector_norm(diff) / torch.linalg.vector_norm(k_post_cache).clamp_min(1e-12)).item())
+    max_abs_err = float(diff.max().item())
+    max_elem_rel_err = float((diff / (k_post_cache.abs() + 1e-8)).max().item())
 
     # Static dims must be identical for partial RoPE; full RoPE has no static dims.
     static_match = True
@@ -262,12 +265,15 @@ def _rope_sanity_gate(
     cos_bad = cos + 0.1
     k_bad = _apply_partial_rope(k_pre, cos_bad, sin, rotary_ndims)
     bad_diff = (k_bad - k_post_cache).abs()
-    bad_rel_err = float((bad_diff / (k_post_cache.abs() + 1e-8)).max().item())
+    bad_rel_err = float((torch.linalg.vector_norm(bad_diff) / torch.linalg.vector_norm(k_post_cache).clamp_min(1e-12)).item())
     gate_can_fail = bad_rel_err > 1e-3
 
-    passed = max_rel_err <= 1e-3 and static_match and gate_can_fail
+    passed = rel_l2_err <= 1e-3 and static_match and gate_can_fail
     return {
-        "max_rel_err": max_rel_err,
+        "max_rel_err": rel_l2_err,
+        "rel_l2_err": rel_l2_err,
+        "max_abs_err": max_abs_err,
+        "max_elem_rel_err": max_elem_rel_err,
         "static_dims_match": static_match,
         "gate_can_fail": gate_can_fail,
         "bad_rel_err": bad_rel_err,
@@ -275,7 +281,9 @@ def _rope_sanity_gate(
         "pass": passed,
         "details": (
             f"rotary_ndims={rotary_ndims}/{head_dim}  "
-            f"max_rel_err={max_rel_err:.2e}  "
+            f"rel_l2_err={rel_l2_err:.2e}  "
+            f"max_abs_err={max_abs_err:.2e}  "
+            f"max_elem_rel_err={max_elem_rel_err:.2e}  "
             f"static_match={static_match}  "
             f"perturb_fails={gate_can_fail}  "
             f"→ {'PASS' if passed else 'FAIL'}"
@@ -562,7 +570,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--sanity-gate-strict",
         action="store_true",
-        help="Abort if the RoPE sanity gate fails (Pythia only).",
+        help="Abort if the RoPE sanity gate fails (RoPE models).",
     )
     return p.parse_args()
 
