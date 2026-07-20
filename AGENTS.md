@@ -147,6 +147,31 @@ Global skills `~/.pi/agent/skills/runpod-usage` (concepts, methodology, GPU sele
 
 Keep this section limited to project-specific parameters and historical facts.
 
+### RunPod initialization timebox and recovered failure modes
+
+RunPod setup/status checks are billable. For pod initialization, runtime-port
+discovery, SSH readiness, `runpodctl exec` readiness, and similar manual
+status checks, spend at most two minutes wall-clock per pod per phase before
+changing strategy. Longer waits are acceptable only after an experiment job has
+actually started and the check is monitoring job execution or GPU utilization.
+
+Recovered failure modes to avoid:
+
+- Use `runpodctl get pod --allfields`; this CLI does not support
+  `runpodctl pod list`.
+- Do not run `runpodctl update` from the Nix-installed `runpodctl`; it attempts
+  to replace a binary under `/nix/store` and is not a useful recovery step.
+- If a pod is `RUNNING` but `runtime.ports` remains null after the two-minute
+  readiness budget, stop/remove it instead of continuing to poll. The
+  `ghcr.io/vhallac/dead-keys-census-runpod:latest` image was observed in this
+  state on 2026-07-20; for SSH-driven work, fall back to the known-good
+  `dead-keys-census-cuda` template / official RunPod PyTorch image with
+  `startSsh: true`.
+- If `runpodctl exec` says `Waiting for Pod to come online...` against a pod
+  with no runtime ports, stop the attempt within the same two-minute readiness
+  budget.
+
+
 Non-secret RunPod metadata discovered for this project:
 
 - Original pod name: `dead-weight`
