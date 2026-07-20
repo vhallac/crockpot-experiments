@@ -41,25 +41,66 @@ A valid run should produce 384 per-head rows (24 layers × 16 heads × 1 key var
 
 - Spec: `experiments/k-address-space/spec.md`
 - Code branch: `main`
-- Pre-run commit: _pending pre-run commit_
+- Pre-run commit: `2e72271` (`Prepare k-address M1 NoPE run`); successful rerun code commits `d407c5f` (`Fix NoPE remote model loading`), `c42adca` (`Load NoPE checkpoint weights explicitly`), and `0555c06` (`Fix NoPE manifest key variant label`)
 - Planned output location: `outputs/k_address_space_m1_nope_gpt_small_full_cuda_20260720`
 - Random seed: default script seed `0`
 - Environment: planned RunPod CUDA via `scripts/cuda-run`; exact pod/GPU/torch/transformers versions to be recorded at run time from the manifest
-- Model: `andrewdalpino/NoPE-GPT-Small-Base` via Hugging Face default revision
+- Model: `andrewdalpino/NoPE-GPT-Small-Base` pinned at Hugging Face revision `320681e33a029517e27c68a0f9c2b07ea0004155`
 - Preparation checklist: `temp/repro-checklists/20260720-k-address-space-m1-nope-gpt-small.md`
 - Local verification: `py_compile` passed for loader and address-purity script; remote `model.py` inspection found no positional embedding/RoPE/ALiBi path.
 
 ### Results
 
-_Pending run._
+Run completed on RunPod L4 from commit `0555c06` after retry fixes for the remote-code import shims, explicit checkpoint loading into the wrapper's inner model, and the NoPE manifest key-variant label. Pod `t1cpksbru2b23g` used network volume `sndrrdckku` mounted at `/workspace`.
+
+Command:
+
+```bash
+DEAD_KEYS_CUDA_VENV=/workspace/dead-keys-census-cache/venvs/cuda-system \
+DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space \
+./scripts/cuda-run -m kaddress.scripts.address_purity \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --device cuda --limit-docs 999 \
+  --output-dir outputs/k_address_space_m1_nope_gpt_small_full_cuda_20260720
+```
+
+Run window: `2026-07-20T16:14:28Z` to `2026-07-20T16:17:27Z`; `EXIT_CODE=0`.
+
+Outputs were published as GitHub Release assets:
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-nope-gpt-small-full-cuda-20260720>
+- `kaddress_m1_nope-gpt-small.csv` — 34,333 bytes; SHA256 `7e968a6dc931d39ceb36a1a03b1e768932139d49e51d935c7511262f4885573d`
+- `kaddress_manifest_nope-gpt-small.json` — 724 bytes; SHA256 `e3cf40b2c11bc542997b97ab8ff3737d35bdccf74b2750c37f89117026ba7d07`
+- `kaddress_mentions_nope-gpt-small.npz` — 129,190,223 bytes; SHA256 `36b5bbaa822a8c9ffb47a3939b35bcd111b2ce2352bc36dd3f4a5a03ce58412e`
+- `run.log` — 1,658 bytes; SHA256 `07338007c381f8c7c93069bbde41075400b6b8c1c15b412bf16ad7f48b43dfa7`
+
+Manifest highlights: `doc_count=36`, `mention_token_rows=516096`, `max_doc_tokens=829`, `requested_device=cuda`, `cuda_available=true`, `cuda_device=NVIDIA L4`, `torch=2.8.0+cu128`, `torch_cuda=12.8`, Python `3.12.3`, HF revision `320681e33a029517e27c68a0f9c2b07ea0004155`.
+
+NoPE sanity output:
+
+```text
+NoPE sanity: token_embeddings feed decoder body directly; SelfAttention.qkv_proj keys are used without positional embedding, RoPE, or ALiBi
+```
+
+**Address heads: 0/384.**
+
+| Variant | Mean AUC vs same-type | Mean AUC vs pos-matched | Mean diff-surface AUC | Max same-type AUC | Max pos-matched AUC |
+|---------|----------------------|------------------------|----------------------|-------------------|---------------------|
+| `k_pre` | 0.5328               | 0.3549                 | 0.3439               | 0.6278            | 0.5691              |
+
+Top same-type AUC head: layer 0 head 14, same-type AUC `0.6278`, position-matched AUC `0.5186`, diff-surface AUC `0.2629`.
 
 ### Analysis
 
-_Pending output analysis._
+NoPE-GPT-Small-Base shows no M1 address heads under the pre-registered threshold (AUC > 0.9 against both controls). Its best same-type AUC is 0.6278 and best position-matched AUC is 0.5691, far below threshold. Diff-surface same-referent purity is also weak (mean 0.3439, max 0.4956), so this NoPE endpoint does not reveal semantic address clustering in the implemented Track A/M1 slice.
+
+Across the implemented quartet M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B, and NoPE-GPT-Small-Base), the pre-registered small-model sweep finds zero address heads by the strict threshold. Because the NoPE run uses no positional encoding path, the negative result is not explained by RoPE namespace distortion; it points instead toward this M1 signal being absent or too weak at these small model scales and synthetic Track A conditions.
 
 ### Conclusion / Next Step
 
-_Pending._
+This is a valid CUDA extraction of NoPE-GPT-Small-Base Track A / M1 in direct `k_pre` coordinates. It completes the planned quartet M1 sweep with no address heads at these model scales. The next durable step is a cross-model comparison/report over the four published CSVs, followed by deciding whether to stop the line at small scale or repeat M1 on a larger model where semantic addressing may be more plausible.
 
 ## 2026-07-20 — K-address-space M1 Qwen3 full CUDA run prep
 
