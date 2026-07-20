@@ -2,7 +2,7 @@
 
 **Dated:** 2026-07-17
 **Status:** pre-registered, not yet run
-**Models:** the trio — `gpt2` (124M), `EleutherAI/pythia-410m`, `Qwen/Qwen3-0.6B`
+**Models:** the quartet — `gpt2` (124M), `EleutherAI/pythia-410m`, `Qwen/Qwen3-0.6B`, `andrewdalpino/NoPE-GPT-Small-Base`
 **Scale:** weekend. One 24GB GPU (rented) or CPU-with-patience; total compute + API budget target < $40.
 
 ---
@@ -26,30 +26,35 @@ Three sub-questions, each with its own measurement:
 
 ---
 
-## 1. Why the trio is the right instrument
+## 1. Why the quartet is the right instrument
 
-| | gpt2 | pythia-410m | Qwen3-0.6B |
-|---|---|---|---|
-| Rotation of K | **none** (learned absolute pos embs, position enters via residual) | **partial**: `rotary_pct=0.25` → first 16 of 64 head dims rotated, 48 static | **full** RoPE, all dims |
-| K normalization | none | none | **QK-RMSNorm** per head → ‖k‖ ≈ const, direction-only addressing *by construction* |
-| K bias `b_K` | present | present | absent |
-| KV heads | 12 (MHA) | 16 (MHA) | **8 KV heads, 16 Q heads (GQA)** |
-| Layers × d_head | 12 × 64 | 24 × 64 | 28 × 128 |
-| Usable ctx | **1024** (hard ceiling) | 2048 | ≥32k |
+| | gpt2 | pythia-410m | Qwen3-0.6B | NoPE-GPT-Small-Base |
+|---|---|---|---|---|
+| Rotation of K | **none** (learned absolute pos embs, position enters via residual) | **partial**: `rotary_pct=0.25` → first 16 of 64 head dims rotated, 48 static | **full** RoPE, all dims | **none** (NoPE: no positional encoding) |
+| K normalization | none | none | **QK-RMSNorm** per head → ‖k‖ ≈ const, direction-only addressing *by construction* | inspect/record from loaded remote code |
+| K bias `b_K` | present | present | absent | inspect/record from loaded remote code |
+| KV heads | 12 (MHA) | 16 (MHA) | **8 KV heads, 16 Q heads (GQA)** | inspect/record from loaded remote code |
+| Layers × d_head | 12 × 64 | 24 × 64 | 28 × 128 | inspect/record from loaded remote code |
+| Usable ctx | **1024** (hard ceiling) | 2048 | ≥32k | inspect/record from loaded tokenizer/config |
 
-**The RoPE dosage gradient (0% → 25% → 100%)** turns the namespace hypothesis
-into a dose–response prediction rather than a binary. Pythia additionally gives a
-**within-model, within-head control**: compute every purity metric separately on
-its static-dim subspace vs rotated-dim subspace. Same weights, same data, same
-head — only the rotation differs. No published work has this contrast.
+**The positional-encoding gradient (true NoPE → GPT-2 additive absolute position
+→ 25% RoPE → 100% RoPE)** turns the namespace hypothesis into a dose–response
+prediction rather than a binary. Pythia additionally gives a **within-model,
+within-head control**: compute every purity metric separately on its static-dim
+subspace vs rotated-dim subspace. Same weights, same data, same head — only the
+rotation differs. No published work has this contrast.
 
 Qwen3's QK-norm answers the standing question from the §2/§4 notes (does bounding
-K produce tighter address clusters?) inside the same run.
+K produce tighter address clusters?) inside the same run. The NoPE model gives a
+clean no-positional-encoding control that avoids the measurement-distorting
+failure mode of trying to disable RoPE in code.
 
 **Known confound to carry:** GPT-2 keys are *not* position-free — absolute
 position embeddings enter K additively via the residual. So "no rotation" ≠ "no
 position." §5.4 measurement M5 (position probe) quantifies positional
-contamination per model instead of assuming it.
+contamination per model instead of assuming it. The NoPE model must be loaded
+with `trust_remote_code=True` only after inspecting the implementation and
+verifying that token embeddings feed attention without positional injection.
 
 ---
 
@@ -57,7 +62,8 @@ contamination per model instead of assuming it.
 
 Hard constraint: all cross-model documents ≤ **950 tokens** in the *GPT-2*
 tokenizer (leaves room for the final probe question inside ctx 1024). An optional
-Qwen3-only long-range extension (§5.8) relaxes this.
+long-range extension (§5.8) relaxes this for models whose context permits it
+(Qwen3, and NoPE-GPT-Small-Base if its inspected config permits).
 
 Every document carries **token-level gold labels**: `(referent_id, mention_idx,
 update_idx, surface_form)` for each mention span, emitted by the generator —
@@ -132,6 +138,10 @@ Sanity gates before any analysis (blocks, per §4-hygiene precedent):
   `k_pre` == static dims of `k_post` exactly.
 - Qwen3: confirm hook order `k_proj → k_norm → RoPE` against source; confirm
   8 KV heads and the Q→KV head map.
+- NoPE-GPT-Small-Base: inspect the remote code before enabling
+  `trust_remote_code=True`; confirm there is no positional embedding, RoPE, or
+  ALiBi path; record hook points for `k_pre`/cached keys from the inspected
+  architecture.
 
 ---
 
@@ -184,7 +194,7 @@ separately in M6.
 
 ## 5. Pre-registered predictions
 
-- **(P5.a)** Address heads (M1 AUC > 0.9 vs both controls) exist in all three
+- **(P5.a)** Address heads (M1 AUC > 0.9 vs both controls) exist in all four
   models, concentrated in middle-depth layers, and are a minority of heads.
 - **(P5.b)** At least some address heads survive the `diff-surface` restriction
   (M2) in every model → addressing is at least partly semantic, not purely
@@ -192,7 +202,8 @@ separately in M6.
   to token-matching (induction-flavored) and the transactional framing is
   weakened at the root.*
 - **(P5.c)** Namespace dose–response: long-range ΔAUC(pre−post) increases with
-  rotation fraction (gpt2 ≈ 0 < pythia < qwen3), **and** within Pythia,
+  positional-encoding strength (NoPE lowest, GPT-2 additive-position control,
+  pythia partial-RoPE, qwen3 full-RoPE), **and** within Pythia,
   static-subspace purity > rotated-subspace purity for long-range pairs.
 - **(P5.d)** Version dominance: ‖W_O v‖ increases with update_idx (median ρ > 0
   with CI excluding 0) in retrieval-relevant heads. Genuinely uncertain — the
@@ -244,7 +255,7 @@ separately in M6.
   license for version-eviction, and the n_eff-vs-mention-count distribution
   becomes the headline figure.
 - **Everything fails** → K-geometry at 124M–0.6B is position+syntax only.
-  Honest negative; the trio census (§2–§4) remains the main thread; note that
+  Honest negative; the quartet census (§2–§4) remains the main thread; note that
   the scale caveat (0.6B ceiling) limits the claim.
 
 ---
@@ -254,15 +265,16 @@ separately in M6.
 - **Fri eve:** corpus generators (Tracks A, B) + gold-label validator. Track C
   API generation kicked off (~$3–8). No GPU yet.
 - **Sat AM:** rent 1× 24GB (RunPod/Lambda, ~$0.35–0.60/hr). Extraction pilot:
-  1 doc × 3 models; run sanity gates §3; fix hooks. Storage estimate check.
-- **Sat PM:** full extraction, 3 models × ~600 docs. These models are tiny —
+  1 doc × 4 models; run sanity gates §3; fix hooks. Storage estimate check.
+- **Sat PM:** full extraction, 4 models × ~600 docs. These models are tiny —
   est. 2–4 GPU-hours total including probe generation. Sync npz off the box,
   **kill the instance** (the §-budget lesson: idle rentals eat weekends).
 - **Sun:** analysis M1–M6 (CPU, local), plots, `REPORT.md` with P5.a–f
   adjudication in the §2–§4 verdict style. Dated.
-- **Stretch (only if Sunday is clean):** §5.8 Qwen3-only long-range extension —
-  Track A regenerated at 4k/8k with gaps up to 3k tokens; re-run M3 on the
-  distance axis where namespacing should bite hardest.
+- **Stretch (only if Sunday is clean):** §5.8 long-range extension for every
+  model whose inspected context window permits it — Track A regenerated at 4k/8k
+  with gaps up to 3k tokens; re-run M3 on the distance axis where namespacing
+  should bite hardest.
 
 Est. total: **$5–15 GPU + $3–8 API.** Well under cap; the constraint is your
 hours, not dollars — which is why every measurement above reuses the §2–§4
