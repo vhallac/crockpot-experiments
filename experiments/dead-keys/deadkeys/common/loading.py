@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
+import sys
+import types
 
 import torch
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
@@ -43,11 +45,41 @@ class LoadedModel:
     d_head: int
 
 
+def _install_nope_remote_shims() -> None:
+    """Provide tiny import shims required by the NoPE-GPT remote model file.
+
+    The published HF `model.py` imports project-local `caching` and `data`
+    modules, but the model's training forward path used for M1 extraction only
+    needs `IGNORE_INDEX`; the cache classes are referenced by the unused
+    generation/prediction methods.  Supplying minimal shims lets Transformers
+    load the audited model code without installing unrelated packages.
+    """
+    if "caching" not in sys.modules:
+        caching = types.ModuleType("caching")
+
+        class KVCache(list):
+            pass
+
+        class DynamicKVBlock:
+            def update(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+                return k, v
+
+        caching.KVCache = KVCache
+        caching.DynamicKVBlock = DynamicKVBlock
+        sys.modules["caching"] = caching
+    if "data" not in sys.modules:
+        data = types.ModuleType("data")
+        data.IGNORE_INDEX = -100
+        sys.modules["data"] = data
+
+
 def load_model(tag: str, *, device: str | torch.device | None = None, revision: str | None = None) -> LoadedModel:
     if tag not in MODEL_IDS:
         raise ValueError(f"unknown model tag {tag!r}; choose one of {sorted(MODEL_IDS)}")
     hf_id = MODEL_IDS[tag]
     rev_kw = {} if revision is None else {"revision": revision}
+    if tag == "nope-gpt-small":
+        _install_nope_remote_shims()
     trust_remote_code = tag == "nope-gpt-small"
     config = AutoConfig.from_pretrained(hf_id, trust_remote_code=trust_remote_code, **rev_kw)
     model_cls = AutoModel if tag == "nope-gpt-small" else AutoModelForCausalLM
