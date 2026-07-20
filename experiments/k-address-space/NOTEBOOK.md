@@ -37,7 +37,7 @@ A valid run should produce 448 per-head rows (28 layers × 8 KV heads × 2 key v
 
 - Spec: `experiments/k-address-space/spec.md`
 - Code branch: `main`
-- Pre-run commit: _pending_
+- Pre-run commit: `f3bb63a` (`Prepare k-address M1 Qwen3 run`); successful rerun code commit `35c91c2` (`Add RunPod pod bring-up helper`)
 - Planned output location: `outputs/k_address_space_m1_qwen3_full_cuda_20260720`
 - Random seed: default script seed `0`
 - Environment: planned RunPod CUDA via `scripts/cuda-run`; exact pod/GPU/torch/transformers versions to be recorded at run time from the manifest
@@ -47,15 +47,58 @@ A valid run should produce 448 per-head rows (28 layers × 8 KV heads × 2 key v
 
 ### Results
 
-_Pending run._
+Run completed on RunPod L4 from commit `35c91c2` after the retry helper created pod `cf160k2go7rknf` with network volume `sndrrdckku` mounted at `/workspace`.
+
+Command:
+
+```bash
+DEAD_KEYS_CUDA_VENV=/workspace/dead-keys-census-cache/venvs/cuda-system \
+DEAD_KEYS_CUDA_SKIP_INSTALL=1 \
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space \
+./scripts/cuda-run -m kaddress.scripts.address_purity \
+  --model qwen3 --device cuda --limit-docs 999 --sanity-gate-strict \
+  --output-dir outputs/k_address_space_m1_qwen3_full_cuda_20260720
+```
+
+Run window: `2026-07-20T15:14:05Z` to `2026-07-20T15:19:18Z`; `EXIT_CODE=0`.
+
+Outputs were published as GitHub Release assets:
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-qwen3-full-cuda-20260720>
+- `kaddress_m1_qwen3.csv` — 40,144 bytes; SHA256 `4732acee42cc31d7af502bf58dd9450f7faf4813029ad0d24acf194156c3be73`
+- `kaddress_manifest_qwen3.json` — 669 bytes; SHA256 `27c2a6cb9d446d4352513a74dbd3b81c142ba3a8c383dba54bbf38888a3436fd`
+- `kaddress_mentions_qwen3.npz` — 297,261,610 bytes; SHA256 `70181eda3dbde619d6a7f843764b5e717baab7898681c6fc90882fe1526e6e8f`
+- `run.log` — 1,624 bytes; SHA256 `27c3a46ef71e7dbea73e5a25133e0ba79bf969419ee4c83e332d5de58280ddab`
+
+Manifest highlights: `doc_count=36`, `mention_token_rows=602112`, `max_doc_tokens=829`, `requested_device=cuda`, `cuda_available=true`, `cuda_device=NVIDIA L4`, `torch=2.8.0+cu128`, `torch_cuda=12.8`, Python `3.12.3`.
+
+Strict Qwen3 sanity gate passed:
+
+```text
+Qwen3 sanity: q_heads=16 kv_heads=8 q_to_kv_group=2 hook_order=k_proj→k_norm→RoPE raw_norm_mean=41.4591 pre_norm_mean=50.8979
+RoPE sanity gate: rotary_ndims=128/128  rel_l2_err=6.01e-09  max_abs_err=4.77e-06  max_elem_rel_err=1.85e-03  static_match=True  perturb_fails=True  → PASS
+```
+
+**Address heads: 0/448 (0/224 `k_pre`, 0/224 `k_post`).**
+
+| Variant | Mean AUC vs same-type | Mean AUC vs pos-matched | Mean diff-surface AUC | Max same-type AUC | Max pos-matched AUC |
+|---------|----------------------|------------------------|----------------------|-------------------|---------------------|
+| `k_pre` | 0.5476               | 0.3386                 | 0.2424               | 0.6578            | 0.6220              |
+| `k_post`| 0.5373               | 0.2403                 | 0.3006               | 0.6795            | 0.7629              |
+
+AUC delta (`pre - post`) on same-type controls: mean `+0.0103`; `157/224` KV heads have `pre > post`.
 
 ### Analysis
 
-_Pending output analysis._
+Qwen3-0.6B shows no M1 address heads under the pre-registered threshold (AUC > 0.9 against both same-type/different-referent and position-matched controls). The best same-type AUC is 0.6795, still far below the address-head cutoff, and the mean diff-surface AUC remains low for both variants.
+
+The namespace-direction signal matches the Pythia trend only weakly: `k_pre` has a small average same-type AUC advantage over `k_post` (+0.0103), and `k_post` reduces position-matched AUC on average. The magnitude is small and does not rescue address purity.
+
+Across the implemented trio M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B), the pre-registered small-model sweep finds zero address heads by the strict threshold.
 
 ### Conclusion / Next Step
 
-_Pending._
+This is a valid CUDA extraction of Qwen3-0.6B Track A / M1 for both Qwen3 address coordinates (`k_pre`) and cached RoPE coordinates (`k_post`). It completes the implemented trio M1 sweep with no address heads at these model scales. Next analysis should compare the three published CSVs directly and decide whether to stop this line at small scale or repeat M1 on a larger model where semantic addressing is more plausible.
 
 ## 2026-07-18 — K-address-space M1 Pythia full CUDA run
 
