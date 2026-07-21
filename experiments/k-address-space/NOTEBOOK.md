@@ -1,5 +1,60 @@
 # K-address-space lab notebook
 
+## 2026-07-21 — K-address-space M1.5 NoPE-GPT-Small position-content run prep
+
+### Question / Hypothesis
+
+Does `andrewdalpino/NoPE-GPT-Small-Base` compute positional information into attention keys at depth when token content is held constant by repeated-segment stimuli? The primary prediction is that layer-0 `k_pre` is an architectural zero, while deeper layers develop measurable position fraction, ridge decodability, and a position subspace that may be difficult to remove without harming token identity.
+
+### Experiment Design Summary
+
+Implement and run Addendum §5-M1.5 for the selected NoPE model. The new `kaddress.scripts.position_content` script generates repeated-token stimuli for Families A/B/C, extracts per-layer/per-head keys with the existing NoPE hook path, and reports M1.5.1–M1.5.6 diagnostics per stimulus/slot/head: position fraction, ridge CV R² with variance-floor guard, PCA capacity, leading-PC geometry, shuffled-y null, and position-PC removability with token-identity retention. It also writes per-slot position-removal PCA bases as the initial Π projector artifact.
+
+### Planned Procedure
+
+Prepare and smoke-test locally, commit the pre-run state, then run the selected NoPE model with the pinned revision:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --families A,B,C \
+  --min-repetitions 120 \
+  --max-length 950 \
+  --output-dir outputs/k_address_space_m15_nope_gpt_small_20260721
+```
+
+If local CPU runtime is poor, rerun the same command through `scripts/cuda-run` on RunPod with `--device cuda` and the shared CUDA venv.
+
+### Expected Signal / Interpretation Plan
+
+G1 must pass for NoPE layer 0: within-slot position fraction below `1e-5`, and the deliberate perturbation check must prove the gate can fail. Shuffled-y ridge R² should remain near zero. The headline will be the depth curve for Family A: if position fraction/R² rise with depth, the probe confirms key-level computed position in NoPE; if they stay flat, the result contradicts the pre-registered NoPE expectation. Family B/C are corroborating controls and must be reported as caveats if they disagree in sign with Family A.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.5.md`
+- Parent spec: `experiments/k-address-space/spec.md`
+- Code branch: `main`
+- Pre-run commit: _pending_
+- Planned output location: `outputs/k_address_space_m15_nope_gpt_small_20260721`
+- Random seed: default script seed `0`
+- Environment: local CPU via `scripts/nix-cpu-run` unless escalated to RunPod CUDA; exact manifest environment to be recorded at run time
+- Model: `andrewdalpino/NoPE-GPT-Small-Base` pinned at Hugging Face revision `320681e33a029517e27c68a0f9c2b07ea0004155`
+- Preparation checklist: `temp/repro-checklists/20260721-k-address-space-m15-nope-gpt-small.md`
+- Local verification: `py_compile` passed; GPT-2 1-stimulus/1-layer/1-head smoke passed; NoPE 1-stimulus/1-layer/1-head smoke passed with G1 position fraction ≈ `1.27e-7` and ridge R² `0.0`.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-20 — K-address-space M1 NoPE-GPT-Small full CUDA run prep
 
 ### Question / Hypothesis
