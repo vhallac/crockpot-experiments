@@ -5,6 +5,7 @@ import json
 import math
 import platform
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -35,6 +36,15 @@ class Stimulus:
     repetitions: int
     segment_token_len: int | None
     text_preview: str
+    target_L: int | None = None
+    content_words: list[dict[str, str]] | None = None
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    stimuli: list[Stimulus]
+    rejected_stimuli: list[dict[str, Any]]
+    feasibility: list[dict[str, Any]]
 
 
 def _encode(tokenizer: Any, text: str) -> list[int]:
@@ -45,26 +55,61 @@ def _decode_piece(tokenizer: Any, token_id: int) -> str:
     return tokenizer.decode([token_id], clean_up_tokenization_spaces=False).strip()
 
 
-def _family_a_segments() -> list[str]:
+FRAME_TOKENS = {"is", "a", "."}
+REJECTION_REASONS = {
+    "below_min_repetitions",
+    "exceeds_max_length",
+    "slot_token_not_constant",
+    "frame_token_absent",
+    "insufficient_occurrences",
+}
+
+
+def _family_a_candidate_texts() -> list[str]:
+    names = ["Alice", "Boris", "Clara", "Derek", "Elena", "Farid", "Greta", "Hector", "Iris", "Jonas", "Kara", "Liam"]
+    verbs = ["waved", "smiled", "waited", "nodded", "listened", "arrived", "agreed", "replied", "looked", "paused", "rested", "worked"]
+    adjectives = ["calm", "brave", "quiet", "quick", "steady", "kind", "bright", "careful", "formal", "gentle", "honest", "lucid"]
+    nouns = ["engineer", "artist", "doctor", "lawyer", "teacher", "baker", "pilot", "writer", "nurse", "clerk", "market", "garden"]
+    texts: list[str] = []
+    for name in names:
+        for verb in verbs:
+            texts.append(f"{name} {verb} today.")
+            texts.append(f"{name} {verb} again today.")
+    for name in names:
+        for adj in adjectives:
+            for noun in nouns:
+                texts.append(f"{name} is a {adj} {noun}.")
+                texts.append(f"{name} found the {adj} {noun}.")
+    return texts
+
+
+def _family_a_segments_for_length(tokenizer: Any, target_l: int, *, count: int = 8) -> list[tuple[str, list[int]]]:
+    found: list[tuple[str, list[int]]] = []
+    seen_ids: set[tuple[int, ...]] = set()
+    for text in _family_a_candidate_texts():
+        ids = _encode(tokenizer, text)
+        key = tuple(ids)
+        if len(ids) == target_l and key not in seen_ids:
+            found.append((text, ids))
+            seen_ids.add(key)
+            if len(found) >= count:
+                return found
+    raise RuntimeError(f"only {len(found)} Family A segments survived for L={target_l}; need {count}")
+
+
+def _family_b_word_groups() -> list[dict[str, list[str]]]:
     return [
-        "Alice is a successful engineer.",
-        "Boris found the quiet library.",
-        "Clara keeps a small red notebook.",
-        "Derek moved the marble today.",
-        "Elena wrote a careful status update.",
-        "Farid placed the key inside.",
-        "Greta solved the puzzle quickly.",
-        "Hector opened a blue cabinet.",
+        {
+            "names": ["Alice", "Boris", "Derek", "Elena", "Farid", "Hector", "Iris", "Jonas"],
+            "adjs": ["calm", "brisk", "careful", "eager", "formal", "gentle", "honest", "jolly"],
+            "jobs": ["engineer", "artist", "doctor", "lawyer", "teacher", "baker", "pilot", "writer"],
+        },
+        {
+            "names": ["Liam", "Nolan", "Omar", "Priya", "Noel", "Otto", "Ruth", "Sybil"],
+            "adjs": ["kind", "lucid", "merry", "nimble", "open", "patient", "quick", "steady"],
+            "jobs": ["nurse", "clerk", "miner", "tailor", "farmer", "guard", "driver", "chef"],
+        },
     ]
-
-
-def _family_b_words() -> tuple[list[str], list[str], list[str], list[str]]:
-    return (
-        ["Alice", "Boris", "Clara", "Derek", "Elena", "Farid", "Greta", "Hector", "Iris", "Jonas"],
-        ["calm", "brisk", "careful", "eager", "formal", "gentle", "honest", "jolly", "kind", "lucid"],
-        ["engineer", "artist", "doctor", "lawyer", "teacher", "baker", "pilot", "writer", "nurse", "clerk"],
-        [".", ".", ".", ".", ".", ".", ".", ".", ".", "."],
-    )
 
 
 def _family_c_text() -> str:
@@ -82,7 +127,25 @@ def _repeat_to_limit(piece: list[int], *, min_repetitions: int, max_length: int,
     cap = max_length // len(piece)
     if requested is not None:
         cap = min(cap, requested)
-    return cap if cap >= min_repetitions else cap
+    return cap
+
+
+def _reject(rejections: list[dict[str, Any]], **record: Any) -> None:
+    assert record["reason"] in REJECTION_REASONS, record
+    rejections.append(record)
+
+
+def _parse_segment_lengths(value: str | Iterable[int]) -> list[int]:
+    if isinstance(value, str):
+        vals = [int(x.strip()) for x in value.split(",") if x.strip()]
+    else:
+        vals = [int(x) for x in value]
+    vals = sorted(set(vals))
+    if 7 not in vals:
+        raise RuntimeError("segment-lengths must include mandatory L=7")
+    if len(vals) < 2:
+        raise RuntimeError("segment-lengths must include at least two distinct L values")
+    return vals
 
 
 def build_stimuli(
@@ -93,55 +156,87 @@ def build_stimuli(
     min_repetitions: int,
     repetitions: int | None,
     limit_stimuli: int | None,
-) -> list[Stimulus]:
+    segment_lengths: Iterable[int] = (4, 7),
+) -> BuildResult:
     stimuli: list[Stimulus] = []
+    rejected: list[dict[str, Any]] = []
+    feasibility: list[dict[str, Any]] = []
+    target_lengths = list(segment_lengths)
+
+    for target_l in target_lengths:
+        needed = min_repetitions * target_l
+        feasible = needed <= max_length
+        feasibility.append({"target_L": target_l, "r_min": min_repetitions, "needed_tokens": needed, "max_length": max_length, "feasible": feasible})
+        if not feasible:
+            raise RuntimeError(f"cell L={target_l} needs {needed} tokens, budget {max_length}")
 
     if "A" in families:
-        for seg_no, text in enumerate(_family_a_segments()):
-            ids = _encode(tokenizer, text)
-            r = _repeat_to_limit(ids, min_repetitions=min_repetitions, max_length=max_length, requested=repetitions)
-            if r < min_repetitions:
-                continue
-            input_ids = ids * r
-            slots = {slot: [rep * len(ids) + slot for rep in range(r)] for slot in range(len(ids))}
-            token_ids = {slot: ids[slot] for slot in range(len(ids))}
-            stimuli.append(Stimulus(f"A{seg_no:02d}", "A", f"seg{seg_no:02d}", input_ids, slots, token_ids, r, len(ids), text))
+        for target_l in target_lengths:
+            for seg_no, (text, ids) in enumerate(_family_a_segments_for_length(tokenizer, target_l)):
+                r = _repeat_to_limit(ids, min_repetitions=min_repetitions, max_length=max_length, requested=repetitions)
+                if r < min_repetitions:
+                    _reject(rejected, stimulus_id=f"A{target_l}_{seg_no:02d}", family="A", target_L=target_l, reason="below_min_repetitions", token_len=len(ids), max_reps_possible=r)
+                    continue
+                input_ids = ids * r
+                slots = {slot: [rep * len(ids) + slot for rep in range(r)] for slot in range(len(ids))}
+                token_ids = {slot: ids[slot] for slot in range(len(ids))}
+                stimuli.append(Stimulus(f"A{target_l}_{seg_no:02d}", "A", f"L{target_l}_seg{seg_no:02d}", input_ids, slots, token_ids, r, len(ids), text, target_l))
 
     if "B" in families:
-        names, adjs, jobs, punct = _family_b_words()
-        # Build one stimulus per cyclic offset.  Probe token-identical frame slots only.
-        for offset in range(8):
+        for group_i, group in enumerate(_family_b_word_groups()):
             reps: list[list[int]] = []
+            content_words: list[dict[str, str]] = []
             for i in range(max(min_repetitions, repetitions or min_repetitions)):
-                j = (i + offset) % len(names)
-                reps.append(_encode(tokenizer, f"{names[j]} is a {adjs[j]} {jobs[j]}{punct[j]}"))
-            common_len = len(reps[0]) if reps else 0
-            if common_len == 0 or any(len(x) != common_len for x in reps):
+                j = i % len(group["names"])
+                sentence = f"{group['names'][j]} is a {group['adjs'][j]} {group['jobs'][j]}."
+                reps.append(_encode(tokenizer, sentence))
+                content_words.append({"name": group["names"][j], "adjective": group["adjs"][j], "profession": group["jobs"][j]})
+            offsets: list[int] = []
+            cursor = 0
+            kept_reps: list[list[int]] = []
+            kept_content: list[dict[str, str]] = []
+            for rep_ids, content in zip(reps, content_words, strict=True):
+                if cursor + len(rep_ids) > max_length:
+                    break
+                offsets.append(cursor)
+                kept_reps.append(rep_ids)
+                kept_content.append(content)
+                cursor += len(rep_ids)
+            if len(kept_reps) < min_repetitions:
+                _reject(rejected, stimulus_id=f"B{group_i:02d}", family="B", target_L=None, reason="below_min_repetitions", token_len=None, max_reps_possible=len(kept_reps))
                 continue
-            r_cap = max_length // common_len
-            r = min(len(reps), r_cap)
-            if r < min_repetitions:
+            slot_positions: dict[tuple[str, int], list[int]] = {}
+            slot_tokens: dict[tuple[str, int], int] = {}
+            constant_failed = False
+            for rep_i, ids in enumerate(kept_reps):
+                occ: Counter[str] = Counter()
+                for j, tid in enumerate(ids):
+                    piece = _decode_piece(tokenizer, tid)
+                    if piece in FRAME_TOKENS:
+                        key = (piece, occ[piece])
+                        occ[piece] += 1
+                        if key in slot_tokens and slot_tokens[key] != tid:
+                            _reject(rejected, stimulus_id=f"B{group_i:02d}", family="B", target_L=None, reason="slot_token_not_constant", token_len=len(ids), max_reps_possible=len(kept_reps))
+                            constant_failed = True
+                            break
+                        slot_tokens[key] = tid
+                        slot_positions.setdefault(key, []).append(offsets[rep_i] + j)
+                if constant_failed:
+                    break
+            if constant_failed:
                 continue
-            reps = reps[:r]
-            probe_slots: dict[int, list[int]] = {}
-            token_ids: dict[int, int] = {}
-            for slot in range(common_len):
-                ids_at_slot = [rep[slot] for rep in reps]
-                if len(set(ids_at_slot)) != 1:
-                    continue
-                piece = _decode_piece(tokenizer, ids_at_slot[0])
-                if piece in {"is", "a", "."}:
-                    probe_slots[slot] = [rep_i * common_len + slot for rep_i in range(r)]
-                    token_ids[slot] = ids_at_slot[0]
-            if not probe_slots:
+            full_slots = [(key, pos) for key, pos in slot_positions.items() if len(pos) == len(kept_reps)]
+            if not full_slots:
+                _reject(rejected, stimulus_id=f"B{group_i:02d}", family="B", target_L=None, reason="frame_token_absent", token_len=None, max_reps_possible=len(kept_reps))
                 continue
-            flat = [tok for rep in reps for tok in rep]
-            stimuli.append(Stimulus(f"B{offset:02d}", "B", f"frame{offset:02d}", flat, probe_slots, token_ids, r, common_len, "{Name} is a {adj} {profession}."))
+            slots = {slot_i: pos for slot_i, (_key, pos) in enumerate(sorted(full_slots))}
+            token_ids = {slot_i: slot_tokens[key] for slot_i, (key, _pos) in enumerate(sorted(full_slots))}
+            flat = [tok for rep in kept_reps for tok in rep]
+            stimuli.append(Stimulus(f"B{group_i:02d}", "B", f"frame_group{group_i:02d}", flat, slots, token_ids, len(kept_reps), None, "{Name} is a {adj} {profession}.", None, kept_content))
 
     if "C" in families:
         base_ids = _encode(tokenizer, _family_c_text())
         r = _repeat_to_limit(base_ids, min_repetitions=1, max_length=max_length, requested=None)
-        # Natural-recurrence control: one long repeated paragraph, probe frequent pieces.
         input_ids = base_ids * max(1, r)
         token_to_positions: dict[int, list[int]] = {}
         for pos, tok in enumerate(input_ids):
@@ -158,10 +253,20 @@ def build_stimuli(
                 slot += 1
         if probe_slots:
             stimuli.append(Stimulus("C00", "C", "natural-recurrence", input_ids, probe_slots, token_ids, min(len(v) for v in probe_slots.values()), None, _family_c_text()[:120]))
+        else:
+            _reject(rejected, stimulus_id="C00", family="C", target_L=None, reason="insufficient_occurrences", token_len=len(base_ids), max_reps_possible=max((len(v) for v in token_to_positions.values()), default=0))
 
     if limit_stimuli is not None:
         stimuli = stimuli[:limit_stimuli]
-    return stimuli
+
+    missing = sorted(f for f in families if not any(s.family == f for s in stimuli))
+    if missing:
+        raise RuntimeError(f"G5 family yield failed for {missing}; rejected_stimuli={json.dumps(rejected, sort_keys=True)}")
+    if "A" in families:
+        missing_cells = [L for L in target_lengths if not any(s.family == "A" and s.target_L == L for s in stimuli)]
+        if missing_cells:
+            raise RuntimeError(f"G5 M1.5 length-cell yield failed for L={missing_cells}; rejected_stimuli={json.dumps(rejected, sort_keys=True)}")
+    return BuildResult(stimuli, rejected, feasibility)
 
 
 def _capture_keys(lm: Any, input_ids: torch.Tensor, attention_mask: torch.Tensor | None) -> list[tuple[str, torch.Tensor]]:
@@ -273,20 +378,49 @@ def _nearest_centroid_cv_accuracy(x: np.ndarray, labels: np.ndarray, *, folds: i
     return float(np.mean(accs)) if accs else float("nan")
 
 
-def _analyse_matrix(x: np.ndarray, y: np.ndarray, token_ids: np.ndarray, *, seed: int, variance_floor: float) -> dict[str, Any]:
+def _null_stats(x: np.ndarray, y: np.ndarray, *, seed: int, alphas: np.ndarray, permutations: int) -> tuple[float, float, float]:
+    rng = np.random.default_rng(seed + 17)
+    vals = np.asarray([
+        _ridge_cv_r2(x, rng.permutation(y), folds=5, seed=seed + 1 + i, alphas=alphas)
+        for i in range(max(1, permutations))
+    ], dtype=float)
+    return float(vals.mean()), float(np.quantile(vals, 0.99)), float(vals.max())
+
+
+def _analyse_matrix(x: np.ndarray, y: np.ndarray, token_ids: np.ndarray, *, seed: int, variance_floor: float, null_permutations: int) -> dict[str, Any]:
     raw = float(np.mean(np.abs(x)))
     mean = x.mean(axis=0, keepdims=True)
     resid = x - mean
     resid_scale = float(np.mean(np.abs(resid)))
     frac = 0.0 if raw <= 0 else resid_scale / raw
-    if frac < variance_floor:
-        r2 = 0.0
-        shuffled_r2 = 0.0
-    else:
-        alphas = np.logspace(-2, 4, 13)
-        r2 = _ridge_cv_r2(x, y.astype(float), folds=5, seed=seed, alphas=alphas)
-        shuffled = np.random.default_rng(seed + 17).permutation(y.astype(float))
-        shuffled_r2 = _ridge_cv_r2(x, shuffled, folds=5, seed=seed + 1, alphas=alphas)
+    degenerate = frac < variance_floor
+    basis = np.zeros((0, x.shape[1]), dtype=np.float32)
+    token_acc_before = _nearest_centroid_cv_accuracy(x, token_ids, folds=5, seed=seed + 3)
+    if degenerate:
+        token_acc_after = token_acc_before
+        return {
+            "raw_mean_abs": raw,
+            "resid_mean_abs": resid_scale,
+            "position_fraction": frac,
+            "degenerate": True,
+            "ridge_r2": 0.0,
+            "shuffled_ridge_r2": 0.0,
+            "shuffled_ridge_r2_p99": 0.0,
+            "r2_minus_null_mean": 0.0,
+            "permutation_p_value": float("nan"),
+            "pca_components_90pct": 0,
+            "pca_residual_variance_fraction_90pct": 0.0,
+            "pc1_spearman_repetition": float("nan"),
+            "pc1_dominant_fourier_bin": -1,
+            "r2_after_position_pc_projection": 0.0,
+            "token_identity_acc_before": token_acc_before,
+            "token_identity_acc_after": token_acc_after,
+            "basis": basis,
+        }
+    alphas = np.logspace(-2, 4, 13)
+    y_float = y.astype(float)
+    r2 = _ridge_cv_r2(x, y_float, folds=5, seed=seed, alphas=alphas)
+    null_mean, null_p99, null_max = _null_stats(x, y_float, seed=seed, alphas=alphas, permutations=null_permutations)
     k90, frac_resid_var, basis, _var = _pca_stats(resid)
     pc1 = resid @ basis[0] if len(basis) else np.zeros(len(y), dtype=float)
     dominant_bin = -1
@@ -299,18 +433,21 @@ def _analyse_matrix(x: np.ndarray, y: np.ndarray, token_ids: np.ndarray, *, seed
         x_proj = mean + proj
     else:
         x_proj = x
-    r2_after = 0.0 if frac < variance_floor else _ridge_cv_r2(x_proj, y.astype(float), folds=5, seed=seed + 2, alphas=np.logspace(-2, 4, 13))
-    token_acc_before = _nearest_centroid_cv_accuracy(x, token_ids, folds=5, seed=seed + 3)
+    r2_after = _ridge_cv_r2(x_proj, y_float, folds=5, seed=seed + 2, alphas=alphas)
     token_acc_after = _nearest_centroid_cv_accuracy(x_proj, token_ids, folds=5, seed=seed + 4)
     return {
         "raw_mean_abs": raw,
         "resid_mean_abs": resid_scale,
         "position_fraction": frac,
+        "degenerate": False,
         "ridge_r2": r2,
-        "shuffled_ridge_r2": shuffled_r2,
+        "shuffled_ridge_r2": null_mean,
+        "shuffled_ridge_r2_p99": null_p99,
+        "r2_minus_null_mean": r2 - null_mean,
+        "permutation_p_value": (1.0 + float(null_max >= r2)) / (1.0 + max(1, null_permutations)),
         "pca_components_90pct": k90,
         "pca_residual_variance_fraction_90pct": frac_resid_var,
-        "pc1_spearman_repetition": _spearman(pc1, y.astype(float)) if len(basis) else float("nan"),
+        "pc1_spearman_repetition": _spearman(pc1, y_float) if len(basis) else float("nan"),
         "pc1_dominant_fourier_bin": dominant_bin,
         "r2_after_position_pc_projection": r2_after,
         "token_identity_acc_before": token_acc_before,
@@ -383,14 +520,23 @@ def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float)
     x = np.stack(state.sample_x)
     y = np.asarray(state.sample_y, dtype=float)
     token_ids = np.asarray(state.sample_token, dtype=np.int64)
-    if frac < variance_floor:
+    degenerate = frac < variance_floor
+    if degenerate:
         r2 = 0.0
         shuffled_r2 = 0.0
+        shuffled_r2_p99 = 0.0
+        r2_minus_null_mean = 0.0
+        permutation_p_value = float("nan")
         r2_after = 0.0
+        k90 = 0
+        frac_var = 0.0
+        basis = eigvecs[:0]
     else:
         alphas = np.logspace(-2, 4, 13)
         r2 = _ridge_cv_r2(x, y, folds=5, seed=seed, alphas=alphas)
-        shuffled_r2 = _ridge_cv_r2(x, np.random.default_rng(seed + 17).permutation(y), folds=5, seed=seed + 1, alphas=alphas)
+        shuffled_r2, shuffled_r2_p99, null_max = _null_stats(x, y, seed=seed, alphas=alphas, permutations=5)
+        r2_minus_null_mean = r2 - shuffled_r2
+        permutation_p_value = (1.0 + float(null_max >= r2)) / 6.0
         if len(basis):
             mean = x.mean(axis=0, keepdims=True)
             resid = x - mean
@@ -410,8 +556,12 @@ def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float)
         "raw_mean_abs": raw,
         "resid_mean_abs": resid_scale,
         "position_fraction": frac,
+        "degenerate": degenerate,
         "ridge_r2": r2,
         "shuffled_ridge_r2": shuffled_r2,
+        "shuffled_ridge_r2_p99": shuffled_r2_p99,
+        "r2_minus_null_mean": r2_minus_null_mean,
+        "permutation_p_value": permutation_p_value,
         "pca_components_90pct": k90,
         "pca_residual_variance_fraction_90pct": frac_var,
         "pc1_spearman_repetition": float("nan"),
@@ -422,6 +572,29 @@ def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float)
         "sample_rows": len(x),
         "source_rows": state.seen,
     }, basis
+
+
+def _trained_context(lm: Any) -> int | None:
+    for obj in (getattr(lm, "model", None), getattr(getattr(lm, "model", None), "config", None), getattr(lm, "tokenizer", None)):
+        for attr in ("max_position_embeddings", "n_positions", "n_ctx", "block_size", "context_length", "max_sequence_length"):
+            value = getattr(obj, attr, None)
+            if isinstance(value, int) and 0 < value < 1_000_000:
+                return value
+    if lm.tag == "nope-gpt-small":
+        # The remote config does not expose a context field; the model card/checkpoint is GPT-small scale.
+        return 1024
+    return None
+
+
+def _d_head(lm: Any) -> int:
+    cfg = getattr(getattr(lm, "model", None), "config", None)
+    hidden = getattr(cfg, "hidden_size", None) or getattr(cfg, "n_embd", None) or getattr(cfg, "embedding_dimensions", None)
+    heads = getattr(cfg, "num_attention_heads", None) or getattr(cfg, "n_head", None) or getattr(cfg, "num_heads", None)
+    if hidden and heads:
+        return int(hidden) // int(heads)
+    if lm.tag == "qwen3":
+        return 128
+    return 64
 
 
 def run(args: argparse.Namespace) -> None:
@@ -435,15 +608,24 @@ def run(args: argparse.Namespace) -> None:
     if lm.tag not in {"gpt2", "qwen3", "nope-gpt-small"} and not lm.tag.startswith("pythia"):
         raise NotImplementedError(f"M1.5 extraction not implemented for {lm.tag}")
 
+    context = _trained_context(lm)
+    if context is None and args.max_length is None:
+        raise RuntimeError("could not derive trained context from model config; pass --max-length explicitly")
+    max_length = int(args.max_length if args.max_length is not None else context - 32)
     families = {f.strip().upper() for f in args.families.split(",") if f.strip()}
-    stimuli = build_stimuli(
+    segment_lengths = _parse_segment_lengths(args.segment_lengths)
+    d_head_for_budget = _d_head(lm)
+    effective_min_repetitions = max(args.min_repetitions, 2 * d_head_for_budget)
+    build = build_stimuli(
         lm.tokenizer,
         families=families,
-        max_length=args.max_length,
-        min_repetitions=args.min_repetitions,
+        max_length=max_length,
+        min_repetitions=effective_min_repetitions,
         repetitions=args.repetitions,
         limit_stimuli=args.limit_stimuli,
+        segment_lengths=segment_lengths,
     )
+    stimuli = build.stimuli
     if not stimuli:
         raise RuntimeError("no valid M1.5 stimuli were generated for this tokenizer/settings")
 
@@ -473,7 +655,7 @@ def run(args: argparse.Namespace) -> None:
                         x = k_all[layer].index_select(0, pos_t)[:, head, :].detach().float().cpu().numpy()
                         y = np.arange(len(positions), dtype=float)
                         token_ids = np.full(len(positions), stim.slot_token_ids[slot], dtype=np.int64)
-                        stats = _analyse_matrix(x, y, token_ids, seed=args.seed + stim_i + layer * 1000 + head, variance_floor=args.variance_floor)
+                        stats = _analyse_matrix(x, y, token_ids, seed=args.seed + stim_i + layer * 1000 + head, variance_floor=args.variance_floor, null_permutations=args.null_permutations)
                         basis = stats.pop("basis")
                         row = {
                             "model": args.model,
@@ -558,7 +740,7 @@ def run(args: argparse.Namespace) -> None:
         raise RuntimeError("analysis produced no rows")
     gates = pd.DataFrame(gate_rows)
     gate_pass = bool(gates.empty or (gates["pass"].all() and gates["perturbation_can_fail"].all()))
-    shuffle_ok = bool((summary["shuffled_ridge_r2"].abs() < args.shuffle_r2_abs_warn).mean() >= 0.95)
+    shuffle_ok = bool(np.quantile(summary["shuffled_ridge_r2_p99"], 0.99) <= args.shuffle_r2_abs_warn)
 
     summary_path = out / f"kaddress_m15_{args.model}.csv"
     gates_path = out / f"kaddress_m15_gates_{args.model}.csv"
@@ -576,8 +758,13 @@ def run(args: argparse.Namespace) -> None:
         "seed": args.seed,
         "families": sorted(families),
         "stimulus_count": len(stimuli),
-        "max_length": args.max_length,
-        "min_repetitions": args.min_repetitions,
+        "trained_context": context,
+        "max_length": max_length,
+        "min_repetitions": effective_min_repetitions,
+        "cli_min_repetitions": args.min_repetitions,
+        "segment_lengths": segment_lengths,
+        "feasibility_matrix": build.feasibility,
+        "rejected_stimuli": build.rejected_stimuli,
         "requested_repetitions": args.repetitions,
         "limit_layers": args.limit_layers,
         "limit_heads": args.limit_heads,
@@ -596,7 +783,9 @@ def run(args: argparse.Namespace) -> None:
                 "slots": len(s.slots),
                 "repetitions": s.repetitions,
                 "segment_token_len": s.segment_token_len,
+                "target_L": s.target_L,
                 "preview": s.text_preview,
+                "content_words": s.content_words,
             }
             for s in stimuli
         ],
@@ -622,14 +811,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--revision", default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--families", default="A,B,C", help="Comma-separated subset of A,B,C")
-    p.add_argument("--max-length", type=int, default=950)
-    p.add_argument("--min-repetitions", type=int, default=120)
+    p.add_argument("--max-length", type=int, default=None, help="Token budget; defaults to trained context minus 32.")
+    p.add_argument("--min-repetitions", type=int, default=120, help="Lower-bound override; effective R_min is max(this, 2*d_head).")
+    p.add_argument("--segment-lengths", default="4,7", help="Comma-separated Family A segment lengths; must include 7 and at least two values.")
     p.add_argument("--repetitions", type=int, default=None)
     p.add_argument("--limit-stimuli", type=int, default=None)
     p.add_argument("--limit-layers", type=int, default=None)
     p.add_argument("--limit-heads", type=int, default=None)
     p.add_argument("--variance-floor", type=float, default=1e-5)
     p.add_argument("--shuffle-r2-abs-warn", type=float, default=0.05)
+    p.add_argument("--null-permutations", type=int, default=5)
     p.add_argument(
         "--aggregate-sample-cap",
         type=int,

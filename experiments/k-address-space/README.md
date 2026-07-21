@@ -32,12 +32,11 @@ The M1.5 repeated-segment position/content probe from `addendum-M1.5.md` has its
 PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
   --model nope-gpt-small \
   --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
-  --families A \
-  --min-repetitions 10 \
-  --repetitions 10 \
-  --limit-stimuli 1 \
+  --families A,B \
+  --repetitions 128 \
   --limit-layers 1 \
   --limit-heads 1 \
+  --null-permutations 1 \
   --output-dir outputs/k_address_space_m15_nope_smoke
 ```
 

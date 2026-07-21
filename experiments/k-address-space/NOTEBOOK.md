@@ -1,5 +1,59 @@
 # K-address-space lab notebook
 
+## 2026-07-21 — K-address-space M1.5 v1.1 NoPE-GPT-Small CPU rerun prep
+
+### Question / Hypothesis
+
+Does the corrected M1.5 v1.1 repeated-segment probe reproduce the NoPE-GPT-Small Family A depth profile while also exercising the formerly empty Family B induction-control family and the corrected length sweep (`L ∈ {4, 7}`)?
+
+### Experiment Design Summary
+
+This rerun implements the v1.1 corrections in `experiments/k-address-space/addendum-M1.5.md` and the compatible local code-fix brief in `experiments/k-address-space/CODEFIX-M1.5.md` without committing that brief. The implementation removes Family B equal-length filtering, computes slot positions from cumulative offsets, derives `R_min = max(120, 2*d_head)`, defaults the token budget to trained context minus 32, emits feasibility/rejection manifest fields, changes the shuffled-null gate to an upper-tail check, and applies the variance floor to every derived position statistic.
+
+Compatibility check: the code-fix D1–D5 items correspond directly to addendum v1.1 C1–C4 / §§2.0, 2.2, 3, 4.1, and 7.5. The implementation keeps CODEFIX as an untracked disposable file and treats the addendum as the durable spec.
+
+### Planned Procedure
+
+Run tests and a CPU smoke check, commit the pre-run state, then run the full corrected NoPE CPU experiment from the committed state:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --families A,B,C \
+  --output-dir outputs/k_address_space_m15_v11_nope_gpt_small_cpu_20260721
+```
+
+### Expected Signal / Interpretation Plan
+
+The regression bar is that Family A should remain close to the previous NoPE depth profile, while Family B must be non-empty. G1 must pass at layer 0, the corrected one-sided shuffled-null gate should avoid treating negative null R² as leakage, and degenerate rows should carry zero/NaN derived position statistics with `degenerate=true`. If Family A changes materially, the cumulative-offset or length-sweep refactor may have changed the measurement rather than only fixing controls.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1
+- Code-fix brief: `experiments/k-address-space/CODEFIX-M1.5.md` (untracked disposable file; do not commit)
+- Code branch: `main`
+- Pre-run commit: _Pending_
+- Planned output location: `outputs/k_address_space_m15_v11_nope_gpt_small_cpu_20260721`
+- Publication target: GitHub Release `run/k-address-space-m15-v11-nope-gpt-small/20260721`
+- Random seed: default script seed `0`
+- Environment: local CPU via `scripts/nix-cpu-run`; exact manifest environment to be recorded at run time
+- Model: `andrewdalpino/NoPE-GPT-Small-Base` pinned at Hugging Face revision `320681e33a029517e27c68a0f9c2b07ea0004155`
+- Preparation checklist: `temp/repro-checklists/20260721-k-address-space-m15-v11-nope-gpt-small-cpu.md`
+- Local verification: py_compile passed; unittest suite passed; NoPE A/B one-layer/one-head smoke passed with Family B non-empty and `shuffle_null_ok=True`.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-21 — K-address-space M1.5 NoPE-GPT-Small position-content run prep
 
 ### Question / Hypothesis
