@@ -1,5 +1,55 @@
 # K-address-space lab notebook
 
+## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 CPU run prep
+
+### Question / Hypothesis
+
+Does GPT-2, with learned absolute positional embeddings, expose strong positional information in attention keys under the corrected M1.5 v1.1 repeated-segment probe? The expectation from addendum v1.1 is that GPT-2 layer-0 keys should satisfy the architectural-one gate (G2) with high position decodability, unlike NoPE layer-0 architectural zero, while deeper layers may mix stamped and computed position.
+
+### Experiment Design Summary
+
+Run the already-corrected `kaddress.scripts.position_content` implementation from `experiments/k-address-space/addendum-M1.5.md` v1.1 for Hugging Face `gpt2` on local CPU. The run will use all families A/B/C, default effective `R_min = max(120, 2*d_head) = 128`, default trained context minus 32 token budget, and the mandatory feasible `L ∈ {4, 7}` cells. L=12 is known infeasible for GPT-2 under the v1.1 budget and is not requested.
+
+### Planned Procedure
+
+Run local verification and a constrained GPT-2 smoke check, commit the pre-run notebook state, then run the full GPT-2 CPU experiment from the committed state:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model gpt2 \
+  --families A,B,C \
+  --output-dir outputs/k_address_space_m15_v11_gpt2_cpu_20260721
+```
+
+### Expected Signal / Interpretation Plan
+
+G2 should pass for GPT-2 layer 0, with layer-0 positional information high enough to contrast with the NoPE G1 architectural-zero result. Family A is primary. Family B must be non-empty and is an induction-control corroboration; Family C remains external-validity corroboration only. The corrected one-sided shuffled-null gate should pass or be reported directly if positive null tails exceed threshold. Aggregate rows are the adjudication basis; slot-level rows are descriptive diagnostics.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1
+- Parent spec: `experiments/k-address-space/spec.md`
+- Code branch: `main`
+- Pre-run commit: _Pending_
+- Planned output location: `outputs/k_address_space_m15_v11_gpt2_cpu_20260721`
+- Publication target: GitHub Release `run/k-address-space-m15-v11-gpt2/20260721`
+- Random seed: default script seed `0`
+- Environment: local CPU via `scripts/nix-cpu-run`; exact manifest environment to be recorded at run time
+- Model: `gpt2` (Hugging Face model id `gpt2`; revision to be recorded from manifest/output if available)
+- Preparation checklist: `temp/repro-checklists/20260721-k-address-space-m15-v11-gpt2-cpu.md`
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-21 — K-address-space M1.5 v1.1 NoPE-GPT-Small CPU rerun prep
 
 ### Question / Hypothesis
