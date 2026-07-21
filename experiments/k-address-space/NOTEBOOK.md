@@ -31,7 +31,7 @@ The rerun is valid only if `gate_g2_pass=PASS`, `gate_g1_pass=NOT_APPLICABLE`, `
 
 - Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1 §3
 - Code branch: `main`
-- Pre-run commit: _Pending_
+- Pre-run commit: `946830c`
 - Planned output location: `outputs/k_address_space_m15_v11_gpt2_cpu_20260721_gatefix`
 - Prior defective output: `outputs/k_address_space_m15_v11_gpt2_cpu_20260721`
 - Publication target: GitHub Release `run/k-address-space-m15-v11-gpt2/20260721` replacement/additional gatefix tarball
@@ -42,15 +42,58 @@ The rerun is valid only if `gate_g2_pass=PASS`, `gate_g1_pass=NOT_APPLICABLE`, `
 
 ### Results
 
-_Pending run._
+Gatefix rerun completed locally on CPU from pre-run commit `946830c`.
+
+Command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model gpt2 \
+  --families A,B,C \
+  --output-dir outputs/k_address_space_m15_v11_gpt2_cpu_20260721_gatefix
+```
+
+Run window: `20260721T164434Z` to `20260721T165452Z`; exit code 0.
+
+Outputs were published as additional GitHub Release assets on the existing GPT-2 release:
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-gpt2/20260721>
+- `k_address_space_m15_v11_gpt2_cpu_20260721_gatefix.tar.gz` — 13,213,743 bytes; SHA256 `0d14c2a0336c1c6ecf8d8cc5a83efa32aec9489f0d1c0dd2eabf7375396573ae`
+- `SHA256SUMS-m15-v11-gpt2-gatefix-20260721.txt` — 883 bytes; checksum file verified by re-download and byte comparison.
+
+Internal output checksums:
+
+- `kaddress_m15_gates_gpt2.csv` — SHA256 `94daa9f573152c229f0edc70d8137dea543dfbc12d4976cdbb7f733154375afb`
+- `kaddress_m15_gpt2.csv` — SHA256 `e76fea1d3ac0aa4d8a4cd57846970645715fe7d99b74458222a6c48ec93f9eec`
+- `kaddress_m15_manifest_gpt2.json` — SHA256 `931f752910f76a2ac55552761e64020dfe6102a7404c99875033743653af878f`
+- `kaddress_m15_projectors_gpt2.npz` — SHA256 `8c0a346749e969e17d17a21f0eef38a3e6193d16a8685a9609000d9c6734cefb`
+- `run.log` — SHA256 `34f60414a896dd61d289b5fd816ccace978bed14799361d7013abe77f44a5672`
+
+Manifest highlights: `stimulus_count=19`, `summary_rows=14112`, `families=[A,B,C]`, `trained_context=1024`, `max_length=992`, `min_repetitions=128`, `segment_lengths=[4,7]`, `requested_device=cpu`, `cuda_available=false`, Python `3.11.11`, Torch `2.5.1`.
+
+Gate results now behave as intended:
+
+- `gate_g1_pass=NOT_APPLICABLE`
+- `gate_g2_pass=PASS`
+- `gates_evaluated={G1_architectural_zero: 0, G2_architectural_one: 1140}`
+- Gates CSV row count: 1,140, all `G2_architectural_one`
+- Every G2 row has `pass=true` and `perturbation_can_fail=true`
+- G2 ridge R² min/mean: `0.907914 / 0.999073`
+- Maximum perturbed ridge R²: `0.039493`, below the `0.9` G2 threshold
+
+Regression check: the rerun `kaddress_m15_gpt2.csv` is byte-identical to the prior GPT-2 run (`e76fea1d3ac0aa4d8a4cd57846970645715fe7d99b74458222a6c48ec93f9eec`, 4,053,422 bytes). This confirms the fix changed gate reporting only, not the measurement table.
 
 ### Analysis
 
-_Pending output analysis._
+The previous GPT-2 run's scientific measurements were stable, but its gate result was invalid: it had no G1 rows because GPT-2 has no architectural-zero layer-0 key case, and the required G2 architectural-one gate was not implemented. Reporting `gate_g1_pass=true` on an empty gates table was therefore a false green.
+
+The gatefix rerun repairs that defect. GPT-2 now validates through G2 exactly where expected for learned absolute positional embeddings: all layer-0 slot/head rows pass the `ridge_r2 >= 0.9` threshold, with the minimum matching the expected reference range (`0.9079`). The perturbation check also demonstrates that the gate can fail: shuffling the position→key correspondence drives every perturbed ridge R² far below the threshold.
+
+Because the measurement CSV is byte-identical to the prior run, the prior interpretation of GPT-2's strong layer-0 positional signal and depth-wise persistence remains unchanged. The durable correction is limited to gate semantics and manifest visibility.
 
 ### Conclusion / Next Step
 
-_Pending._
+The GPT-2 M1.5 v1.1 result is now valid under ADDENDUM §3 gates. The earlier release asset is retained as the defective-gate historical output; the gatefix tarball should be used for gate-validity claims. Next step remains the RoPE stamped-vs-computed comparison on Pythia/Qwen3 using the same gate semantics.
 
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 CPU run prep
 
