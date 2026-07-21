@@ -44,15 +44,69 @@ The regression bar is that Family A should remain close to the previous NoPE dep
 
 ### Results
 
-_Pending run._
+Run completed locally on CPU from pre-run commit `133f115`.
+
+Command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --families A,B,C \
+  --output-dir outputs/k_address_space_m15_v11_nope_gpt_small_cpu_20260721
+```
+
+Run window: `20260721T110903Z` to `20260721T113337Z`; exit code 0. The disposable code-fix brief `experiments/k-address-space/CODEFIX-M1.5.md` was deleted after the run completed, per instruction.
+
+Outputs were published as GitHub Release assets:
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-nope-gpt-small/20260721>
+- `k_address_space_m15_v11_nope_gpt_small_cpu_20260721.tar.gz` — 20,199,687 bytes; SHA256 `5511822789f285483bab43cd28e8a16cffcb1cf575e4becf77dd24fc03256512`
+- `SHA256SUMS-m15-v11-nope-20260721.txt` — 938 bytes; checksum file verified by re-download and byte comparison.
+
+Internal output checksums:
+
+- `kaddress_m15_nope-gpt-small.csv` — SHA256 `f00420e4ddfdbddc22b6a3f188cf6327d42e444c8ddf604a7b7f1237d5c6eb1e`
+- `kaddress_m15_gates_nope-gpt-small.csv` — SHA256 `927ac35665c81eea3e172ff38e9c208c5739c84a0b36ea509e607096a2d4f69d`
+- `kaddress_m15_manifest_nope-gpt-small.json` — SHA256 `6e3e455cb7e06466a639d2b0d9bbd3cb0e15b57a06a40ef188ebfe000ba67688`
+- `kaddress_m15_projectors_nope-gpt-small.npz` — SHA256 `262c57585bb209413a94564962131ac2535d2e3b3d09654c84cdeeb70029afc6`
+- `run.log` — SHA256 `bb4612f6cef2fd89224791231035d2b754c704d91088c39d376c050971f08320`
+
+Manifest highlights: `stimulus_count=19`, `summary_rows=37632`, `families=[A,B,C]`, `trained_context=1024`, `max_length=992`, `min_repetitions=128`, `segment_lengths=[4,7]`, `rejected_stimuli=[]`, `requested_device=cpu`, `cuda_available=false`, Python `3.11.11`, Torch `2.5.1`, model revision `320681e33a029517e27c68a0f9c2b07ea0004155`. Family A contributed 16 stimuli (8 at L=4 and 8 at L=7), Family B contributed 2 frame/content-varying stimuli, and Family C contributed 1 natural-recurrence stimulus.
+
+Gate and null summary:
+
+- G1 architectural zero passed for all 1,520 layer-0 checked slots/heads.
+- Corrected G4 passed: `shuffle_null_ok=true`; shuffled-null mean over all rows was `-0.0357`, and negative null values were no longer counted as leakage.
+- Degenerate layer-0 rows were explicitly marked and had derived position statistics zeroed.
+
+Selected Family A slot-level depth means:
+
+| layer | position fraction | ridge R² | PCA k90 | R² after PC projection |
+|---:|---:|---:|---:|---:|
+| 0 | 0.000001 | 0.000 | 0.00 | 0.000 |
+| 1 | 0.00729 | 0.042 | 0.82 | 0.041 |
+| 2 | 0.00893 | 0.257 | 1.28 | 0.159 |
+| 6 | 0.0280 | 0.582 | 1.66 | 0.242 |
+| 12 | 0.0234 | 0.900 | 1.16 | 0.059 |
+| 18 | 0.0558 | 0.947 | 2.08 | 0.074 |
+| 23 | 0.0656 | 0.972 | 2.15 | 0.034 |
+
+Selected aggregate means show Family B is now non-empty and strongly position-decodable at depth: Family B aggregate ridge R² rises from `0.000` at layer 0 to `0.828` at layer 6, `0.969` at layer 12, and `0.973` at layer 23.
 
 ### Analysis
 
-_Pending output analysis._
+The corrected run preserves the core NoPE result: layer-0 keys are effectively position-free, then position becomes strongly decodable from K with depth. Family A's depth curve is directionally consistent with the first run, though not byte-identical because v1.1 now uses both L=4 and L=7 cells and 16 surviving Family A stimuli instead of the previous accidental subset. The headline still holds: Family A ridge R² reaches about `0.90` by layer 12 and `0.97` by layer 23.
+
+The major correction is successful: Family B is no longer empty. The offset-based frame-token construction yields two vocabulary-disjoint Family B stimuli with actual cumulative offsets, and Family B shows a similar depth-rising position signal. This removes the previous caveat that the induction-control family never ran.
+
+The spec corrections also behave as intended. The feasibility matrix records L=4 and L=7 as feasible at `R_min=128`; no stimuli were silently rejected; the one-sided shuffled-null gate passes despite a negative null mean; and the widened variance floor prevents layer-0 PCA/noise artifacts from appearing as real position components.
+
+Caveat: Family A aggregate projector fidelity is weaker than the earlier single-effective-L run at upper layers (e.g. aggregate Family A layer-23 R² after projection ≈ `0.163` rather than near zero). This is expected to be more stringent because v1.1 combines two segment lengths to break absolute-position vs repetition-index collinearity; it should be tracked in cross-model comparisons rather than treated as a failed reproduction.
 
 ### Conclusion / Next Step
 
-_Pending._
+The v1.1 NoPE CPU rerun is valid and supersedes the first M1.5 NoPE run for corrected-family and length-sweep claims. It confirms computed positional information in NoPE keys at depth, validates the repaired Family B induction control, and records a stricter multi-L projector-fidelity caveat for follow-up. Next step: use this v1.1 implementation for GPT-2/Pythia/Qwen3 cross-model M1.5 runs.
 
 ## 2026-07-21 — K-address-space M1.5 NoPE-GPT-Small position-content run prep
 
