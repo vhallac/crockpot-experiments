@@ -62,7 +62,7 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-r
 Outputs were published as GitHub Release assets:
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-nope-gpt-small/20260721>
-- `k_address_space_m15_nope_gpt_small_20260721.tgz` — 8,133,533 bytes; SHA256 `00ab55541353b58f0bc099218cf4dd8494f33036f1ee3e15eaec40f96984eb1f`
+- `k_address_space_m15_nope_gpt_small_20260721.tar.gz` — 8,133,533 bytes; SHA256 `00ab55541353b58f0bc099218cf4dd8494f33036f1ee3e15eaec40f96984eb1f`
 - `kaddress_m15_nope-gpt-small.csv` — 3,521,429 bytes; SHA256 `c5b1bfa6894e2b6403c73f85e7d89f36b15597c113a982e8a215ecb94418e136`
 - `kaddress_m15_gates_nope-gpt-small.csv` — 55,436 bytes; SHA256 `500abe947b6a23a2d088459edbe0573aef0bb02c8e9f58cb23f3fc768b027ec3`
 - `kaddress_m15_manifest_nope-gpt-small.json` — 2,462 bytes; SHA256 `c54a79b0fd45af4b2800e7dce99aa76e580fe472bec5b08e55b00d1e308a3d74`

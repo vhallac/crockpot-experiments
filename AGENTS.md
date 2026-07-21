@@ -115,6 +115,7 @@ GitHub Release conventions for reproducible runs:
 - Tag: `run/<experiment-id>/<YYYYMMDD>`; append `-2`, `-3`, … for additional same-day runs of the same experiment.
 - Create releases with the `gh` CLI (for example `gh release create <tag> <assets...> --notes-file <notes>`); mark them as pre-release if the analysis is not yet complete.
 - Release notes must reference the pre-run commit SHA, the final commit SHA once available, and the run command.
+- Package reproducible-run output bundles as `.tar.gz` archives, not `.tgz` or `.zip`, so release assets use one consistent extension.
 - Upload a `SHA256SUMS` file alongside the packaged assets. The same hashes go into the committed run manifest, so the release and the git-side manifest can verify each other.
 - Post-publication verification: list assets (`gh release view <tag> --json assets`) and re-download at least the checksum file to confirm integrity.
 
