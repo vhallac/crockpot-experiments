@@ -58,8 +58,8 @@ Run window: `20260721T164434Z` to `20260721T165452Z`; exit code 0.
 Outputs were published as additional GitHub Release assets on the existing GPT-2 release:
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-gpt2/20260721>
-- `k_address_space_m15_v11_gpt2_cpu_20260721_gatefix.tar.gz` — 13,213,743 bytes; SHA256 `0d14c2a0336c1c6ecf8d8cc5a83efa32aec9489f0d1c0dd2eabf7375396573ae`
-- `SHA256SUMS-m15-v11-gpt2-gatefix-20260721.txt` — 883 bytes; checksum file verified by re-download and byte comparison.
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-v11-gpt2/20260721/k_address_space_m15_v11_gpt2_cpu_20260721_gatefix.tar.gz> — 13,213,743 bytes; SHA256 `0d14c2a0336c1c6ecf8d8cc5a83efa32aec9489f0d1c0dd2eabf7375396573ae`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-v11-gpt2/20260721/SHA256SUMS-m15-v11-gpt2-gatefix-20260721.txt> — 883 bytes; checksum file verified by re-download and byte comparison.
 
 Internal output checksums:
 
@@ -151,8 +151,8 @@ Run window: `20260721T162109Z` to `20260721T163113Z`; exit code 0.
 Outputs were published as GitHub Release assets:
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-gpt2/20260721>
-- `k_address_space_m15_v11_gpt2_cpu_20260721.tar.gz` — 13,184,611 bytes; SHA256 `43d35742f6d51ef0f9621b0f5f95a8e975de9cd9802bbed62f6fe2824aca9dc6`
-- `SHA256SUMS-m15-v11-gpt2-20260721.txt` — 869 bytes; checksum file verified by re-download and byte comparison.
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-v11-gpt2/20260721/k_address_space_m15_v11_gpt2_cpu_20260721.tar.gz> — 13,184,611 bytes; SHA256 `43d35742f6d51ef0f9621b0f5f95a8e975de9cd9802bbed62f6fe2824aca9dc6`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-v11-gpt2/20260721/SHA256SUMS-m15-v11-gpt2-20260721.txt> — 869 bytes; checksum file verified by re-download and byte comparison.
 
 Internal output checksums:
 
@@ -255,8 +255,8 @@ Run window: `20260721T110903Z` to `20260721T113337Z`; exit code 0. The disposabl
 Outputs were published as GitHub Release assets:
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-nope-gpt-small/20260721>
-- `k_address_space_m15_v11_nope_gpt_small_cpu_20260721.tar.gz` — 20,199,687 bytes; SHA256 `5511822789f285483bab43cd28e8a16cffcb1cf575e4becf77dd24fc03256512`
-- `SHA256SUMS-m15-v11-nope-20260721.txt` — 938 bytes; checksum file verified by re-download and byte comparison.
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-v11-nope-gpt-small/20260721/k_address_space_m15_v11_nope_gpt_small_cpu_20260721.tar.gz> — 20,199,687 bytes; SHA256 `5511822789f285483bab43cd28e8a16cffcb1cf575e4becf77dd24fc03256512`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-v11-nope-gpt-small/20260721/SHA256SUMS-m15-v11-nope-20260721.txt> — 938 bytes; checksum file verified by re-download and byte comparison.
 
 Internal output checksums:
 
@@ -364,11 +364,15 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-r
 Outputs were published as GitHub Release assets:
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-nope-gpt-small/20260721>
-- `k_address_space_m15_nope_gpt_small_20260721.tar.gz` — 8,133,533 bytes; SHA256 `00ab55541353b58f0bc099218cf4dd8494f33036f1ee3e15eaec40f96984eb1f`
-- `kaddress_m15_nope-gpt-small.csv` — 3,521,429 bytes; SHA256 `c5b1bfa6894e2b6403c73f85e7d89f36b15597c113a982e8a215ecb94418e136`
-- `kaddress_m15_gates_nope-gpt-small.csv` — 55,436 bytes; SHA256 `500abe947b6a23a2d088459edbe0573aef0bb02c8e9f58cb23f3fc768b027ec3`
-- `kaddress_m15_manifest_nope-gpt-small.json` — 2,462 bytes; SHA256 `c54a79b0fd45af4b2800e7dce99aa76e580fe472bec5b08e55b00d1e308a3d74`
-- `kaddress_m15_projectors_nope-gpt-small.npz` — 9,636,244 bytes; SHA256 `c17e6dcb70aa86f8c1ea0af90de130d4f7e6314478a9588270e672bd0b8a2403`
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-nope-gpt-small/20260721/k_address_space_m15_nope_gpt_small_20260721.tar.gz> — 8,133,533 bytes; SHA256 `00ab55541353b58f0bc099218cf4dd8494f33036f1ee3e15eaec40f96984eb1f`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m15-nope-gpt-small/20260721/k_address_space_m15_nope_gpt_small_20260721.SHA256SUMS> — 536 bytes.
+
+Internal output checksums:
+
+- `kaddress_m15_nope-gpt-small.csv` — SHA256 `c5b1bfa6894e2b6403c73f85e7d89f36b15597c113a982e8a215ecb94418e136`
+- `kaddress_m15_gates_nope-gpt-small.csv` — SHA256 `500abe947b6a23a2d088459edbe0573aef0bb02c8e9f58cb23f3fc768b027ec3`
+- `kaddress_m15_manifest_nope-gpt-small.json` — SHA256 `c54a79b0fd45af4b2800e7dce99aa76e580fe472bec5b08e55b00d1e308a3d74`
+- `kaddress_m15_projectors_nope-gpt-small.npz` — SHA256 `c17e6dcb70aa86f8c1ea0af90de130d4f7e6314478a9588270e672bd0b8a2403`
 
 Manifest highlights: `stimulus_count=6`, `summary_rows=14208`, `families=[A,B,C]`, `requested_device=cpu`, `cuda_available=false`, Python `3.11.11`, Torch `2.5.1`, model revision `320681e33a029517e27c68a0f9c2b07ea0004155`. Family A contributed five repeated-segment stimuli with 135–158 repetitions and 6–7 token slots; Family C contributed one natural-recurrence stimulus. Family B produced no valid stimuli under the tokenizer alignment plus ≥120-repetition constraints.
 
@@ -472,10 +476,15 @@ Run window: `2026-07-20T16:14:28Z` to `2026-07-20T16:17:27Z`; `EXIT_CODE=0`.
 Outputs were published as GitHub Release assets:
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-nope-gpt-small-full-cuda-20260720>
-- `kaddress_m1_nope-gpt-small.csv` — 34,333 bytes; SHA256 `7e968a6dc931d39ceb36a1a03b1e768932139d49e51d935c7511262f4885573d`
-- `kaddress_manifest_nope-gpt-small.json` — 724 bytes; SHA256 `e3cf40b2c11bc542997b97ab8ff3737d35bdccf74b2750c37f89117026ba7d07`
-- `kaddress_mentions_nope-gpt-small.npz` — 129,190,223 bytes; SHA256 `36b5bbaa822a8c9ffb47a3939b35bcd111b2ce2352bc36dd3f4a5a03ce58412e`
-- `run.log` — 1,658 bytes; SHA256 `07338007c381f8c7c93069bbde41075400b6b8c1c15b412bf16ad7f48b43dfa7`
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-nope-gpt-small-full-cuda-20260720/k_address_space_m1_nope_gpt_small_full_cuda_20260720.tar.gz> — 125,653,080 bytes; SHA256 `858af31ba7c707897a9bc40de38b619bb41e6626649a9803fbcc49565fa6f664`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-nope-gpt-small-full-cuda-20260720/SHA256SUMS-m1-nope-gpt-small-full-cuda-20260720.txt> — 846 bytes; SHA256 `702e6b34aa73f0549e1a8d45032a5f7b6924334a24b611eff22189b87661dbad`.
+
+Internal output checksums:
+
+- `kaddress_m1_nope-gpt-small.csv` — SHA256 `7e968a6dc931d39ceb36a1a03b1e768932139d49e51d935c7511262f4885573d`
+- `kaddress_manifest_nope-gpt-small.json` — SHA256 `e3cf40b2c11bc542997b97ab8ff3737d35bdccf74b2750c37f89117026ba7d07`
+- `kaddress_mentions_nope-gpt-small.npz` — SHA256 `36b5bbaa822a8c9ffb47a3939b35bcd111b2ce2352bc36dd3f4a5a03ce58412e`
+- `run.log` — SHA256 `07338007c381f8c7c93069bbde41075400b6b8c1c15b412bf16ad7f48b43dfa7`
 
 Manifest highlights: `doc_count=36`, `mention_token_rows=516096`, `max_doc_tokens=829`, `requested_device=cuda`, `cuda_available=true`, `cuda_device=NVIDIA L4`, `torch=2.8.0+cu128`, `torch_cuda=12.8`, Python `3.12.3`, HF revision `320681e33a029517e27c68a0f9c2b07ea0004155`.
 
@@ -568,10 +577,15 @@ Run window: `2026-07-20T15:14:05Z` to `2026-07-20T15:19:18Z`; `EXIT_CODE=0`.
 Outputs were published as GitHub Release assets:
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-qwen3-full-cuda-20260720>
-- `kaddress_m1_qwen3.csv` — 40,144 bytes; SHA256 `4732acee42cc31d7af502bf58dd9450f7faf4813029ad0d24acf194156c3be73`
-- `kaddress_manifest_qwen3.json` — 669 bytes; SHA256 `27c2a6cb9d446d4352513a74dbd3b81c142ba3a8c383dba54bbf38888a3436fd`
-- `kaddress_mentions_qwen3.npz` — 297,261,610 bytes; SHA256 `70181eda3dbde619d6a7f843764b5e717baab7898681c6fc90882fe1526e6e8f`
-- `run.log` — 1,624 bytes; SHA256 `27c3a46ef71e7dbea73e5a25133e0ba79bf969419ee4c83e332d5de58280ddab`
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-qwen3-full-cuda-20260720/k_address_space_m1_qwen3_full_cuda_20260720.tar.gz> — 292,446,104 bytes; SHA256 `6c51833cc4d4848843eebd4a2967ab71e2d5c2e71a907359789cfb3837cd7047`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-qwen3-full-cuda-20260720/SHA256SUMS-m1-qwen3-full-cuda-20260720.txt> — 765 bytes; SHA256 `e24bff523a1c450fb6ed7e9e0a3f6cb4dc9055deeff1736c1ae7e2fa47fe39e5`.
+
+Internal output checksums:
+
+- `kaddress_m1_qwen3.csv` — SHA256 `4732acee42cc31d7af502bf58dd9450f7faf4813029ad0d24acf194156c3be73`
+- `kaddress_manifest_qwen3.json` — SHA256 `27c2a6cb9d446d4352513a74dbd3b81c142ba3a8c383dba54bbf38888a3436fd`
+- `kaddress_mentions_qwen3.npz` — SHA256 `70181eda3dbde619d6a7f843764b5e717baab7898681c6fc90882fe1526e6e8f`
+- `run.log` — SHA256 `27c3a46ef71e7dbea73e5a25133e0ba79bf969419ee4c83e332d5de58280ddab`
 
 Manifest highlights: `doc_count=36`, `mention_token_rows=602112`, `max_doc_tokens=829`, `requested_device=cuda`, `cuda_available=true`, `cuda_device=NVIDIA L4`, `torch=2.8.0+cu128`, `torch_cuda=12.8`, Python `3.12.3`.
 
@@ -646,11 +660,17 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_VENV
 
 Run completed on RunPod L4. GPU utilization verified at 97% during extraction.
 
-Outputs under `outputs/k_address_space_m1_pythia410_full_cuda_20260718/`:
+Outputs under `outputs/k_address_space_m1_pythia410_full_cuda_20260718/` were republished as a `.tar.gz` GitHub Release artifact bundle:
 
-- `kaddress_m1_pythia410.csv` — 68,889 bytes; SHA256 `3af266fe209bcf34948762f4688646eea311a24ace73c56e77f42ff07f35639c`
-- `kaddress_manifest_pythia410.json` — 681 bytes; SHA256 `1bcd5f300d0f9c57fd2671f0dca7e45237008d70987ffdadb29b7449ae061b3f`
-- `kaddress_mentions_pythia410.npz` — 272,372,400 bytes; SHA256 `a1c305714744b714304c8915f2dae9712d48d1f231261028d1e9426e9cb9bc81`
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-pythia410-full-cuda-20260718>
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-pythia410-full-cuda-20260718/k_address_space_m1_pythia410_full_cuda_20260718.tar.gz> — 264,976,544 bytes; SHA256 `a49da820a852b2b1e5185871a5377524f37627075080f6b91b20be664024fecc`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-pythia410-full-cuda-20260718/SHA256SUMS-m1-pythia410-full-cuda-20260718.txt> — 554 bytes; SHA256 `27293c4bbeb01488f9fa76622ce79251582504399788d3016a75aa2250d32e7f`.
+
+Internal output checksums:
+
+- `kaddress_m1_pythia410.csv` — SHA256 `3af266fe209bcf34948762f4688646eea311a24ace73c56e77f42ff07f35639c`
+- `kaddress_manifest_pythia410.json` — SHA256 `1bcd5f300d0f9c57fd2671f0dca7e45237008d70987ffdadb29b7449ae061b3f`
+- `kaddress_mentions_pythia410.npz` — SHA256 `a1c305714744b714304c8915f2dae9712d48d1f231261028d1e9426e9cb9bc81`
 
 Manifest highlights: `doc_count=36`, `mention_token_rows=1087488`, `max_doc_tokens=841`, `requested_device=cuda`, `cuda_available=true`, `cuda_device=NVIDIA L4`, `torch=2.8.0+cu128`.
 
@@ -886,9 +906,9 @@ Top same-type AUC rows remained far below the address-head threshold. Best obser
 
 Published as a GitHub release artifact bundle:
 
-- Release: https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-gpt2-full-cuda-20260717
-- Bundle: `k_address_space_m1_gpt2_full_cuda_20260717.tgz` — 47,079,221 bytes; SHA256 `b60dbd9e0693002cc6fe76baff497f2d6260d2606622f7149670bd218028bce4`
-- Per-file checksums are attached as `SHA256SUMS` in the release.
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/output-k-address-space-m1-gpt2-full-cuda-20260717>
+- Artifact: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-gpt2-full-cuda-20260717/k_address_space_m1_gpt2_full_cuda_20260717.tar.gz> — 47,079,221 bytes; SHA256 `b60dbd9e0693002cc6fe76baff497f2d6260d2606622f7149670bd218028bce4`
+- Checksums: <https://github.com/vhallac/crockpot-experiments/releases/download/output-k-address-space-m1-gpt2-full-cuda-20260717/SHA256SUMS-m1-gpt2-full-cuda-20260717.txt> — 519 bytes; SHA256 `8a3282335afa0dec19987410eacfcee71fcd04438c6ebcb260d5278e20bb04b6`.
 
 ### Conclusion / Next Step
 
