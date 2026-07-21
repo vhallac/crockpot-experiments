@@ -319,6 +319,111 @@ def _analyse_matrix(x: np.ndarray, y: np.ndarray, token_ids: np.ndarray, *, seed
     }
 
 
+@dataclass
+class AggregateState:
+    family: str
+    variant: str
+    layer: int
+    head: int
+    d_head: int
+    raw_abs_sum: float = 0.0
+    resid_abs_sum: float = 0.0
+    value_count: int = 0
+    cov: np.ndarray | None = None
+    sample_x: list[np.ndarray] | None = None
+    sample_y: list[float] | None = None
+    sample_token: list[int] | None = None
+    seen: int = 0
+
+    def add(self, x: np.ndarray, y: np.ndarray, token_ids: np.ndarray, *, sample_cap: int, rng: np.random.Generator) -> None:
+        resid = x - x.mean(axis=0, keepdims=True)
+        if self.cov is None:
+            self.cov = np.zeros((self.d_head, self.d_head), dtype=np.float64)
+            self.sample_x = []
+            self.sample_y = []
+            self.sample_token = []
+        self.raw_abs_sum += float(np.abs(x).sum())
+        self.resid_abs_sum += float(np.abs(resid).sum())
+        self.value_count += int(x.size)
+        self.cov += resid.T @ resid
+        for row, yy, tok in zip(x, y, token_ids, strict=True):
+            self.seen += 1
+            assert self.sample_x is not None and self.sample_y is not None and self.sample_token is not None
+            if len(self.sample_x) < sample_cap:
+                self.sample_x.append(row.astype(np.float32, copy=True))
+                self.sample_y.append(float(yy))
+                self.sample_token.append(int(tok))
+            else:
+                j = int(rng.integers(0, self.seen))
+                if j < sample_cap:
+                    self.sample_x[j] = row.astype(np.float32, copy=True)
+                    self.sample_y[j] = float(yy)
+                    self.sample_token[j] = int(tok)
+
+
+def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float) -> tuple[dict[str, Any], np.ndarray]:
+    assert state.cov is not None and state.sample_x is not None and state.sample_y is not None and state.sample_token is not None
+    raw = state.raw_abs_sum / max(1, state.value_count)
+    resid_scale = state.resid_abs_sum / max(1, state.value_count)
+    frac = 0.0 if raw <= 0 else resid_scale / raw
+    eigvals, eigvecs = np.linalg.eigh(state.cov)
+    order = np.argsort(eigvals)[::-1]
+    eigvals = eigvals[order]
+    eigvecs = eigvecs[:, order].T.astype(np.float32)
+    total = float(np.maximum(eigvals, 0).sum())
+    if total <= 0:
+        k90 = 0
+        frac_var = 0.0
+        basis = eigvecs[:0]
+    else:
+        cum = np.cumsum(np.maximum(eigvals, 0)) / total
+        k90 = int(np.searchsorted(cum, 0.90) + 1)
+        frac_var = float(np.maximum(eigvals[:k90], 0).sum() / total)
+        basis = eigvecs[:k90]
+    x = np.stack(state.sample_x)
+    y = np.asarray(state.sample_y, dtype=float)
+    token_ids = np.asarray(state.sample_token, dtype=np.int64)
+    if frac < variance_floor:
+        r2 = 0.0
+        shuffled_r2 = 0.0
+        r2_after = 0.0
+    else:
+        alphas = np.logspace(-2, 4, 13)
+        r2 = _ridge_cv_r2(x, y, folds=5, seed=seed, alphas=alphas)
+        shuffled_r2 = _ridge_cv_r2(x, np.random.default_rng(seed + 17).permutation(y), folds=5, seed=seed + 1, alphas=alphas)
+        if len(basis):
+            mean = x.mean(axis=0, keepdims=True)
+            resid = x - mean
+            x_proj = mean + resid - (resid @ basis.T) @ basis
+        else:
+            x_proj = x
+        r2_after = _ridge_cv_r2(x_proj, y, folds=5, seed=seed + 2, alphas=alphas)
+    token_acc_before = _nearest_centroid_cv_accuracy(x, token_ids, folds=5, seed=seed + 3)
+    if len(basis):
+        mean = x.mean(axis=0, keepdims=True)
+        resid = x - mean
+        x_proj = mean + resid - (resid @ basis.T) @ basis
+    else:
+        x_proj = x
+    token_acc_after = _nearest_centroid_cv_accuracy(x_proj, token_ids, folds=5, seed=seed + 4)
+    return {
+        "raw_mean_abs": raw,
+        "resid_mean_abs": resid_scale,
+        "position_fraction": frac,
+        "ridge_r2": r2,
+        "shuffled_ridge_r2": shuffled_r2,
+        "pca_components_90pct": k90,
+        "pca_residual_variance_fraction_90pct": frac_var,
+        "pc1_spearman_repetition": float("nan"),
+        "pc1_dominant_fourier_bin": -1,
+        "r2_after_position_pc_projection": r2_after,
+        "token_identity_acc_before": token_acc_before,
+        "token_identity_acc_after": token_acc_after,
+        "sample_rows": len(x),
+        "source_rows": state.seen,
+    }, basis
+
+
 def run(args: argparse.Namespace) -> None:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -345,6 +450,8 @@ def run(args: argparse.Namespace) -> None:
     rows: list[dict[str, Any]] = []
     projector_basis: dict[str, np.ndarray] = {}
     gate_rows: list[dict[str, Any]] = []
+    aggregates: dict[tuple[str, str, int, int], AggregateState] = {}
+    sample_rng = np.random.default_rng(args.seed + 12345)
 
     for stim_i, stim in enumerate(stimuli):
         input_ids = torch.tensor([stim.input_ids], dtype=torch.long, device=device)
@@ -389,7 +496,16 @@ def run(args: argparse.Namespace) -> None:
                         if stim.family == "A":
                             key = f"{variant}/layer{layer:02d}/head{head:02d}/stim{stim.stimulus_id}/slot{slot:02d}"
                             projector_basis[key] = basis
-                        if layer == 0 and variant == "pre" and lm.tag in {"nope-gpt-small", "qwen3"} or (layer == 0 and variant == "pre" and lm.tag.startswith("pythia")):
+                        agg_key = (stim.family, variant, layer, head)
+                        if agg_key not in aggregates:
+                            aggregates[agg_key] = AggregateState(stim.family, variant, layer, head, d_head)
+                        aggregates[agg_key].add(x, y, token_ids, sample_cap=args.aggregate_sample_cap, rng=sample_rng)
+                        is_arch_zero_case = (
+                            layer == 0
+                            and variant == "pre"
+                            and (lm.tag in {"nope-gpt-small", "qwen3"} or lm.tag.startswith("pythia"))
+                        )
+                        if is_arch_zero_case:
                             raw = row["raw_mean_abs"]
                             rel = row["position_fraction"]
                             perturbed = x.copy()
@@ -413,6 +529,29 @@ def run(args: argparse.Namespace) -> None:
                                 }
                             )
         print(f"processed {stim.stimulus_id} family={stim.family} seq={len(stim.input_ids)} slots={len(stim.slots)}")
+
+    for agg_i, state in enumerate(aggregates.values()):
+        stats, basis = _aggregate_stats(state, seed=args.seed + 900_000 + agg_i, variance_floor=args.variance_floor)
+        rows.append(
+            {
+                "model": args.model,
+                "hf_id": lm.hf_id,
+                "family": state.family,
+                "stimulus_id": "AGGREGATE",
+                "segment_id": "all",
+                "repetitions": stats.pop("source_rows"),
+                "segment_token_len": None,
+                "slot_index": -1,
+                "slot_token_id": -1,
+                "slot_token_text": "<aggregate>",
+                "layer": state.layer,
+                "head": state.head,
+                "key_variant": state.variant,
+                "d_head": state.d_head,
+                **stats,
+            }
+        )
+        projector_basis[f"{state.variant}/layer{state.layer:02d}/head{state.head:02d}/aggregate_family{state.family}"] = basis
 
     summary = pd.DataFrame(rows)
     if summary.empty:
@@ -491,6 +630,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit-heads", type=int, default=None)
     p.add_argument("--variance-floor", type=float, default=1e-5)
     p.add_argument("--shuffle-r2-abs-warn", type=float, default=0.05)
+    p.add_argument(
+        "--aggregate-sample-cap",
+        type=int,
+        default=2048,
+        help="Reservoir sample size per family/variant/layer/head for aggregate M1.5.6 token-identity fidelity.",
+    )
     return p.parse_args()
 
 
