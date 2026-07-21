@@ -44,8 +44,10 @@ The checklist report should track:
   - Evidence:
 - [ ] 6. Outputs packaged and published externally
   - Evidence:
+  - Published output URI(s):
 - [ ] 7. Outputs verified after publication
   - Evidence:
+  - Verified artifact URI(s):
 - [ ] 8. Output analysis completed or external analysis report received
   - Evidence:
 - [ ] 9. Lab notebook completed
@@ -148,11 +150,13 @@ ACTION:
 - Package raw/generated outputs as an artifact bundle for external publication, rather than committing bulky outputs to git.
 - Check local project instructions (for example `AGENTS.md`) for the chosen publication medium, such as GitHub Releases, object storage, a model/dataset registry, or another artifact store.
 - Generate checksums before upload.
+- After upload succeeds, capture the stable publication URI(s): release page, artifact URL(s), object-store URI(s), DOI, registry id, or equivalent identifier that a later reader can use to retrieve the outputs.
+- Record those URI(s) in the checklist and in the current lab notebook entry immediately after post-upload verification, before output analysis. This prevents later analysis from citing outputs whose durable location was never written down.
 
 VERIFY:
-- Record publication URL, artifact location, or publication identifier.
-- Download or inspect the published asset list.
+- Download or inspect the published asset list and record the command/output used.
 - Verify checksums when practical.
+- Ensure the checklist and lab notebook both contain the exact published output URI(s), not only local output paths or asset names.
 
 ### 6. Analyse Outputs (checklist item 8)
 
