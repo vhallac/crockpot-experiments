@@ -1,5 +1,57 @@
 # K-address-space lab notebook
 
+## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 gatefix CPU rerun prep
+
+### Question / Hypothesis
+
+Repair D6a/D6b in the M1.5 v1.1 gate implementation and re-run the GPT-2 CPU experiment. The prior GPT-2 output `outputs/k_address_space_m15_v11_gpt2_cpu_20260721` measured the intended statistics but wrote a 1-byte, zero-row `kaddress_m15_gates_gpt2.csv` while reporting `gate_g1_pass=true`; GPT-2 has no applicable G1 architectural-zero gate, and the missing G2 architectural-one gate meant the run had no functioning architectural gate. The expected result after the fix is that GPT-2 layer-0 keys emit `G2_architectural_one` rows with ridge R² ≥ 0.9 and a perturbation check that can fail, while the measurement CSV remains unchanged.
+
+### Experiment Design Summary
+
+Implement ADDENDUM §5-M1.5 v1.1 §3 gate semantics in `kaddress.scripts.position_content`: G1 remains the architectural-zero gate for NoPE and RoPE `k_pre` layer-0 cases; G2 applies to stamped positional encodings detected from model config (GPT-2 learned absolute position and RoPE `k_post` layer-0 cases); gate manifest fields become `PASS` / `FAIL` / `NOT_APPLICABLE`; `gates_evaluated` records row counts; and a run with no applicable architectural gates fails loudly instead of reporting green.
+
+### Planned Procedure
+
+Run local unit tests plus GPT-2/NoPE smoke checks, commit the gatefix pre-run state, then re-run the full GPT-2 CPU experiment:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model gpt2 \
+  --families A,B,C \
+  --output-dir outputs/k_address_space_m15_v11_gpt2_cpu_20260721_gatefix
+```
+
+After the run, compare `kaddress_m15_gpt2.csv` against the prior GPT-2 run byte-for-byte or by SHA256 to verify the regression bar that only gate reporting changed.
+
+### Expected Signal / Interpretation Plan
+
+The rerun is valid only if `gate_g2_pass=PASS`, `gate_g1_pass=NOT_APPLICABLE`, `gates_evaluated.G2_architectural_one` equals the number of G2 rows in the gates CSV, and every G2 row has `pass=true` and `perturbation_can_fail=true`. The prior scientific interpretation should stand if `kaddress_m15_gpt2.csv` is unchanged.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1 §3
+- Code branch: `main`
+- Pre-run commit: _Pending_
+- Planned output location: `outputs/k_address_space_m15_v11_gpt2_cpu_20260721_gatefix`
+- Prior defective output: `outputs/k_address_space_m15_v11_gpt2_cpu_20260721`
+- Publication target: GitHub Release `run/k-address-space-m15-v11-gpt2/20260721` replacement/additional gatefix tarball
+- Random seed: default script seed `0`
+- Environment: local CPU via `scripts/nix-cpu-run`; exact manifest environment to be recorded at run time
+- Model: `gpt2` (Hugging Face model id `gpt2`)
+- Preparation checklist: `temp/repro-checklists/20260721-k-address-space-m15-v11-gpt2-gatefix-cpu.md`
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 CPU run prep
 
 ### Question / Hypothesis

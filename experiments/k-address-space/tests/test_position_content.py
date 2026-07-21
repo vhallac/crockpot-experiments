@@ -1,8 +1,10 @@
 import math
+import tempfile
 import unittest
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 
 from kaddress.scripts import position_content as pc
 
@@ -120,6 +122,61 @@ class PositionContentBuildTests(unittest.TestCase):
                 limit_stimuli=None,
                 segment_lengths=[4, 7],
             )
+
+
+class FakeConfig:
+    def __init__(self, **attrs):
+        for key, value in attrs.items():
+            setattr(self, key, value)
+
+
+class FakeModel:
+    def __init__(self, config):
+        self.config = config
+
+
+class FakeLM:
+    def __init__(self, config):
+        self.model = FakeModel(config)
+
+
+class PositionContentGateTests(unittest.TestCase):
+    def test_g2_gpt2_layer0_passes_and_shuffled_correspondence_fails(self):
+        lm = FakeLM(FakeConfig(model_type='gpt2', n_positions=1024, n_ctx=1024))
+        self.assertTrue(pc._is_architectural_one_case(lm, layer=0, variant='pre'))
+        y = np.arange(128, dtype=float)
+        x = np.column_stack([y, y * 0.5, np.sin(y / 7.0), np.cos(y / 11.0)])
+        r2 = pc._ridge_cv_r2(x, y, folds=5, seed=0, alphas=np.logspace(-2, 4, 13))
+        perturbed_r2 = pc._g2_perturbed_ridge_r2(x, y, seed=0)
+        self.assertGreaterEqual(r2, 0.9)
+        self.assertFalse(perturbed_r2 >= 0.9)
+
+    def test_g2_not_applicable_for_nope_reports_not_applicable(self):
+        lm = FakeLM(FakeConfig(model_type='nope-gpt'))
+        self.assertFalse(pc._is_architectural_one_case(lm, layer=0, variant='pre'))
+        self.assertEqual(pc._gate_status(pd.DataFrame(), 'G2_architectural_one'), 'NOT_APPLICABLE')
+
+    def test_all_architectural_gates_inapplicable_raises(self):
+        with self.assertRaisesRegex(RuntimeError, 'no applicable architectural gates'):
+            pc._raise_if_no_architectural_gate_applied({
+                'gate_g1_pass': 'NOT_APPLICABLE',
+                'gate_g2_pass': 'NOT_APPLICABLE',
+            })
+
+    def test_gates_evaluated_counts_match_gates_csv(self):
+        gates = pd.DataFrame([
+            {'gate': 'G2_architectural_one', 'pass': True, 'perturbation_can_fail': True},
+            {'gate': 'G2_architectural_one', 'pass': True, 'perturbation_can_fail': True},
+            {'gate': 'G1_architectural_zero', 'pass': True, 'perturbation_can_fail': True},
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f'{tmp}/gates.csv'
+            gates.to_csv(path, index=False)
+            reread = pd.read_csv(path)
+        self.assertEqual(pc._gates_evaluated(reread), {
+            'G1_architectural_zero': 1,
+            'G2_architectural_one': 2,
+        })
 
 
 class PositionContentStatsTests(unittest.TestCase):

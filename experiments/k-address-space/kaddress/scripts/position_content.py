@@ -597,6 +597,74 @@ def _d_head(lm: Any) -> int:
     return 64
 
 
+def _model_config(lm: Any) -> Any:
+    return getattr(getattr(lm, "model", None), "config", None)
+
+
+def _config_model_type(config: Any) -> str:
+    return str(getattr(config, "model_type", "") or "").lower()
+
+
+def _config_uses_rope(config: Any) -> bool:
+    model_type = _config_model_type(config)
+    if any(getattr(config, attr, None) is not None for attr in ("rope_theta", "rope_scaling", "rotary_pct", "rotary_emb_base")):
+        return True
+    return any(piece in model_type for piece in ("gpt_neox", "qwen", "llama", "mistral", "gemma"))
+
+
+def _config_has_learned_absolute_positions(config: Any) -> bool:
+    model_type = _config_model_type(config)
+    position_type = str(getattr(config, "position_embedding_type", "") or "").lower()
+    if "nope" in model_type or _config_uses_rope(config):
+        return False
+    if position_type in {"absolute", "learned", "learned_absolute"}:
+        return True
+    return any(getattr(config, attr, None) is not None for attr in ("n_positions", "n_ctx"))
+
+
+def _is_architectural_zero_case(lm: Any, *, layer: int, variant: str) -> bool:
+    config = _model_config(lm)
+    model_type = _config_model_type(config)
+    return layer == 0 and variant == "pre" and ("nope" in model_type or _config_uses_rope(config))
+
+
+def _is_architectural_one_case(lm: Any, *, layer: int, variant: str) -> bool:
+    config = _model_config(lm)
+    return layer == 0 and ((_config_has_learned_absolute_positions(config) and variant == "pre") or (_config_uses_rope(config) and variant == "post"))
+
+
+def _gate_status(gates: pd.DataFrame, gate_name: str) -> str:
+    if gates.empty or "gate" not in gates:
+        return "NOT_APPLICABLE"
+    subset = gates[gates["gate"] == gate_name]
+    if subset.empty:
+        return "NOT_APPLICABLE"
+    return "PASS" if bool(subset["pass"].all() and subset["perturbation_can_fail"].all()) else "FAIL"
+
+
+def _gates_evaluated(gates: pd.DataFrame) -> dict[str, int]:
+    names = ["G1_architectural_zero", "G2_architectural_one"]
+    counts = {name: 0 for name in names}
+    if not gates.empty and "gate" in gates:
+        counts.update({str(k): int(v) for k, v in gates["gate"].value_counts().items()})
+    return counts
+
+
+def _raise_if_no_architectural_gate_applied(statuses: dict[str, str]) -> None:
+    if statuses and all(value == "NOT_APPLICABLE" for value in statuses.values()):
+        raise RuntimeError(f"no applicable architectural gates were evaluated; statuses={statuses}")
+
+
+def _g2_perturbed_ridge_r2(x: np.ndarray, y: np.ndarray, *, seed: int) -> float:
+    if len(y) < 2:
+        return 0.0
+    rng = np.random.default_rng(seed + 4242)
+    order = rng.permutation(len(y))
+    if len(order) > 1 and np.array_equal(order, np.arange(len(y))):
+        order = np.roll(order, 1)
+    return _ridge_cv_r2(x[order], y.astype(float), folds=5, seed=seed + 4243, alphas=np.logspace(-2, 4, 13))
+
+
 def run(args: argparse.Namespace) -> None:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -682,12 +750,7 @@ def run(args: argparse.Namespace) -> None:
                         if agg_key not in aggregates:
                             aggregates[agg_key] = AggregateState(stim.family, variant, layer, head, d_head)
                         aggregates[agg_key].add(x, y, token_ids, sample_cap=args.aggregate_sample_cap, rng=sample_rng)
-                        is_arch_zero_case = (
-                            layer == 0
-                            and variant == "pre"
-                            and (lm.tag in {"nope-gpt-small", "qwen3"} or lm.tag.startswith("pythia"))
-                        )
-                        if is_arch_zero_case:
+                        if _is_architectural_zero_case(lm, layer=layer, variant=variant):
                             raw = row["raw_mean_abs"]
                             rel = row["position_fraction"]
                             perturbed = x.copy()
@@ -704,10 +767,33 @@ def run(args: argparse.Namespace) -> None:
                                     "key_variant": variant,
                                     "slot_index": int(slot),
                                     "position_fraction": rel,
+                                    "ridge_r2": row["ridge_r2"],
                                     "threshold": args.variance_floor,
                                     "pass": bool(rel < args.variance_floor),
                                     "perturbed_position_fraction": p_rel,
+                                    "perturbed_ridge_r2": float("nan"),
                                     "perturbation_can_fail": bool(p_rel >= args.variance_floor),
+                                }
+                            )
+                        if _is_architectural_one_case(lm, layer=layer, variant=variant):
+                            r2 = row["ridge_r2"]
+                            perturbed_r2 = _g2_perturbed_ridge_r2(x, y, seed=args.seed + stim_i + layer * 1000 + head)
+                            gate_rows.append(
+                                {
+                                    "gate": "G2_architectural_one",
+                                    "stimulus_id": stim.stimulus_id,
+                                    "family": stim.family,
+                                    "layer": layer,
+                                    "head": head,
+                                    "key_variant": variant,
+                                    "slot_index": int(slot),
+                                    "position_fraction": row["position_fraction"],
+                                    "ridge_r2": r2,
+                                    "threshold": 0.9,
+                                    "pass": bool(r2 >= 0.9),
+                                    "perturbed_position_fraction": float("nan"),
+                                    "perturbed_ridge_r2": perturbed_r2,
+                                    "perturbation_can_fail": bool(perturbed_r2 < 0.9),
                                 }
                             )
         print(f"processed {stim.stimulus_id} family={stim.family} seq={len(stim.input_ids)} slots={len(stim.slots)}")
@@ -739,7 +825,12 @@ def run(args: argparse.Namespace) -> None:
     if summary.empty:
         raise RuntimeError("analysis produced no rows")
     gates = pd.DataFrame(gate_rows)
-    gate_pass = bool(gates.empty or (gates["pass"].all() and gates["perturbation_can_fail"].all()))
+    gates_evaluated = _gates_evaluated(gates)
+    gate_statuses = {
+        "gate_g1_pass": _gate_status(gates, "G1_architectural_zero"),
+        "gate_g2_pass": _gate_status(gates, "G2_architectural_one"),
+    }
+    _raise_if_no_architectural_gate_applied(gate_statuses)
     shuffle_ok = bool(np.quantile(summary["shuffled_ridge_r2_p99"], 0.99) <= args.shuffle_r2_abs_warn)
 
     summary_path = out / f"kaddress_m15_{args.model}.csv"
@@ -769,7 +860,8 @@ def run(args: argparse.Namespace) -> None:
         "limit_layers": args.limit_layers,
         "limit_heads": args.limit_heads,
         "summary_rows": int(len(summary)),
-        "gate_g1_pass": gate_pass,
+        **gate_statuses,
+        "gates_evaluated": gates_evaluated,
         "shuffle_null_ok_95pct_abs_threshold": args.shuffle_r2_abs_warn,
         "shuffle_null_ok": shuffle_ok,
         "projector_file": projectors_path.name,
@@ -795,7 +887,7 @@ def run(args: argparse.Namespace) -> None:
     print(f"wrote {gates_path}")
     print(f"wrote {manifest_path}")
     print(f"wrote {projectors_path}")
-    print(f"gate_g1_pass={gate_pass} shuffle_null_ok={shuffle_ok}")
+    print(f"gate_g1_pass={gate_statuses['gate_g1_pass']} gate_g2_pass={gate_statuses['gate_g2_pass']} shuffle_null_ok={shuffle_ok}")
     print(
         summary.groupby(["family", "key_variant"])[["position_fraction", "ridge_r2", "pca_components_90pct"]]
         .mean(numeric_only=True)
