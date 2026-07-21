@@ -30,25 +30,74 @@ G2 should pass for GPT-2 layer 0, with layer-0 positional information high enoug
 - Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1
 - Parent spec: `experiments/k-address-space/spec.md`
 - Code branch: `main`
-- Pre-run commit: _Pending_
+- Pre-run commit: `5710f96`
 - Planned output location: `outputs/k_address_space_m15_v11_gpt2_cpu_20260721`
 - Publication target: GitHub Release `run/k-address-space-m15-v11-gpt2/20260721`
 - Random seed: default script seed `0`
-- Environment: local CPU via `scripts/nix-cpu-run`; exact manifest environment to be recorded at run time
-- Model: `gpt2` (Hugging Face model id `gpt2`; revision to be recorded from manifest/output if available)
+- Environment: local CPU via `scripts/nix-cpu-run`; exact manifest environment recorded below
+- Model: `gpt2` (Hugging Face model id `gpt2`)
 - Preparation checklist: `temp/repro-checklists/20260721-k-address-space-m15-v11-gpt2-cpu.md`
 
 ### Results
 
-_Pending run._
+Run completed locally on CPU from pre-run commit `5710f96`.
+
+Command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model gpt2 \
+  --families A,B,C \
+  --output-dir outputs/k_address_space_m15_v11_gpt2_cpu_20260721
+```
+
+Run window: `20260721T162109Z` to `20260721T163113Z`; exit code 0.
+
+Outputs were published as GitHub Release assets:
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-gpt2/20260721>
+- `k_address_space_m15_v11_gpt2_cpu_20260721.tar.gz` — 13,184,611 bytes; SHA256 `43d35742f6d51ef0f9621b0f5f95a8e975de9cd9802bbed62f6fe2824aca9dc6`
+- `SHA256SUMS-m15-v11-gpt2-20260721.txt` — 869 bytes; checksum file verified by re-download and byte comparison.
+
+Internal output checksums:
+
+- `kaddress_m15_gates_gpt2.csv` — SHA256 `01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b`
+- `kaddress_m15_gpt2.csv` — SHA256 `e76fea1d3ac0aa4d8a4cd57846970645715fe7d99b74458222a6c48ec93f9eec`
+- `kaddress_m15_manifest_gpt2.json` — SHA256 `ef7bc82fb39068109d0a777cd8b66fff6b8025c599347c1d6c6b72e5652b47a1`
+- `kaddress_m15_projectors_gpt2.npz` — SHA256 `8c0a346749e969e17d17a21f0eef38a3e6193d16a8685a9609000d9c6734cefb`
+- `run.log` — SHA256 `3cbfb1508671107d2705d420d7aa25a7efc6bc329f1240546ca8164b6a2629f6`
+
+Manifest highlights: `stimulus_count=19`, `summary_rows=14112`, `families=[A,B,C]`, `trained_context=1024`, `max_length=992`, `min_repetitions=128`, `segment_lengths=[4,7]`, `rejected_stimuli=[]`, `requested_device=cpu`, `cuda_available=false`, Python `3.11.11`, Torch `2.5.1`. Family A contributed 16 stimuli (8 at L=4 and 8 at L=7), Family B contributed 2 frame/content-varying stimuli, and Family C contributed 1 natural-recurrence stimulus.
+
+Layer-0 GPT-2 positional signal is strong, as expected for learned absolute position embeddings. Slot-level layer-0 ridge R² minima/means/maxima were: Family A `0.908 / 0.999 / 1.000`, Family B `0.995 / 1.000 / 1.000`, Family C `0.998 / 1.000 / 1.000`. The script's `gates` CSV is empty for GPT-2 because the implemented perturbation gate is the NoPE G1 architectural-zero gate; the G2 architectural-one condition was therefore adjudicated from the layer-0 ridge statistics above.
+
+Selected Family A slot-level means:
+
+| layer | position fraction | ridge R² | PCA k90 | R² after PC projection |
+|---:|---:|---:|---:|---:|
+| 0 | 0.718 | 0.999 | 2.91 | -0.037 |
+| 1 | 0.672 | 0.999 | 3.08 | -0.016 |
+| 2 | 0.819 | 0.998 | 2.92 | -0.026 |
+| 6 | 0.559 | 0.997 | 2.87 | -0.055 |
+| 11 | 0.431 | 0.996 | 3.37 | -0.030 |
+
+Selected aggregate means show the multi-slot aggregate estimator also remains strongly position-decodable, though Family A layer-0 aggregate ridge R² is lower than the slot-level G2 statistic because aggregate pooling mixes slots/tokens before fitting: Family A aggregate R² is `0.838` at layer 0 and `0.958` at layer 11; Family B aggregate R² is `0.999` at layer 0 and `0.994` at layer 11.
+
+Corrected shuffled-null summary: `shuffle_null_ok=true`; the all-row 99th percentile of per-row shuffled-null positive tails was `0.0467`, below the `+0.05` gate threshold, though the maximum individual row reached `0.0969` and is treated as a descriptive outlier rather than a gate failure.
 
 ### Analysis
 
-_Pending output analysis._
+GPT-2 behaves like the learned-absolute-position endpoint expected by M1.5. Unlike NoPE, it does not have a layer-0 architectural zero: positional information is already nearly perfectly decodable from slot-level keys at layer 0 across Families A/B/C. This directly supports the addendum's premise that learned absolute position is present as a stamped input signal before depth-wise computation.
+
+The position signal remains strong throughout the network. Family A slot-level ridge R² stays around `0.996–0.999` across the sampled layers, while the position fraction declines from about `0.72` at layer 0 to about `0.43` by layer 11. This suggests GPT-2 keeps position highly decodable even as the relative amount of key variance attributable to absolute position decreases with depth.
+
+The position component is low-dimensional and removable under the implemented PCA projector diagnostic: Family A slot-level PCA k90 stays around 3 components, and R² after position-PC projection is near zero or slightly negative at the selected layers. The aggregate projector is stricter and leaves more residual position signal for Family A (`~0.08–0.19` at selected layers), consistent with the NoPE v1.1 caveat that aggregate multi-L/multi-slot removal is harder than slot-level removal.
+
+Family B is non-empty and agrees in sign with Family A, so the GPT-2 finding is not limited to the degenerate identical-segment induction regime. Family C also corroborates strong recurrence-position decodability, with the expected caveat that natural recurrence is confounded and cannot adjudicate against Family A.
 
 ### Conclusion / Next Step
 
-_Pending._
+The GPT-2 CPU M1.5 v1.1 run is valid. It confirms the architectural-one contrast to NoPE: GPT-2 layer-0 keys already carry strong learned absolute positional signal, and position remains strongly decodable through all layers. Next step: run the same corrected v1.1 protocol on Pythia/Qwen3 RoPE models for the stamped-vs-computed comparison.
 
 ## 2026-07-21 — K-address-space M1.5 v1.1 NoPE-GPT-Small CPU rerun prep
 
