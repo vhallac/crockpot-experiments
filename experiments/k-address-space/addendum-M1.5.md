@@ -1,30 +1,32 @@
-# ADDENDUM §5-M1.5 — Positional Content of K (Repeated-Segment Probe)
+# ADDENDUM §5-M1.5 v1.1 — Positional Content of K (Repeated-Segment Probe)
 
 **Dated:** 2026-07-21
-**Status:** pre-registered, not yet run
-**Parent:** SPEC §5 (K-Space as Address Space); supersedes nothing, unblocks M1/M2
-**Models:** `gpt2` (124M, 12L×12H×64) · `EleutherAI/pythia-410m` (24L×16H×64, rotary 16/64, θ=1e4) ·
-`Qwen/Qwen3-0.6B` (28L×8KV×128, QK-RMSNorm, θ=1e6) · `andrewdalpino/NoPE-GPT-Small-Base` (24L×16H×64, no PE)
-**Budget:** < $5. One forward pass per stimulus; feasible on CPU.
+**Supersedes:** `addendum-M1.5.md` (v1.0, 2026-07-21) — **v1.0 is retained unmodified as the
+pre-registration record.** This document is a corrections revision, not a rewrite of the
+predictions. All P1.5.* predictions are unchanged in content; §10 records their adjudication
+status after the NoPE run.
+
+---
+
+## CHANGELOG v1.0 → v1.1
+
+Four defects found by the first run (`nope-gpt-small`, 2026-07-21). Two are spec-level, two
+are implementation-level but were enabled by spec silence.
+
+| # | Defect | Level | Fix |
+|---|---|---|---|
+| **C1** | **Budget arithmetic was internally inconsistent.** v1.0 §2 required R ≥ 120 *and* segment lengths up to 12 tokens *and* max_length ≤ 950. 12 × 120 = 1440 > 950. The length sweep was arithmetically impossible as written, so it was never attempted. | **SPEC** | §2.0 now defines R_min as a function of d_head, derives a per-model budget, and requires a build-time feasibility assertion plus a published feasibility matrix. |
+| **C2** | **Family B alignment was under-specified.** v1.0 said to "probe the frame tokens, which are token-identical across repetitions," which invited a fixed-slot-index implementation. The implementation therefore required *every repetition to tokenize to the same total length* — impossible with real vocabulary (`Farid`, `Greta` are 2 tokens in this tokenizer; `Alice`…`Hector` are 1). All 8 cyclic offsets failed identically; Family B yielded zero stimuli and the induction control never ran. | **SPEC** | §2.2 now mandates **offset-based slot identity**: a slot is *(frame word, occurrence index within repetition)*, located by decoded piece, with per-repetition absolute positions. Equal token length across repetitions is explicitly **forbidden** as a requirement. |
+| **C3** | **Silent stimulus rejection.** Every rejection path was a bare `continue`. A whole family yielding nothing was invisible in the manifest; it took forensics to discover. Five of eight Family A segments were also dropped this way (8-token segments → 950//8 = 118 < 120). | impl (spec silent) | §3 adds **G5 family-yield gate** and a mandatory `rejected_stimuli` manifest field with reasons. |
+| **C4** | **Null gate mis-specified and variance floor under-scoped.** (a) The shuffled-null check tested `|R²| > 0.05` two-sided; negative CV R² is the *expected* null behaviour at n ≈ 2·d, so 4,759 of 4,773 "breaches" were negative (min −0.39) against only 14 positive (max +0.072) — a false alarm that flagged a healthy run. (b) The variance floor correctly zeroed `ridge_r2` at layer 0 but not `pca_components_90pct`, which reported 9.125 — a PCA of 1e-6 floating-point noise. | **SPEC** (both under-specified in v1.0 §4/§7.2) | §4 floor now applies to **every** downstream statistic; §7.5 null gate is **one-sided**, and adjudication moves to the pooled estimator. |
 
 ---
 
 ## 0. Why this exists
 
-The 2026-07-17..20 runs established two things, neither of them about models:
-
-1. **Track A contains zero valid address-purity trials (F8).** Referent labels for the
-   shared-alias mentions are causally unavailable at the token where the key is computed;
-   name mentions are lexically confounded. Four models returned four nulls on the
-   surface-controlled referent test (FWER p: gpt2 0.417 · pythia 0.967 · qwen3 0.133 ·
-   nope 0.717). The instrument, not the hypothesis, produced those numbers.
-2. **The label-free position probe is confounded by the same corpus.** Absolute position is
-   predictable from `(doc_id, update_idx)` alone at **R² = 0.945**. Any key encoding document
-   and round predicts position without any positional encoding being involved. The depth
-   profile therefore measured "keys encode context," not "position enters K."
-
-Exactly one measurement survived, because layer 0 has had no attention and so no context to
-encode — **fraction of the layer-0 key that is position** (within-token residual scale ÷ raw scale):
+Unchanged from v1.0 §0. Briefly: Track A contains zero valid address-purity trials (F8), and
+its label-free position probe is confounded because position is predictable from
+`(doc_id, update_idx)` at R² = 0.945. Only the layer-0 measurement survived:
 
 | model / variant | position fraction @ L0 |
 |---|---|
@@ -33,248 +35,208 @@ encode — **fraction of the layer-0 key that is position** (within-token residu
 | qwen3 `k_post` (128/128 dims rotated, θ=1e6) | 0.193 |
 | pythia `k_pre`, qwen3 `k_pre`, nope | ~1e-7 (zero) |
 
-Two facts fall out of that table and motivate everything below.
-**(i)** Nominal rotation fraction is the wrong axis — Qwen3 rotates every dimension and stamps
-position *least*, because θ=1e6 makes per-position angles tiny. Empirically recovered from the
-release vectors: qwen3 slowest-dim θ = 1.241e-06 = 1e6^(−126/128); pythia 3.162e-04 = 1e4^(−14/16).
-Effective fraction of head dims rotated past 90° at a typical Δp≈400: **gpt2 0.00 · pythia 0.16 · qwen3 0.41**.
-**(ii)** NoPE's layer-0 keys are *bitwise identical* across all 240 occurrences of a token
-(max pairwise L2 = 0.00000). That is a verified architectural zero — the calibration standard
-the trio never had.
-
-M1.5 extends the surviving measurement to all depths by removing the confound at the stimulus
-level, and returns a transform that M1 needs.
-
----
+M1.5 extends this to all depths by removing the confound at the stimulus level, and returns
+Π, the position-removal projector that the M1 re-run requires.
 
 ## 1. This is not a NoPE test
 
-The probe reads position out of K. What that *means* differs by column:
-
-| | `k_pre` @ L0 | `k_pre` @ depth | `k_post` |
-|---|---|---|---|
-| **nope** | 0 by architecture | **computed** position | n/a |
-| **pythia / qwen3** | 0 (verified ~1e-7) | **leaked/computed** position | stamped + computed |
-| **gpt2** | already 0.649 | contaminated from L0 | n/a |
-
-The middle column is the object of study. Pythia and Qwen3 `k_pre` at layer ℓ>0 is not
-position-free: the residual stream feeding `k_proj` has passed through ℓ attention layers that
-attended with rotated keys, so position has leaked back into content. GPT-2 cannot participate
-in the depth analysis — its keys carry absolute position from layer 0, leaving no baseline
-against which to measure an increment. It remains in the run as a positive control.
-
-The distinction that matters downstream:
-
-- **Stamped position** (RoPE, absolute) is content-independent, uniform across tokens, and
-  **invertible** by a known transform. This is what makes "sieve pre-rotation, re-rotate
-  survivors" (§5 Exp 3) viable.
-- **Computed position** is content-dependent, built by attention, shares a subspace with
-  content, and has **no inverse**. If a model computes position into K, address and namespace
-  are the same bits, and the §5 decision tree's branch-1 consequences do not follow.
-
-Calibration on novelty: *that* NoPE encodes position implicitly is established (causal masking
-suffices; it is why NoPE works at all). Confirming it is replication. Unestablished, and the
-target here: the **key-level, depth-resolved, capacity-quantified** version — how many of d_head
-dimensions position consumes, at which layer, and how much room it leaves for content.
+Unchanged from v1.0 §1. The probe reads position out of K; what that means differs by column
+(`k_pre` @ L0 = architectural zero; `k_pre` @ depth = computed/leaked position; `k_post` =
+stamped + computed). The stamped/computed distinction is the point: stamped position is
+content-independent and invertible; computed position shares a subspace with content and has
+no inverse.
 
 ---
 
 ## 2. Stimulus design
 
-**Principle:** hold content constant so that any position decodable from K is necessarily
-*computed by the model* rather than *inferred from varying context*.
+**Principle (unchanged):** hold content constant so that any position decodable from K is
+necessarily *computed by the model* rather than *inferred from varying context*.
 
-### Family A — identical repetition (primary)
+### 2.0 Budget arithmetic — NEW, fixes C1
 
-One segment S repeated R times, no separator variation:
+Three quantities interact and v1.0 fixed all three independently. They must instead be derived:
 
-```
-[Alice is a successful engineer.] × R
- slot: 0    1  2      3        4
-```
+- **R_min(d_head) = max(120, 2 · d_head)** — the ridge on d_head features needs n ≥ 2d for a
+  stable CV R². The first run used n = 135 against d = 64 (2.1×), and its slot-level nulls
+  showed the expected small-sample negative bias (mean −0.043) while pooled nulls were clean
+  (−0.003 to −0.006). Hence also §4.0 below.
+- **max_length(model) = trained_context − 32** (margin for BOS/edge effects). Read the
+  *trained* block size from config; do not inherit another model's ceiling. NoPE-GPT-Small
+  permits variable context, so its trained value must be read, not assumed to be 950.
+- **Feasibility: R_min × L ≤ max_length** must hold for each (model, segment length L) cell.
 
-- **R ≥ 120** required (ridge on 64 dims); R ≥ 200 preferred for qwen3 (128 dims).
-- **Shared-ceiling run** (all four models, cross-model comparable): R chosen so total ≤ 950
-  GPT-2 tokens. With a 7-token segment, R = 135.
-- **Extended runs** (within-model depth resolution): pythia → 2048 ctx, R ≈ 290;
-  qwen3 → 8k ctx, R ≈ 1100. NoPE-GPT context ceiling to be read from its config, not assumed
-  (the architecture permits variable block size; the *trained* block size is the limit that matters).
-- **≥ 8 distinct segments** as replicates. A single stimulus yields single-stimulus artifacts.
-- **Segment lengths ∈ {4, 7, 12} tokens**, so that repetition index and absolute token position
-  can be separated (same token position, different repetition count, and vice versa).
-- **Every slot probed separately** (slot 0 … L−1), not just one word. Tells us whether the
-  position code is token-dependent or token-invariant.
+**Build-time assertion, mandatory:** if a requested (model, L) cell is infeasible, the run
+**fails loudly** with the arithmetic, rather than silently emitting fewer stimuli.
 
-### Family B — frame-constant, content-varying (induction control)
+Resulting feasibility matrix (R_min from d_head; publish this table in the manifest):
 
-Same syntactic frame, different content words per repetition
-(`{Name} is a {adj} {profession}.`). Probe the *frame* tokens only (`is`, `a`, `.`), which are
-token-identical across repetitions. Content varies, so this does not isolate computed position
-as cleanly as A — its purpose is solely to test whether Family A's result survives outside the
-degenerate induction regime (see §7.1).
+| model | d_head | R_min | max_length | L=4 | L=7 | L=12 |
+|---|---|---|---|---|---|---|
+| gpt2 | 64 | 128 | 992 | ✅ 512 | ✅ 896 | ❌ 1536 |
+| nope-gpt-small | 64 | 128 | *(read config)* | ✅ | ✅ | *(depends)* |
+| pythia-410m | 64 | 128 | 2016 | ✅ 512 | ✅ 896 | ✅ 1536 |
+| qwen3-0.6B | 128 | 256 | 4064 | ✅ 1024 | ✅ 1792 | ✅ 3072 |
 
-### Family C — natural recurrence (external validity)
+- **L = 7 is the mandatory cross-model cell** — feasible everywhere, and the basis of all
+  cross-model comparison.
+- **At least two distinct L values are mandatory per model** (L ∈ {4, 7} at minimum).
+  Rationale: with a single L, token position is `L·r + s`, perfectly collinear with repetition
+  index, and **M1.5.4's absolute-vs-relative discrimination is unadjudicable.** The first run
+  had L ∈ {6,7} only by accident and could not separate "counts tokens" from "counts repetitions."
+- L = 12 runs where feasible; its absence on gpt2 is recorded, not worked around.
 
-Natural prose in which a frequent function word (`the`, `,`) recurs ≥ 120 times. Probe those
-occurrences. Fully confounded in the Track A sense; included only to check that A's magnitudes
-are not an artifact of synthetic text.
+### 2.1 Family A — identical repetition (primary)
 
-**Adjudication order: A is primary. B and C corroborate or caveat; they never overturn A.**
+One segment S repeated R times, no separator variation. Unchanged from v1.0 except:
+
+- **≥ 8 segments must *survive*, not merely be listed.** v1.0 said "≥ 8 distinct segments";
+  the implementation listed 8 and shipped 5 because three exceeded the length ceiling. Author
+  the segment pool against the per-model L targets, verify token length at build time, and
+  regenerate or substitute until 8 survive at each L.
+- Every slot 0…L−1 probed separately.
+
+### 2.2 Family B — frame-constant, content-varying (induction control) — REWRITTEN, fixes C2
+
+Same syntactic frame, different content words per repetition: `{Name} is a {adj} {profession}.`
+Probe **only the frame tokens** (`is`, `a`, `.`), which carry a constant token id while their
+surrounding content varies.
+
+**Slot identity is offset-based, not index-based.** This is the load-bearing change:
+
+- A slot is defined by the pair **(frame word, occurrence index within the repetition)** — e.g.
+  ("is", 0), ("a", 0), (".", 0).
+- Slots are located by encoding each repetition **independently**, decoding each token, and
+  matching the stripped piece against the frame vocabulary.
+- Absolute positions are computed from **actual cumulative offsets** of the concatenated
+  repetitions, never from `r · L + s`.
+- **Repetitions may differ in token length. Requiring equal length across repetitions is
+  forbidden** — it is unsatisfiable with natural vocabulary and silently voids the family.
+- **Assert** (do not filter): the token id at a given slot is constant across repetitions. If
+  it is not, that is a stimulus-construction error to report, not a stimulus to drop.
+- Record per repetition which content words were used, so the analysis can verify that content
+  genuinely varies.
+
+Because content varies, Family B does not isolate computed position as cleanly as A. **Its sole
+purpose is to test whether Family A's result survives outside the degenerate induction regime.**
+
+### 2.3 Family C — natural recurrence (external validity)
+
+Unchanged. Natural prose, probe a function word recurring ≥ R_min times. Fully confounded by
+design; corroboration only.
+
+**Adjudication order (unchanged): A is primary. B and C corroborate or caveat; they never
+overturn A. If A and B disagree in sign, the finding is an induction artifact and must be
+reported as such.**
 
 ---
 
 ## 3. Extraction
 
-Reuses the §5 hook code unchanged. Per (layer, head, variant ∈ {pre, post}), per stimulus,
-record the key vector at every probed slot occurrence, plus:
+Unchanged from v1.0 except the gates.
 
-- `repetition_index` r ∈ [0, R), `slot_index` s ∈ [0, L), `token_pos` = r·L + s, `token_id`
-- residual-stream norm at that position (massive-activation flag, 5× layer median)
-- attention mass received by position 0 from the final query (sink stats — repeated text is a
-  known trigger for anomalous sink behaviour; record, do not analyse here)
+**Mandatory gates — each must be able to fail; verify by perturbation:**
 
-**Mandatory gates before analysis** (each must be able to fail; verify by perturbation):
-
-- **G1 — architectural zero.** NoPE @ L0, pythia `k_pre` @ L0, qwen3 `k_pre` @ L0: within-slot
-  variance across repetitions must be < 1e-5 relative to raw scale. Any nonzero value is an
-  extraction bug, not a finding.
-- **G2 — architectural one.** gpt2 @ L0 and `k_post` @ L0 must give R² ≥ 0.9. If not, the
-  probe itself is broken.
-- **G3 — RoPE reconstruction.** As in §5-M1, retained.
-- **G4 — shuffled-y null.** Permuted targets must give R² ≈ 0 (observed −0.006 in prior runs).
+- **G1 — architectural zero.** NoPE @ L0, pythia/qwen3 `k_pre` @ L0: within-slot variance
+  across repetitions < 1e-5 relative to raw scale. *(Passed on the NoPE run at ~1e-6, with a
+  perturbation reaching 2.5e-4. Retained as-is.)*
+- **G2 — architectural one.** gpt2 @ L0 and `k_post` @ L0 must give R² ≥ 0.9.
+- **G3 — RoPE reconstruction.** As in §5-M1.
+- **G4 — shuffled-y null.** See §7.5 for the corrected one-sided form.
+- **G5 — family yield. NEW, fixes C3.** Every requested family must produce ≥ 1 stimulus, and
+  every requested (model, L) cell must produce ≥ 1 stimulus. Violation is a **run failure**,
+  not a warning.
+- **Manifest must carry `rejected_stimuli`:** one record per discarded candidate with
+  `{stimulus_id, family, target_L, reason, token_len, max_reps_possible}`. Reasons are
+  enumerated, not free text (`below_min_repetitions`, `slot_token_not_constant`,
+  `frame_token_absent`, `exceeds_max_length`).
 
 ---
 
 ## 4. Measurements
 
-Let X be the (R × d_head) matrix of keys for one (layer, head, variant, slot), y the repetition
-index. Let `raw = mean|X|` and `resid = mean|X − X̄|` where X̄ is the across-repetition mean.
+Unchanged from v1.0 (M1.5.1–M1.5.6), with two corrections.
 
-- **M1.5.1 — Position fraction.** `resid / raw`. Direct extension of the layer-0 table in §0 to
-  all depths. Interpretable as "what fraction of this key is not the token."
-- **M1.5.2 — Decodability.** 5-fold CV R² of ridge y ← X, alphas ∈ logspace(−2, 4).
-  **Variance floor guard: if `resid/raw` < 1e-5, report R² = 0 and do not fit.** (See §7.2.)
-- **M1.5.3 — Position capacity.** PCA on (X − X̄); number of components to reach 90% of residual
-  variance, and the fraction of *total* key variance those components carry. **This is the
-  measurement that converts "position as namespace" into a number:** if position occupies 3 of
-  64 dimensions, 61 remain for content.
-- **M1.5.4 — Code geometry.** Is the leading position PC (a) monotone in r → absolute-like;
-  (b) periodic with period L → local/relative; (c) log-monotone → compressive? Report Spearman ρ
-  vs r, and the dominant Fourier component of PC1 vs slot phase.
-- **M1.5.5 — Leakage curve (the headline).** M1.5.1 and M1.5.3 as a function of depth, for
-  `k_pre` in pythia/qwen3 (stamped models) against nope (unstamped). All three pinned to zero at
-  layer 0 by G1, so the curve shape is the entire result.
-- **M1.5.6 — Removability.** Project out the top-k position PCs (k from M1.5.3). Report
-  (a) residual position R² after projection; (b) retained token-identity decodability
-  (multiclass CV accuracy, token id from key) before vs after. A transform that removes position
-  and destroys content is useless; both numbers are required.
+### 4.0 Estimator hierarchy — NEW, fixes C4(a) fallout
+
+- **Pooled (aggregate) estimates are the adjudication basis.** Slot-level estimates at
+  n ≈ 2·d_head carry a substantial negative CV bias and are reported as **descriptive only**.
+  Evidence: on the NoPE run, slot-level nulls averaged −0.043 while pooled nulls sat at
+  −0.003…−0.006 for the same data.
+- Slot-level results remain in the CSV for diagnostics and for the M1.5.4 slot-dependence
+  question, which needs them.
+
+### 4.1 Variance floor — SCOPE WIDENED, fixes C4(b)
+
+If `resid_mean_abs / raw_mean_abs < 1e-5`, the row is **degenerate** and **every** derived
+statistic is set to 0 or NaN — `ridge_r2`, `pca_components_90pct`,
+`pca_residual_variance_fraction_90pct`, `pc1_spearman_repetition`, `pc1_dominant_fourier_bin`,
+`r2_after_position_pc_projection`. v1.0 gated only the regression, which let layer 0 report
+`pca_components_90pct = 9.125` — a PCA of floating-point noise.
 
 ---
 
-## 5. Pre-registered predictions
+## 5–6. Predictions and decision tree
 
-- **(P1.5.a)** G1 holds in all three architectural-zero cases; G2 holds. *If either fails, stop
-  and debug — no downstream number is interpretable.*
-- **(P1.5.b)** NoPE's position fraction and R² rise monotonically with depth, reaching
-  substantial decodability (R² > 0.5) by mid-stack. Replication of known implicit-position
-  results, at the key level; primarily a validity check on the probe.
-- **(P1.5.c)** *Genuinely uncertain, and the reason to run all four.* Pythia/qwen3 `k_pre`
-  position fraction also rises with depth — i.e. models compute position into keys **even when
-  it is already stamped for free**. If confirmed, implicit position is not a NoPE quirk but a
-  default consequence of causal attention, and every published K-space geometry analysis is more
-  position-contaminated than assumed. If instead the stamped models stay flat while NoPE rises,
-  the two mechanisms are substitutes and position is built only on demand. **Either outcome is a
-  result; the second is the more interesting one and is not a NoPE finding at all.**
-- **(P1.5.d)** Position occupies a low-dimensional subspace (M1.5.3 ≤ 0.15·d_head to 90%
-  variance) in the stamped models, and a *higher*-dimensional, more entangled one in NoPE —
-  because computed position must share capacity with content whereas stamped position does not.
-- **(P1.5.e)** Qwen3 `k_post` shows the weakest stamped position fraction of the RoPE models at
-  matched relative depth, consistent with θ=1e6 and the measured L0 table (0.193 vs 0.385).
-- **(P1.5.f)** M1.5.6 succeeds for stamped position (position removed, token identity retained)
-  and *fails* for computed position in NoPE at depth (removing position also degrades token-identity
-  decodability). This is the operational form of the stamped/computed distinction in §1.
+**Unchanged from v1.0.** P1.5.a–f stand as pre-registered; see §10 for adjudication so far.
 
 ---
 
-## 6. Decision tree
+## 7. Known traps
 
-- **P1.5.c: stamped models rise** → position and content are entangled in `k_pre` at depth in
-  *every* architecture. Consequence for §5: the §5-Exp3 plan ("sieve pre-rotation") loses its
-  guarantee, because `k_pre` is not the position-free object it was assumed to be; the sieve must
-  operate on the position-orthogonal complement from M1.5.6 instead. Also promotes this addendum
-  from methodology to a standalone finding.
-- **P1.5.c: stamped models flat** → `k_pre` is a clean content space in RoPE models. §5-Exp3
-  proceeds as originally specified; NoPE is architecturally distinct and must be analysed with
-  its own position-removal transform.
-- **P1.5.f succeeds broadly** → ship Π (position-removal projector) into the M1 re-run. This is
-  the proper representation-level fix for F3, replacing the pair-sampling workaround: compute
-  address purity on ΠK rather than trying to match controls on distance.
-- **P1.5.f fails in NoPE only** → NoPE is excluded from address-purity analysis (its keys cannot
-  be decontaminated), and the M1 re-run proceeds on the other three.
-- **P1.5.d inverted** (stamped models more entangled than NoPE) → the capacity argument is wrong
-  and "position as namespace" should be dropped from the tape framing rather than defended.
+§7.1 (induction regime), §7.2 (variance-floor amplification), §7.3 (counting is not a
+confound), §7.4 (post-selection inference), §7.6 (cross-model comparability) unchanged.
 
----
+### 7.5 Null gate is one-sided — REVISED, fixes C4(a)
 
-## 7. Known traps, recorded before the fact
+Cross-validated R² on a null model is **negatively** biased at small n; negative values are
+evidence of correct behaviour, not leakage. The gate must be:
 
-### 7.1 Induction regime
-Repeated identical text strongly drives induction heads; the model is not in a typical operating
-regime. Family A's causal cleanliness is bought at this cost. **Mitigation:** Family B and C must
-be reported alongside A in every table; if A and B disagree in *sign*, the finding is an induction
-artifact and must be reported as such. Record sink/massive-activation stats (§3) so the regime is
-documented rather than assumed benign.
+```
+G4 fails iff  quantile(shuffled_r2, 0.99) > +0.05          # upper tail only
+```
 
-### 7.2 Variance-floor amplification — an actual bug from this weekend
-The first pass of this probe reported layer-0 position R² of 0.20 (pythia `k_pre`) and 0.23 (nope).
-Both were false. The true within-token residual is ~1e-7 of raw scale; standardizing by a std of
-1e-7 amplified pure floating-point rounding to unit scale, after which ridge fit per-document
-rounding patterns that happen to correlate with position. **Same failure class as the L0
-degenerate-geometry incident: normalizing near-zero variance manufactures signal.** M1.5.2's guard
-is mandatory, and the T4 degenerate trap must be extended to cover regression probes, not only AUC.
+Preferred stronger form: adjudicate observed R² against the **shuffled distribution** rather
+than against zero — report `r2_minus_null_mean` and a permutation p-value, exactly as the
+corrected M1 analysis does for AUC. Record the negative tail as a diagnostic of sample
+adequacy: a slot-level null mean below −0.10 means n is too small for that cell, and it should
+be reported rather than silently trusted.
 
-### 7.3 Counting is not a confound
-The model can count preceding copies. Counting via causal attention **is** implicit positional
-encoding — it is the mechanism under study, not an alternative explanation. What Family A excludes
-is *position inferable from varying content*, which is precisely the Track A defect (R² = 0.945).
+### 7.7 Cyclic offsets do not create independent stimuli — NEW
 
-### 7.4 Post-selection inference
-Do not report "the best head" without a family-wise null. A z ≈ 4 selected as best-of-384 is not
-significant; this error was made and retracted on 2026-07-20. Use the max-statistic null across
-heads within each shuffle, as in the corrected M1 analysis.
-
-### 7.5 Scale ceiling
-0.6B maximum. Absence of an effect here is not absence at 7B. Every claim scale-qualified.
-
-### 7.6 Cross-model comparability
-Tokenizers differ, so segment token-length differs. Report against **repetition index** for
-cross-model tables; record raw token position for within-model analysis. Report per relative
-depth (ℓ / n_layers), never raw layer index, when comparing 12/24/28-layer models.
+v1.0's Family B design generated "one stimulus per cyclic offset," which the implementation
+read as 8 attempts. Because the offset only rotates the starting point of a full cycle, all
+offsets contain the same multiset of sentences — 8 correlated stimuli, and 8 identical
+failures. **Independent Family B stimuli must differ in vocabulary, not in phase.** Use
+disjoint name/adjective/profession pools per stimulus.
 
 ---
 
 ## 8. Deliverable
 
-Beyond the report: **Π, a per-(model, layer, head) position-removal projector**, with its
-M1.5.6 fidelity numbers attached. This is the artifact that unblocks the M1 re-run — address
-purity measured on ΠK is a representation-level control for position, replacing the
-distance-matched-pair workaround (F3) which can only ever approximate it.
-
-Note the sequencing consequence: **M1.5 is not a detour from the address experiment; it produces
-the transform that experiment requires.** It is also fully independent of corpus v3 (F8), so it
-can run before the corpus is fixed.
-
----
+Unchanged: **Π, a per-(model, layer, head) position-removal projector**, with M1.5.6 fidelity
+attached. Confirmed viable by the NoPE run (§10).
 
 ## 9. Schedule & budget
 
-- **Step 1** (~1 h, no GPU): stimulus generators for Families A/B/C; length sweep; slot indexing;
-  gate harness G1–G4 with deliberate perturbation checks.
-- **Step 2** (~20 min GPU, or CPU with patience): shared-ceiling extraction, 4 models ×
-  8 segments × 3 lengths × 3 families. Single forward per stimulus, ≤ 950 tokens. Trivial cost.
-- **Step 3** (~30 min, CPU): M1.5.1–M1.5.6, plots, `REPORT-M1.5.md` with P1.5.a–f adjudicated in
-  the §2–§4 verdict style.
-- **Step 4** (optional, ~20 min GPU): extended-context runs for pythia (2048) and qwen3 (8k),
-  re-running M1.5.5 on the depth axis with better sample counts.
+Unchanged (< $5; CPU-feasible). Add: re-run `nope-gpt-small` alongside the other three, since
+its Family B and length-sweep cells never executed.
 
-Estimated total: **< $5**, dominated by instance spin-up rather than compute.
+---
+
+## 10. Adjudication status after run 1 (`nope-gpt-small`, 2026-07-21)
+
+| prediction | status | evidence |
+|---|---|---|
+| **P1.5.a** gates hold | **PASS** | G1 at ~1e-6 vs 1e-5 floor; perturbation can fail |
+| **P1.5.b** NoPE position rises with depth | **CONFIRMED** | R² 0 → 0.42 (L3) → 0.91 (L8) → ~0.94 plateau; position fraction 0.016 → 0.21 |
+| **P1.5.c** stamped models also compute position | **PENDING** | needs pythia/qwen3 `k_pre` |
+| **P1.5.d** computed position is higher-dimensional | **PARTLY WRONG** | 1–2 PCs of 64 through L8–L14 — far more compact than predicted; expands to ~13 PCs only at L15–23 while R² stays flat. Revise: the prediction may hold only for the upper-third regime. |
+| **P1.5.e** qwen3 `k_post` weakest stamped fraction | **PENDING** | needs qwen3 |
+| **P1.5.f** projector fails for computed position | **REFUTED (usefully)** | L23 pooled R² 0.907 → 0.005 after projection; token-identity accuracy 0.984 → 0.996. Removing position *improves* content decodability. Π is viable → M1 re-run unblocked. |
+
+**Unadjudicated by construction:** M1.5.4 absolute-vs-relative (single effective L → collinear;
+fixed by §2.0), and the entire induction control (Family B yielded nothing; fixed by §2.2).
+
+**Additional finding not predicted:** position is not head-specialised — by layer 10, 16 of 16
+heads exceed R² 0.9. Worth carrying into the cross-model runs as a descriptive statistic.
