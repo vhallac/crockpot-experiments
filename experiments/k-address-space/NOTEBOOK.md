@@ -35,7 +35,7 @@ G1 must pass for NoPE layer 0: within-slot position fraction below `1e-5`, and t
 - Spec: `experiments/k-address-space/addendum-M1.5.md`
 - Parent spec: `experiments/k-address-space/spec.md`
 - Code branch: `main`
-- Pre-run commit: _pending_
+- Pre-run commit: `3fa27d0` (`Add aggregate M1.5 projector fidelity`; initial prep commit `54c11ac`)
 - Planned output location: `outputs/k_address_space_m15_nope_gpt_small_20260721`
 - Random seed: default script seed `0`
 - Environment: local CPU via `scripts/nix-cpu-run` unless escalated to RunPod CUDA; exact manifest environment to be recorded at run time
@@ -45,15 +45,59 @@ G1 must pass for NoPE layer 0: within-slot position fraction below `1e-5`, and t
 
 ### Results
 
-_Pending run._
+Run completed locally on CPU from pre-run commit `3fa27d0`.
+
+Command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.position_content \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --families A,B,C \
+  --min-repetitions 120 \
+  --max-length 950 \
+  --output-dir outputs/k_address_space_m15_nope_gpt_small_20260721
+```
+
+Outputs were published as GitHub Release assets:
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-nope-gpt-small/20260721>
+- `k_address_space_m15_nope_gpt_small_20260721.tgz` — 8,133,533 bytes; SHA256 `00ab55541353b58f0bc099218cf4dd8494f33036f1ee3e15eaec40f96984eb1f`
+- `kaddress_m15_nope-gpt-small.csv` — 3,521,429 bytes; SHA256 `c5b1bfa6894e2b6403c73f85e7d89f36b15597c113a982e8a215ecb94418e136`
+- `kaddress_m15_gates_nope-gpt-small.csv` — 55,436 bytes; SHA256 `500abe947b6a23a2d088459edbe0573aef0bb02c8e9f58cb23f3fc768b027ec3`
+- `kaddress_m15_manifest_nope-gpt-small.json` — 2,462 bytes; SHA256 `c54a79b0fd45af4b2800e7dce99aa76e580fe472bec5b08e55b00d1e308a3d74`
+- `kaddress_m15_projectors_nope-gpt-small.npz` — 9,636,244 bytes; SHA256 `c17e6dcb70aa86f8c1ea0af90de130d4f7e6314478a9588270e672bd0b8a2403`
+
+Manifest highlights: `stimulus_count=6`, `summary_rows=14208`, `families=[A,B,C]`, `requested_device=cpu`, `cuda_available=false`, Python `3.11.11`, Torch `2.5.1`, model revision `320681e33a029517e27c68a0f9c2b07ea0004155`. Family A contributed five repeated-segment stimuli with 135–158 repetitions and 6–7 token slots; Family C contributed one natural-recurrence stimulus. Family B produced no valid stimuli under the tokenizer alignment plus ≥120-repetition constraints.
+
+Gate and null summary:
+
+- G1 architectural zero passed for all 560 layer-0 checked slots/heads; max layer-0 position fraction was `1.52e-6`, below the `1e-5` variance floor, and the deliberate perturbation check could fail.
+- The manifest records `shuffle_null_ok=false`: slot-level shuffled-R² absolute quantiles were median `0.0359`, 90% `0.0967`, 95% `0.1222`, 99% `0.1902`. Aggregate Family A projector rows were much cleaner, with selected-layer shuffled R² around `-0.003` to `-0.006`.
+
+Selected Family A slot-level depth means:
+
+| layer | position fraction | ridge R² | PCA k90 | R² after PC projection |
+|---:|---:|---:|---:|---:|
+| 0 | 8.88e-7 | 0.000 | 1.00 | 0.000 |
+| 1 | 0.00797 | 0.029 | 1.01 | 0.020 |
+| 2 | 0.0113 | 0.152 | 1.14 | 0.138 |
+| 6 | 0.0400 | 0.727 | 1.71 | 0.251 |
+| 12 | 0.0481 | 0.951 | 1.10 | 0.055 |
+| 18 | 0.0843 | 0.951 | 2.04 | 0.010 |
+| 23 | 0.0892 | 0.979 | 2.20 | -0.023 |
 
 ### Analysis
 
-_Pending output analysis._
+The primary NoPE prediction is supported: layer-0 keys are effectively position-free, but repeated-token Family A keys become strongly position-decodable with depth. Mean ridge R² reaches `0.727` by layer 6 and ≈`0.95–0.98` from layer 12 onward, while the position fraction rises from `8.88e-7` at layer 0 to `0.089` at layer 23.
+
+The position signal is low-dimensional in the slot-level analysis: Family A needs about 1–2 PCs to explain 90% of residual variation across most depths. Projecting out those PCs usually removes most position decodability at upper layers. In the aggregate Family A projector rows, layer-23 ridge R² drops from `0.9069` to `0.0049`; token-identity nearest-centroid accuracy on the reservoir sample is retained (`0.9844 → 0.9957`). This suggests the computed position component is removable for this NoPE run, at least under the implemented projector/sample diagnostic.
+
+Caveats: Family B failed to instantiate valid aligned frame-token stimuli for this tokenizer/settings, and the slot-level shuffled-y null is not as clean as pre-registered even though aggregate nulls are near zero. Family C corroborates that recurrence keys contain strong position signal (`position_fraction=0.177`, `ridge_r2=0.848` on average), but it remains confounded and cannot overturn Family A.
 
 ### Conclusion / Next Step
 
-_Pending._
+This selected NoPE M1.5 run validates the depth-resolved key-level computed-position effect: NoPE layer 0 is an architectural zero, then `k_pre` keys acquire a strong, low-dimensional, mostly removable position component with depth. Next step is to run the same M1.5 implementation on GPT-2/Pythia/Qwen3 for the addendum's cross-model stamped-vs-computed decision tree, and to fix/improve Family B generation before treating B as a passed induction-control condition.
 
 ## 2026-07-20 — K-address-space M1 NoPE-GPT-Small full CUDA run prep
 
