@@ -27,6 +27,8 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space python -m kaddress.
   --device cuda \
   --families A,B,C \
   --segment-lengths 4,7,12 \
+  --repetitions 256 \
+  --max-length 3072 \
   --progress-every 1000 \
   --output-dir outputs/k_address_space_m15_v11_qwen3_cuda_20260722
 ```
@@ -40,3 +42,7 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space python -m kaddress.
 - G2 perturbation check can fail.
 - `shuffle_null_ok` reported from upper-tail gate.
 - Post-run analysis reports dimensionality/projector columns for slot and aggregate rows separately.
+
+## Post-run status
+
+Completed on RunPod NVIDIA L4. Outputs copied locally and packaged under `outputs/k_address_space_m15_v11_qwen3_cuda_20260722*`. Reviewer-requested dimensionality/projector columns were extracted in the notebook entry.

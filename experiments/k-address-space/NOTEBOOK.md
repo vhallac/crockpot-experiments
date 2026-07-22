@@ -33,6 +33,78 @@ address-purity trials.**
 corpus-v3 M1 is worth building. **M1.5 and M1.6 do not depend on F8** — they use
 repeated-segment stimuli that need no referent labels.
 
+
+## 2026-07-22 — K-address-space M1.5 v1.1 Qwen3-0.6B CUDA run
+
+Question: does Qwen3-0.6B, a full-RoPE model with θ=1e6 and `d_head=128`, show computed/leaked pre-RoPE key position at depth, and is its stamped post-RoPE position fraction weaker than Pythia as predicted by P1.5.e?
+
+Run command on RunPod NVIDIA L4 from commit `6380360`:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space python -m kaddress.scripts.position_content \
+  --model qwen3 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --repetitions 256 \
+  --max-length 3072 \
+  --progress-every 1000 \
+  --output-dir outputs/k_address_space_m15_v11_qwen3_cuda_20260722
+```
+
+Two run-shape caveats are deliberate and recorded: `--repetitions 256` uses Qwen3's required `R_min=2*d_head`; `--max-length 3072` keeps the L=12 cell feasible while avoiding the 4064-token Family C CUDA/OOM path on the L4. The run still includes all requested families A/B/C and the length sweep L=4,7,12.
+
+Preflight/fixes before the successful run:
+
+- Added longer Family A templates so Qwen3 has actual 12-token repeated segments; the original short pool had zero L=12 Qwen3 survivors.
+- Avoided a Transformers 4.57 Qwen3 CUDA mask path that requested ~100 GiB for all-ones unpadded masks; M1.5 inputs are single unpadded sequences, so omitting the mask is equivalent.
+- Released full-layer CUDA key tensors between stimuli to avoid carrying fragmentation into late long stimuli.
+- Per reviewer feedback, the analysis below explicitly pulls the dimensionality/projector columns by default and separates slot rows from `AGGREGATE` rows.
+
+Run evidence: log reports `starting M1.5 analysis model=qwen3 device=cuda stimuli=27 families=A,B,C`, progress to `units=86464` at about `45.0/s`, and writes all four outputs. The manifest records `summary_rows=87808`, `gate_g1_pass=PASS`, `gate_g2_pass=PASS`, `shuffle_null_ok=true`, `max_length=3072`, `requested_repetitions=256`, and `gates_evaluated={"G1_architectural_zero": 1544, "G2_architectural_one": 1544}`. The gates CSV has exactly 3,088 rows; all gate rows pass and all perturbation checks can fail.
+
+Reviewer-requested columns present in the CSV: `pca_components_90pct`, `pca_residual_variance_fraction_90pct`, `r2_after_position_pc_projection`, `token_identity_acc_before`, and `token_identity_acc_after`. The projector artifact is `kaddress_m15_projectors_qwen3.npz`.
+
+Selected Family A **slot-level** means:
+
+| variant | layer | position_fraction | ridge_r2 | pca_k90 | r2_after_projection |
+|---|---:|---:|---:|---:|---:|
+| pre | 0 | 9.55e-08 | 0.000 | 0.00 | 0.000 |
+| pre | 1 | 0.018 | 0.909 | 1.16 | 0.208 |
+| pre | 7 | 0.065 | 0.953 | 2.32 | 0.135 |
+| pre | 14 | 0.138 | 0.971 | 4.26 | 0.024 |
+| pre | 21 | 0.099 | 0.969 | 2.37 | 0.092 |
+| pre | 27 | 0.054 | 0.970 | 2.51 | 0.069 |
+| post | 0 | 0.242 | 1.000 | 17.43 | -0.022 |
+| post | 14 | 0.499 | 0.998 | 19.28 | -0.028 |
+| post | 27 | 0.507 | 1.000 | 23.76 | -0.032 |
+
+Selected Family A **aggregate** means:
+
+| variant | layer | position_fraction | ridge_r2 | pca_k90 | r2_after_projection | token_acc_before | token_acc_after |
+|---|---:|---:|---:|---:|---:|---:|
+| pre | 0 | 0.000002 | 0.000 | 0.00 | 0.000 | 1.000 | 1.000 |
+| pre | 1 | 0.018 | 0.458 | 4.63 | -0.001 | 0.982 | 1.000 |
+| pre | 7 | 0.064 | 0.804 | 11.50 | 0.028 | 0.948 | 0.997 |
+| pre | 14 | 0.135 | 0.817 | 23.13 | 0.022 | 0.843 | 0.974 |
+| pre | 21 | 0.099 | 0.816 | 11.13 | 0.007 | 0.935 | 0.978 |
+| pre | 27 | 0.054 | 0.742 | 24.13 | -0.001 | 0.895 | 0.949 |
+| post | 0 | 0.244 | 0.868 | 29.13 | 0.013 | 0.934 | 1.000 |
+| post | 14 | 0.498 | 0.902 | 30.63 | 0.003 | 0.559 | 0.896 |
+| post | 27 | 0.507 | 0.922 | 32.88 | 0.050 | 0.591 | 0.883 |
+
+Interpretation: Qwen3 passes the architectural contrast cleanly (`k_pre` layer 0 zero, `k_post` layer 0 one), and then develops strong pre-RoPE position decodability at depth. Family A slot-level `k_pre` ridge R² rises from zero to ~0.91 at layer 1 and ~0.95–0.97 through most later layers, while the pre-RoPE `position_fraction` remains much lower than post-RoPE (`~0.086` vs `~0.428` overall for slot Family A). This confirms P1.5.c for a second RoPE model: stamped-position models also compute/leak position internally.
+
+P1.5.e is not supported in the naive overall `k_post` fraction comparison: Qwen3 Family A slot-level `k_post` position fraction averages ~0.428 in this run, higher than the Pythia run's logged Family A `k_post` average (~0.252). Because this Qwen3 run caps repetitions/max length differently from Pythia, treat that as an empirical warning rather than a final cross-model normalization claim.
+
+Dimensionality/projector nuance: at the slot level, Qwen3 `k_pre` position is still fairly low-dimensional in most depths (about 1–4 PCs at selected Family A layers), broadly matching the Pythia/NoPE slot-level caveat. The aggregate rows are much higher-dimensional (Family A `k_pre` selected depths reach ~11–24 PCs), which reproduces the aggregate-vs-slot trap: aggregate projectors are a different and stricter operator than per-slot projectors. Projection usually removes most aggregate Family A position (`r2_after_projection` near 0), while slot-level early-layer `k_pre` leaves residual R² (e.g. layer 1 ~0.208), so Π fidelity remains scope-dependent.
+
+Artifacts copied locally:
+
+- `outputs/k_address_space_m15_v11_qwen3_cuda_20260722/`
+- `outputs/k_address_space_m15_v11_qwen3_cuda_20260722.tar.gz`
+- `outputs/SHA256SUMS_k_address_space_m15_v11_qwen3_cuda_20260722`
+
 ## 2026-07-22 — K-address-space M1.5 v1.1 Pythia-410m CUDA run prep
 
 ### Question / Hypothesis
