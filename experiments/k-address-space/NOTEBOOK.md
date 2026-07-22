@@ -66,11 +66,16 @@ The run is valid only if it used CUDA, emitted non-empty measurement and gate CS
 
 - Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1
 - Code branch: `docs/f8-caveats-m15-report-absorb`
-- Pre-run commit: _pending_
+- Pre-run commit: `947ed85` (`Prepare Pythia M1.5 CUDA run`)
+- Corrected run commit: `99257e9` (`Speed up M1.5 CUDA ridge analysis`)
 - Planned output location: `outputs/k_address_space_m15_v11_pythia410_cuda_20260722`
-- Publication target: GitHub Release `run/k-address-space-m15-v11-pythia410/20260722`
+- Published output: https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-pythia410/20260722
+- Published assets:
+  - `k_address_space_m15_v11_pythia410_cuda_20260722.tar.gz`
+  - `SHA256SUMS_k_address_space_m15_v11_pythia410_cuda_20260722`
+- SHA256: `6d23a8b0cf89dc84638ea80a55d35de87fa40552febd25989a7d295d8658a324  k_address_space_m15_v11_pythia410_cuda_20260722.tar.gz`
 - Random seed: default script seed `0`
-- Environment: RunPod CUDA via `scripts/cuda-run`; exact GPU, CUDA/Torch versions, and manifest environment to be recorded at run time
+- Environment: RunPod pod `33cxmm98cdwse2`, NVIDIA L4, Python 3.12.3, Torch 2.8.0+cu128, CUDA 12.8, `cuda_available=true`, requested device `cuda`
 - Model: `pythia410` (`EleutherAI/pythia-410m`, default Hugging Face revision)
 - Preparation checklist: `temp/repro-checklists/20260722-k-address-space-m15-v11-pythia410-cuda.md`
 
@@ -97,13 +102,35 @@ Redo plan: patch the hot per-slot analysis path to use `torch` operations on CUD
 
 Second CUDA attempt after the first GPU fix was also stopped by operator request at `20260722T100224Z`: remote PID `1128` on RunPod pod `33cxmm98cdwse2` had run for `46:39` and reached only `progress units=12000 rate=4.31/s`, extrapolating beyond the intended budget. Diagnosis: the code no longer ran the main regression through NumPy, but the torch path still launched many tiny ridge/null solves and scalar synchronizations per slot/head/layer unit. Corrective action: batch ridge cross-validation across alphas and shuffled null targets on the device, defer CPU copies until after per-unit CUDA analysis, then run a bounded CUDA smoke before restarting the full run.
 
+Corrected CUDA rerun completed on pod `33cxmm98cdwse2` after the batching fix. Command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space python -m kaddress.scripts.position_content \
+  --model pythia410 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --progress-every 1000 \
+  --output-dir outputs/k_address_space_m15_v11_pythia410_cuda_20260722
+```
+
+Run evidence: the log reports `starting M1.5 analysis model=pythia410 device=cuda stimuli=26 families=A,B,C`, progress rising to `progress units=144000 rate=56.22/s`, `processed C00 family=C seq=1955 slots=1 units=144384`, and writes all expected output files. The manifest records `summary_rows=146688`, `gate_g1_pass=PASS`, `gate_g2_pass=PASS`, `shuffle_null_ok=true`, and `gates_evaluated={"G1_architectural_zero": 3008, "G2_architectural_one": 3008}`. The gates CSV has exactly 6,016 rows matching those manifest counts; all G1 and G2 rows pass. G2's perturbation check can fail: perturbed ridge R² ranges from about `-0.1636` to `0.0209`, far below the 0.9 threshold.
+
+Published output: https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-pythia410/20260722. The uploaded checksum asset was downloaded and compared byte-for-byte with the local `SHA256SUMS` file.
+
 ### Analysis
 
-_Pending corrected rerun output analysis._
+The validity gates behave as intended for a RoPE model. Layer-0 `k_pre` has architectural zero position signal (`ridge_r2=0`, `position_fraction=0`) and all 3,008 G1 rows pass. Layer-0 `k_post` has the expected stamped RoPE position signal: G2 rows have ridge R² essentially 1.0, and the perturbation destroys the signal.
+
+The substantive result is mixed but informative. In `k_post`, position is almost perfectly linearly decodable at every layer (`ridge_r2` mean about `0.9981` overall), as expected from stamped rotary position. The `position_fraction` diagnostic declines with depth: from about `0.3824` at layer 0 to `0.0696` at layer 23, meaning the position-decodable direction remains present but occupies a smaller share of variance in later post-RoPE keys.
+
+For `k_pre`, layer 0 is exactly zero, but deeper layers show high position decodability by ridge R²: layer means jump to `0.9255` at layer 1, range around `0.82–0.99` through the stack, and end around `0.9610` at layer 23. However, the `position_fraction` remains much smaller than `k_post`: overall about `0.0357`, peaking by layer mean near `0.0829` at layer 8 and then falling below `0.02` in the last layers. This supports the hypothesis that Pythia's pre-RoPE key stream contains computed/leaked positional information after layer 0, but it is a low-variance component rather than the dominant geometry of the key vectors.
+
+Family-level aggregates from the run log are consistent with that interpretation: `pre` position fraction is about `0.0329` for Family A, `0.0976` for Family B, and `0.1740` for Family C, while `post` remains much larger (`0.2519`, `0.2663`, `0.3654`) and ridge R² remains near 1.
 
 ### Conclusion / Next Step
 
-_Restart after GPU-utilization fix and progress instrumentation._
+The Pythia-410m M1.5 v1.1 CUDA run is complete and published. The result validates the repaired M1.5 gates on a RoPE model and gives positive evidence for nonzero, internally present pre-RoPE positional information beyond layer 0, but with small variance share compared with the explicit post-RoPE positional stamp. Next, compare this pattern against the GPT-2 and NoPE runs in a cross-model M1.5 summary before drawing a paper-facing conclusion.
 
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 gatefix CPU rerun prep
 
