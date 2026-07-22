@@ -637,9 +637,12 @@ def _analyse_matrix_torch(x: torch.Tensor, y: torch.Tensor, token_ids: torch.Ten
     pc1 = resid @ basis[0] if len(basis) else torch.zeros(len(y), dtype=x.dtype, device=x.device)
     dominant_bin = -1
     if len(pc1) >= 4:
-        amp = torch.abs(torch.fft.rfft(pc1 - pc1.mean()))
+        # Keep the diagnostic FFT off CUDA: small vectors do not justify GPU FFT
+        # setup, and some RunPod CUDA builds reject this tiny rfft shape.
+        pc1_np = pc1.detach().cpu().numpy()
+        amp = np.abs(np.fft.rfft(pc1_np - pc1_np.mean()))
         if len(amp) > 1:
-            dominant_bin = int(torch.argmax(amp[1:]).item() + 1)
+            dominant_bin = int(np.argmax(amp[1:]) + 1)
     if len(basis):
         proj = resid - (resid @ basis.T) @ basis
         x_proj = mean + proj
