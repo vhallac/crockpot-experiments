@@ -33,6 +33,59 @@ address-purity trials.**
 corpus-v3 M1 is worth building. **M1.5 and M1.6 do not depend on F8** — they use
 repeated-segment stimuli that need no referent labels.
 
+## 2026-07-22 — K-address-space M1.5 v1.1 Pythia-410m CUDA run prep
+
+### Question / Hypothesis
+
+Does Pythia-410m expose both stamped RoPE position (`k_post`, including layer 0) and computed/leaked positional information in pre-RoPE keys (`k_pre`, especially at depth) under the corrected M1.5 v1.1 repeated-segment probe? The expected M1.5 signal is that `k_pre` at layer 0 satisfies the architectural-zero gate (G1), `k_post` at layer 0 satisfies the architectural-one gate (G2), and deeper `k_pre` rows adjudicate whether RoPE models compute position internally rather than merely carrying the architectural stamp.
+
+### Experiment Design Summary
+
+Run `kaddress.scripts.position_content` for model tag `pythia410` (`EleutherAI/pythia-410m`) on a RunPod CUDA GPU using all families A/B/C. Because Pythia has `d_head=64`, the effective minimum repetitions are `R_min=max(120, 2*d_head)=128`; its trained context budget supports segment lengths `L=4,7,12`, so this run includes the L=12 cell in addition to the mandatory cross-model L=7 and the second-length L=4 control. The run uses the repaired v1.1 gates and manifest semantics from ADDENDUM §3.
+
+### Planned Procedure
+
+Prepare and commit this pre-run notebook entry, bring up a RunPod GPU using the project template/shared network-volume cache, verify CUDA before the full run, then execute:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-run -m kaddress.scripts.position_content \
+  --model pythia410 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --output-dir outputs/k_address_space_m15_v11_pythia410_cuda_20260722
+```
+
+Package the output directory as `k_address_space_m15_v11_pythia410_cuda_20260722.tar.gz`, publish it with a `SHA256SUMS` file to GitHub Release `run/k-address-space-m15-v11-pythia410/20260722`, verify the uploaded assets, then complete this entry with run results and analysis.
+
+### Expected Signal / Interpretation Plan
+
+The run is valid only if it used CUDA, emitted non-empty measurement and gate CSVs, `gate_g1_pass=PASS` for applicable layer-0 `k_pre` rows, `gate_g2_pass=PASS` for applicable layer-0 `k_post` rows, `gates_evaluated` matches the gates CSV, and the shuffled-null gate remains acceptable. Interpretation focuses on cross-depth `k_pre` aggregate/slot R² and position fraction: a rise from layer-0 zero would support P1.5.c that RoPE models compute or leak position internally, while `k_post` provides the stamped-position comparison.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1
+- Code branch: `docs/f8-caveats-m15-report-absorb`
+- Pre-run commit: _pending_
+- Planned output location: `outputs/k_address_space_m15_v11_pythia410_cuda_20260722`
+- Publication target: GitHub Release `run/k-address-space-m15-v11-pythia410/20260722`
+- Random seed: default script seed `0`
+- Environment: RunPod CUDA via `scripts/cuda-run`; exact GPU, CUDA/Torch versions, and manifest environment to be recorded at run time
+- Model: `pythia410` (`EleutherAI/pythia-410m`, default Hugging Face revision)
+- Preparation checklist: `temp/repro-checklists/20260722-k-address-space-m15-v11-pythia410-cuda.md`
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 gatefix CPU rerun prep
 
 ### Question / Hypothesis
