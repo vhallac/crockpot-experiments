@@ -295,3 +295,15 @@ new machinery.
 5. Multiple comparisons across (layer × head × variant): report head *counts*
    above threshold vs a shuffled-referent-label null (100 shuffles), not lone
    star heads.
+
+**Post-hoc discovered defect (added 2026-07-21, after the M1 runs):**
+
+6. **F8 — the Track A corpus has zero valid address-purity trials.** The
+   disambiguating detail (place/value) is emitted *after* the shared-alias
+   mention ("the person") and rotates per round, so referent identity is causally
+   unavailable at the probed alias token; same-surface mentions are lexically
+   trivial (referent == name). Threat #3 above understated this: the problem is
+   not artificial clustering but the *absence of any recoverable referent signal*.
+   All published M1 results are retracted. A valid M1 rerun requires a **corpus
+   v3** (disambiguators precede mentions) plus the M1 code fixes (F2/F3/F5/F6);
+   deferred behind M1.6. See "Known corpus defect F8" in `NOTEBOOK.md`.

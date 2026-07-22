@@ -230,7 +230,13 @@ def _capture_qwen_k(
         handles.append(attn.k_norm.register_forward_hook(make_norm_hook(li)))
     try:
         with torch.no_grad():
-            output = lm.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=True)
+            # The M1/M1.5 Qwen paths feed one unpadded sequence at a time. In
+            # Transformers 4.57 on the RunPod CUDA image, passing the all-ones
+            # 2-D mask can route SDPA through a pathological mask expansion that
+            # requests ~100 GiB even for 1k-token smoke sequences. Omitting it is
+            # equivalent for these unpadded inputs and keeps attention on the
+            # normal CUDA path.
+            output = lm.model(input_ids=input_ids, attention_mask=None, use_cache=True)
     finally:
         for handle in handles:
             handle.remove()

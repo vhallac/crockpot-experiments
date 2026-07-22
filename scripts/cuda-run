@@ -12,9 +12,9 @@ set -euo pipefail
 # - DEAD_KEYS_CUDA_SKIP_INSTALL=1 bypasses the install step entirely.
 CALLER_DEAD_KEYS_CUDA_VENV="${DEAD_KEYS_CUDA_VENV:-}"
 CALLER_DEAD_KEYS_CUDA_PYTHON="${DEAD_KEYS_CUDA_PYTHON:-}"
-if [[ -f "$HOME/.dead-keys-census-runpod-env" ]]; then
+if [[ -f "$HOME/.crockpot-experiments-runpod-env" ]]; then
   # shellcheck disable=SC1091
-  . "$HOME/.dead-keys-census-runpod-env"
+  . "$HOME/.crockpot-experiments-runpod-env"
 fi
 if [[ -n "$CALLER_DEAD_KEYS_CUDA_VENV" ]]; then
   DEAD_KEYS_CUDA_VENV="$CALLER_DEAD_KEYS_CUDA_VENV"

@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/watch-experiment-run --pattern <process-regex> [--interval 10] [--timeout 3600]
+
+Poll for an experiment process and print utilization every interval. The process
+matcher excludes this monitor process and its direct probe children so a pattern
+present in this command line does not keep the monitor alive by matching itself.
+
+Options:
+  --pattern REGEX     Extended regex matched against process command lines.
+  --interval SECONDS  Poll interval. Default: 10.
+  --timeout SECONDS   Maximum runtime before exiting 124. Default: 3600.
+  -h, --help          Show this help.
+
+Examples:
+  scripts/watch-experiment-run --pattern 'kaddress\.scripts\.position_content' --timeout 7200
+  scripts/watch-experiment-run --pattern 'python .*experiments/k-address-space' --interval 10
+USAGE
+}
+
+pattern=''
+interval=10
+timeout=3600
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pattern)
+      [[ $# -ge 2 ]] || { echo "ERROR: --pattern requires a value" >&2; exit 2; }
+      pattern=$2
+      shift 2
+      ;;
+    --interval)
+      [[ $# -ge 2 ]] || { echo "ERROR: --interval requires a value" >&2; exit 2; }
+      interval=$2
+      shift 2
+      ;;
+    --timeout)
+      [[ $# -ge 2 ]] || { echo "ERROR: --timeout requires a value" >&2; exit 2; }
+      timeout=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$pattern" ]]; then
+  echo "ERROR: --pattern is required" >&2
+  usage >&2
+  exit 2
+fi
+
+for value_name in interval timeout; do
+  value=${!value_name}
+  if ! [[ $value =~ ^[0-9]+$ ]] || [[ $value -le 0 ]]; then
+    echo "ERROR: --$value_name must be a positive integer" >&2
+    exit 2
+  fi
+done
+
+self_pid=$$
+
+timestamp() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+matching_processes() {
+  WATCH_EXPERIMENT_PATTERN=$pattern ps -eo pid=,ppid=,pcpu=,pmem=,args= | WATCH_EXPERIMENT_PATTERN=$pattern awk -v self="$self_pid" '
+    BEGIN { pattern = ENVIRON["WATCH_EXPERIMENT_PATTERN"] }
+    $1 == self { next }
+    $2 == self { next }
+    {
+      args = $0
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9.]+[[:space:]]+[0-9.]+[[:space:]]+/, "", args)
+      if (args ~ pattern) {
+        print
+      }
+    }
+  '
+}
+
+read_cpu_line() {
+  awk '/^cpu / {print $2, $3, $4, $5, $6, $7, $8, $9, $10, $11}' /proc/stat
+}
+
+cpu_usage_percent() {
+  local previous current prev_idle idle prev_total total total_delta idle_delta
+  previous=$1
+  current=$2
+  prev_idle=$(awk '{print $4 + $5}' <<<"$previous")
+  idle=$(awk '{print $4 + $5}' <<<"$current")
+  prev_total=$(awk '{sum=0; for (i=1; i<=NF; i++) sum += $i; print sum}' <<<"$previous")
+  total=$(awk '{sum=0; for (i=1; i<=NF; i++) sum += $i; print sum}' <<<"$current")
+  total_delta=$((total - prev_total))
+  idle_delta=$((idle - prev_idle))
+  if [[ $total_delta -le 0 ]]; then
+    printf 'n/a'
+  else
+    awk -v total_delta="$total_delta" -v idle_delta="$idle_delta" 'BEGIN { printf "%.1f%%", 100 * (total_delta - idle_delta) / total_delta }'
+  fi
+}
+
+memory_usage() {
+  awk '
+    /^MemTotal:/ { total=$2 }
+    /^MemAvailable:/ { available=$2 }
+    END {
+      if (total > 0) {
+        used = total - available
+        printf "%.1f%% (%0.1f/%0.1f GiB)", 100 * used / total, used / 1048576, total / 1048576
+      } else {
+        printf "n/a"
+      }
+    }
+  ' /proc/meminfo
+}
+
+gpu_usage() {
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    printf 'n/a (nvidia-smi not found)'
+    return 0
+  fi
+
+  local output
+  if ! output=$(nvidia-smi --query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null); then
+    printf 'n/a (nvidia-smi failed)'
+    return 0
+  fi
+
+  if [[ -z "$output" ]]; then
+    printf 'n/a (no NVIDIA GPUs)'
+    return 0
+  fi
+
+  awk -F', *' '{ printf "%sGPU%s %s: gpu=%s%% mem_util=%s%% mem=%s/%s MiB", sep, $1, $2, $3, $4, $5, $6; sep="; " }' <<<"$output"
+}
+
+summarize_targets() {
+  local rows=$1
+  awk '
+    {
+      count += 1
+      cpu += $3
+      mem += $4
+      pids = pids sep $1
+      sep = ","
+    }
+    END {
+      printf "targets=%d pids=%s target_cpu=%.1f%% target_mem=%.1f%%", count, pids, cpu, mem
+    }
+  ' <<<"$rows"
+}
+
+deadline=$((SECONDS + timeout))
+previous_cpu=$(read_cpu_line)
+
+while true; do
+  rows=$(matching_processes || true)
+  current_cpu=$(read_cpu_line)
+  now=$(timestamp)
+
+  if [[ -z "$rows" ]]; then
+    printf '%s no matching experiment process; system_cpu=%s mem=%s gpu=%s\n' "$now" "$(cpu_usage_percent "$previous_cpu" "$current_cpu")" "$(memory_usage)" "$(gpu_usage)"
+    exit 0
+  fi
+
+  printf '%s %s system_cpu=%s mem=%s gpu=%s\n' "$now" "$(summarize_targets "$rows")" "$(cpu_usage_percent "$previous_cpu" "$current_cpu")" "$(memory_usage)" "$(gpu_usage)"
+
+  if (( SECONDS >= deadline )); then
+    echo "ERROR: timeout after ${timeout}s while matching processes were still running" >&2
+    exit 124
+  fi
+
+  previous_cpu=$current_cpu
+  sleep "$interval"
+done

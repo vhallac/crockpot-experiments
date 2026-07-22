@@ -1,5 +1,233 @@
 # K-address-space lab notebook
 
+## Known corpus defect F8 — all M1 Track A results are retracted
+
+**Discovered:** 2026-07-21 (code review + data forensics), after the M1 runs below were
+published. **Scope:** every M1 address-purity result in this notebook — GPT-2, Pythia-410m,
+Qwen3-0.6B, and NoPE-GPT-Small — is an **instrument artifact, not a fact about the models.**
+
+**What F8 is.** The M1 address-purity test asks whether same-referent mentions cluster in
+K-space beyond lexical/positional controls. The discriminating (`diff-surface`) trials rest
+on shared-alias mentions (`"the person"`), but in the Track A generator the referent's
+disambiguating detail (place/value) is emitted **after** the alias token and rotates per
+round (`kaddress/corpus.py`, the `generate_track_a` update loop). So at the token position
+where the alias key is computed, the referent identity is **causally unavailable** — no
+correctly-built instrument could recover it. Same-surface trials, meanwhile, have
+referent = name and are lexically trivial. The net effect: **Track A contains zero valid
+address-purity trials.**
+
+**Consequences.**
+
+- The four M1 nulls below ("0 address heads", best AUCs ~0.5–0.68) measure a corpus with
+  nothing to measure. They do **not** support "semantic addressing is absent or too weak at
+  ≤0.6B scale", and their Conclusion sections must be read with that caveat.
+- The previously reported Pythia "whisper heads" (L2H4, L8H13) are **withdrawn** — they were
+  computed on poisoned rows and fall below chance on clean rows.
+- Fixing the M1 code defects alone (F2 row expansion, F3 proximity filter vs true
+  distance-matched control, F5 missing permutation null, F6 O(n²) AUC) is **not worth doing
+  in isolation** — they fix the instrument, not the corpus. Any M1 rerun requires a **corpus
+  v3** (disambiguators precede mentions) plus those code fixes as one package.
+
+**Status.** Corpus v3 is not yet designed/built; the M1 rerun is **deferred behind M1.6**
+(the hypothesis discriminator, `addendum-M1.6.md`), whose outcome decides whether a
+corpus-v3 M1 is worth building. **M1.5 and M1.6 do not depend on F8** — they use
+repeated-segment stimuli that need no referent labels.
+
+
+## 2026-07-22 — K-address-space M1.5 v1.1 Qwen3-0.6B CUDA run
+
+Question: does Qwen3-0.6B, a full-RoPE model with θ=1e6 and `d_head=128`, show computed/leaked pre-RoPE key position at depth, and is its stamped post-RoPE position fraction weaker than Pythia as predicted by P1.5.e?
+
+Run command on RunPod NVIDIA L4 from commit `6380360`:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space python -m kaddress.scripts.position_content \
+  --model qwen3 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --repetitions 256 \
+  --max-length 3072 \
+  --progress-every 1000 \
+  --output-dir outputs/k_address_space_m15_v11_qwen3_cuda_20260722
+```
+
+Two run-shape caveats are deliberate and recorded: `--repetitions 256` uses Qwen3's required `R_min=2*d_head`; `--max-length 3072` keeps the L=12 cell feasible while avoiding the 4064-token Family C CUDA/OOM path on the L4. The run still includes all requested families A/B/C and the length sweep L=4,7,12.
+
+Preflight/fixes before the successful run:
+
+- Added longer Family A templates so Qwen3 has actual 12-token repeated segments; the original short pool had zero L=12 Qwen3 survivors.
+- Avoided a Transformers 4.57 Qwen3 CUDA mask path that requested ~100 GiB for all-ones unpadded masks; M1.5 inputs are single unpadded sequences, so omitting the mask is equivalent.
+- Released full-layer CUDA key tensors between stimuli to avoid carrying fragmentation into late long stimuli.
+- Per reviewer feedback, the analysis below explicitly pulls the dimensionality/projector columns by default and separates slot rows from `AGGREGATE` rows.
+
+Run evidence: log reports `starting M1.5 analysis model=qwen3 device=cuda stimuli=27 families=A,B,C`, progress to `units=86464` at about `45.0/s`, and writes all four outputs. The manifest records `summary_rows=87808`, `gate_g1_pass=PASS`, `gate_g2_pass=PASS`, `shuffle_null_ok=true`, `max_length=3072`, `requested_repetitions=256`, and `gates_evaluated={"G1_architectural_zero": 1544, "G2_architectural_one": 1544}`. The gates CSV has exactly 3,088 rows; all gate rows pass and all perturbation checks can fail.
+
+Reviewer-requested columns present in the CSV: `pca_components_90pct`, `pca_residual_variance_fraction_90pct`, `r2_after_position_pc_projection`, `token_identity_acc_before`, and `token_identity_acc_after`. The projector artifact is `kaddress_m15_projectors_qwen3.npz`.
+
+Selected Family A **slot-level** means:
+
+| variant | layer | position_fraction | ridge_r2 | pca_k90 | r2_after_projection |
+|---|---:|---:|---:|---:|---:|
+| pre | 0 | 9.55e-08 | 0.000 | 0.00 | 0.000 |
+| pre | 1 | 0.018 | 0.909 | 1.16 | 0.208 |
+| pre | 7 | 0.065 | 0.953 | 2.32 | 0.135 |
+| pre | 14 | 0.138 | 0.971 | 4.26 | 0.024 |
+| pre | 21 | 0.099 | 0.969 | 2.37 | 0.092 |
+| pre | 27 | 0.054 | 0.970 | 2.51 | 0.069 |
+| post | 0 | 0.242 | 1.000 | 17.43 | -0.022 |
+| post | 14 | 0.499 | 0.998 | 19.28 | -0.028 |
+| post | 27 | 0.507 | 1.000 | 23.76 | -0.032 |
+
+Selected Family A **aggregate** means:
+
+| variant | layer | position_fraction | ridge_r2 | pca_k90 | r2_after_projection | token_acc_before | token_acc_after |
+|---|---:|---:|---:|---:|---:|---:|
+| pre | 0 | 0.000002 | 0.000 | 0.00 | 0.000 | 1.000 | 1.000 |
+| pre | 1 | 0.018 | 0.458 | 4.63 | -0.001 | 0.982 | 1.000 |
+| pre | 7 | 0.064 | 0.804 | 11.50 | 0.028 | 0.948 | 0.997 |
+| pre | 14 | 0.135 | 0.817 | 23.13 | 0.022 | 0.843 | 0.974 |
+| pre | 21 | 0.099 | 0.816 | 11.13 | 0.007 | 0.935 | 0.978 |
+| pre | 27 | 0.054 | 0.742 | 24.13 | -0.001 | 0.895 | 0.949 |
+| post | 0 | 0.244 | 0.868 | 29.13 | 0.013 | 0.934 | 1.000 |
+| post | 14 | 0.498 | 0.902 | 30.63 | 0.003 | 0.559 | 0.896 |
+| post | 27 | 0.507 | 0.922 | 32.88 | 0.050 | 0.591 | 0.883 |
+
+Interpretation: Qwen3 passes the architectural contrast cleanly (`k_pre` layer 0 zero, `k_post` layer 0 one), and then develops strong pre-RoPE position decodability at depth. Family A slot-level `k_pre` ridge R² rises from zero to ~0.91 at layer 1 and ~0.95–0.97 through most later layers, while the pre-RoPE `position_fraction` remains much lower than post-RoPE (`~0.086` vs `~0.428` overall for slot Family A). This confirms P1.5.c for a second RoPE model: stamped-position models also compute/leak position internally.
+
+P1.5.e is **supported at its pre-registered comparison**, which is the **layer-0** stamped fraction (addendum §0 references the position-fraction-@-L0 table: qwen3 `k_post` 0.193 < pythia 0.385 < gpt2 0.649). At L0 this run gives Qwen3 Family A slot-level `k_post` position fraction `0.242` vs Pythia `0.381` — the same ordering (qwen3 weakest), as θ=1e6 predicts. Pythia's L0 reproduces the §0 value almost exactly (0.381 vs 0.385); Qwen3's is a little higher than the M1 reanalysis (0.242 vs 0.193) but the ordering holds. The earlier read that P1.5.e "fails" used the **depth-averaged** fraction (qwen3 ~0.428 > pythia ~0.252), which is the wrong statistic here — it is confounded by the depth trend below.
+
+**New, unpredicted finding — post-RoPE position fraction diverges by architecture with depth.** Qwen3 `k_post` position fraction *rises* from L0 (`0.24`) to a `~0.45–0.51` plateau by mid-stack (`0.507` at L27), while ridge R² stays ≈1.0 (position always perfectly decodable). Pythia `k_post` instead *falls* with depth (`0.38 → 0.07`), and GPT-2 also falls (`0.72 → 0.42`). So full RoPE (θ=1e6, all 128 dims) starts with the **weakest** stamp yet **accumulates** position into the cached key with depth, whereas partial-RoPE (pythia, θ=1e4) and learned-absolute (gpt2) **dilute** it. This is why the depth-averaged fraction reverses the L0 ordering — it is not evidence against P1.5.e but a distinct property of how full-RoPE propagates position through depth, and is a headline candidate for the cross-model M1.5 summary. Mechanism (QK-norm + θ=1e6 vs partial RoPE) is untested here and should be probed before a paper claim.
+
+Dimensionality/projector nuance: at the slot level, Qwen3 `k_pre` position is still fairly low-dimensional in most depths (about 1–4 PCs at selected Family A layers), broadly matching the Pythia/NoPE slot-level caveat. The aggregate rows are much higher-dimensional (Family A `k_pre` selected depths reach ~11–24 PCs), which reproduces the aggregate-vs-slot trap: aggregate projectors are a different and stricter operator than per-slot projectors. Projection usually removes most aggregate Family A position (`r2_after_projection` near 0), while slot-level early-layer `k_pre` leaves residual R² (e.g. layer 1 ~0.208), so Π fidelity remains scope-dependent.
+
+Artifacts copied locally:
+
+- `outputs/k_address_space_m15_v11_qwen3_cuda_20260722/`
+- `outputs/k_address_space_m15_v11_qwen3_cuda_20260722.tar.gz`
+- `outputs/SHA256SUMS_k_address_space_m15_v11_qwen3_cuda_20260722`
+
+## 2026-07-22 — K-address-space M1.5 v1.1 Pythia-410m CUDA run prep
+
+### Question / Hypothesis
+
+Does Pythia-410m expose both stamped RoPE position (`k_post`, including layer 0) and computed/leaked positional information in pre-RoPE keys (`k_pre`, especially at depth) under the corrected M1.5 v1.1 repeated-segment probe? The expected M1.5 signal is that `k_pre` at layer 0 satisfies the architectural-zero gate (G1), `k_post` at layer 0 satisfies the architectural-one gate (G2), and deeper `k_pre` rows adjudicate whether RoPE models compute position internally rather than merely carrying the architectural stamp.
+
+### Experiment Design Summary
+
+Run `kaddress.scripts.position_content` for model tag `pythia410` (`EleutherAI/pythia-410m`) on a RunPod CUDA GPU using all families A/B/C. Because Pythia has `d_head=64`, the effective minimum repetitions are `R_min=max(120, 2*d_head)=128`; its trained context budget supports segment lengths `L=4,7,12`, so this run includes the L=12 cell in addition to the mandatory cross-model L=7 and the second-length L=4 control. The run uses the repaired v1.1 gates and manifest semantics from ADDENDUM §3.
+
+### Planned Procedure
+
+Prepare and commit this pre-run notebook entry, bring up a RunPod GPU using the project template/shared network-volume cache, verify CUDA before the full run, then execute:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-run -m kaddress.scripts.position_content \
+  --model pythia410 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --output-dir outputs/k_address_space_m15_v11_pythia410_cuda_20260722
+```
+
+Package the output directory as `k_address_space_m15_v11_pythia410_cuda_20260722.tar.gz`, publish it with a `SHA256SUMS` file to GitHub Release `run/k-address-space-m15-v11-pythia410/20260722`, verify the uploaded assets, then complete this entry with run results and analysis.
+
+### Expected Signal / Interpretation Plan
+
+The run is valid only if it used CUDA, emitted non-empty measurement and gate CSVs, `gate_g1_pass=PASS` for applicable layer-0 `k_pre` rows, `gate_g2_pass=PASS` for applicable layer-0 `k_post` rows, `gates_evaluated` matches the gates CSV, and the shuffled-null gate remains acceptable. Interpretation focuses on cross-depth `k_pre` aggregate/slot R² and position fraction: a rise from layer-0 zero would support P1.5.c that RoPE models compute or leak position internally, while `k_post` provides the stamped-position comparison.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.5.md` v1.1
+- Code branch: `docs/f8-caveats-m15-report-absorb`
+- Pre-run commit: `947ed85` (`Prepare Pythia M1.5 CUDA run`)
+- Corrected run commit: `99257e9` (`Speed up M1.5 CUDA ridge analysis`)
+- Planned output location: `outputs/k_address_space_m15_v11_pythia410_cuda_20260722`
+- Published output: https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-pythia410/20260722
+- Published assets:
+  - `k_address_space_m15_v11_pythia410_cuda_20260722.tar.gz`
+  - `SHA256SUMS_k_address_space_m15_v11_pythia410_cuda_20260722`
+- SHA256: `6d23a8b0cf89dc84638ea80a55d35de87fa40552febd25989a7d295d8658a324  k_address_space_m15_v11_pythia410_cuda_20260722.tar.gz`
+- Random seed: default script seed `0`
+- Environment: RunPod pod `33cxmm98cdwse2`, NVIDIA L4, Python 3.12.3, Torch 2.8.0+cu128, CUDA 12.8, `cuda_available=true`, requested device `cuda`
+- Model: `pythia410` (`EleutherAI/pythia-410m`, default Hugging Face revision)
+- Preparation checklist: `temp/repro-checklists/20260722-k-address-space-m15-v11-pythia410-cuda.md`
+
+### Results
+
+First full CUDA attempt was aborted by operator request because it was CPU-bound and opaque.
+
+Attempted command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-run -m kaddress.scripts.position_content \
+  --model pythia410 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --output-dir outputs/k_address_space_m15_v11_pythia410_cuda_20260722
+```
+
+Failure evidence: remote PID `1789` on RunPod pod `j2001wsvr7vimt` was stopped at `20260722T084434Z` after roughly 90 minutes without completion/progress visibility beyond coarse stimulus-level output. No completed result is published from this attempt.
+
+Diagnosis: `position_content.py` captured Pythia keys on CUDA, but the dominant M1.5 analysis immediately converted every slot/head/layer matrix with `.cpu().numpy()` and then ran NumPy ridge regression, SVD/PCA, FFT, and permutation null loops on CPU. This invalidated the CUDA-run assumption even though model extraction used GPU.
+
+Redo plan: patch the hot per-slot analysis path to use `torch` operations on CUDA tensors, add frequent progress lines (`--progress-every`), commit the fix, run a CUDA smoke test, then restart the full Pythia run from the new committed state.
+
+Second CUDA attempt after the first GPU fix was also stopped by operator request at `20260722T100224Z`: remote PID `1128` on RunPod pod `33cxmm98cdwse2` had run for `46:39` and reached only `progress units=12000 rate=4.31/s`, extrapolating beyond the intended budget. Diagnosis: the code no longer ran the main regression through NumPy, but the torch path still launched many tiny ridge/null solves and scalar synchronizations per slot/head/layer unit. Corrective action: batch ridge cross-validation across alphas and shuffled null targets on the device, defer CPU copies until after per-unit CUDA analysis, then run a bounded CUDA smoke before restarting the full run.
+
+Corrected CUDA rerun completed on pod `33cxmm98cdwse2` after the batching fix. Command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space python -m kaddress.scripts.position_content \
+  --model pythia410 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --progress-every 1000 \
+  --output-dir outputs/k_address_space_m15_v11_pythia410_cuda_20260722
+```
+
+Run evidence: the log reports `starting M1.5 analysis model=pythia410 device=cuda stimuli=26 families=A,B,C`, progress rising to `progress units=144000 rate=56.22/s`, `processed C00 family=C seq=1955 slots=1 units=144384`, and writes all expected output files. The manifest records `summary_rows=146688`, `gate_g1_pass=PASS`, `gate_g2_pass=PASS`, `shuffle_null_ok=true`, and `gates_evaluated={"G1_architectural_zero": 3008, "G2_architectural_one": 3008}`. The gates CSV has exactly 6,016 rows matching those manifest counts; all G1 and G2 rows pass. G2's perturbation check can fail: perturbed ridge R² ranges from about `-0.1636` to `0.0209`, far below the 0.9 threshold.
+
+Published output: https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m15-v11-pythia410/20260722. The uploaded checksum asset was downloaded and compared byte-for-byte with the local `SHA256SUMS` file.
+
+### Analysis
+
+The validity gates behave as intended for a RoPE model. Layer-0 `k_pre` has architectural zero position signal (`ridge_r2=0`, `position_fraction=0`) and all 3,008 G1 rows pass. Layer-0 `k_post` has the expected stamped RoPE position signal: G2 rows have ridge R² essentially 1.0, and the perturbation destroys the signal.
+
+The substantive result is mixed but informative. In `k_post`, position is almost perfectly linearly decodable at every layer (`ridge_r2` mean about `0.9981` overall), as expected from stamped rotary position. The `position_fraction` diagnostic declines with depth: from about `0.3824` at layer 0 to `0.0696` at layer 23, meaning the position-decodable direction remains present but occupies a smaller share of variance in later post-RoPE keys.
+
+For `k_pre`, layer 0 is exactly zero, but deeper layers show high position decodability by ridge R²: layer means jump to `0.9255` at layer 1, range around `0.82–0.99` through the stack, and end around `0.9610` at layer 23. However, the `position_fraction` remains much smaller than `k_post`: overall about `0.0357`, peaking by layer mean near `0.0829` at layer 8 and then falling below `0.02` in the last layers. This supports the hypothesis that Pythia's pre-RoPE key stream contains computed/leaked positional information after layer 0, but it is a low-variance component rather than the dominant geometry of the key vectors.
+
+Family-level aggregates from the run log are consistent with that interpretation: `pre` position fraction is about `0.0329` for Family A, `0.0976` for Family B, and `0.1740` for Family C, while `post` remains much larger (`0.2519`, `0.2663`, `0.3654`) and ridge R² remains near 1.
+
+The pre-RoPE signal is real, not a small-sample fluke: null-corrected `r2_minus_null_mean` for `k_pre` is about `+0.95` to `+1.02` at every depth L1–L23, with the shuffled-null mean sitting at about `−0.03`. (Note: the `permutation_p_value` column is quantised at `0.1667` throughout — too few permutations to ever cross significance — so `r2_minus_null` and the shuffled null, not the p-value, carry the evidence. Worth increasing the permutation count before any paper-facing significance claim.)
+
+**Added post-writeup: dimensionality and projector, computed at slot level.** These bear on the addendum's P1.5.d/P1.5.f and on the Π deliverable for an M1 rerun. **Metric caveat first:** the striking NoPE figures on record — aggregate-projector "~13 PCs to 90% at L15–23" (P1.5.d) and "L23 ridge R² 0.907 → 0.005 after projection" (P1.5.f) — are **aggregate** statistics. Recomputed **like-for-like at the slot level**, Pythia and NoPE behave similarly and those dramatic numbers do not appear.
+
+Pythia `k_pre` slot-level depth profile (all families):
+
+| layer | ridge R² | position fraction | PCA k90 | R² after PC projection |
+|---:|---:|---:|---:|---:|
+| 0 | 0.000 | 0.000 | 0.00 | 0.000 |
+| 1 | 0.926 | 0.019 | 1.88 | +0.204 |
+| 4 | 0.910 | 0.044 | 1.85 | +0.271 |
+| 8 | 0.990 | 0.083 | 2.67 | −0.006 |
+| 12 | 0.985 | 0.043 | 3.25 | −0.001 |
+| 15 | 0.985 | 0.034 | 3.24 | −0.002 |
+| 18 | 0.982 | 0.019 | 2.74 | +0.037 |
+| 23 | 0.961 | 0.010 | 2.58 | +0.076 |
+
+- **Dimensionality (P1.5.d).** At slot level Pythia `k_pre` position stays low-dimensional throughout (~2–3 PCs to 90%), peaking mid-stack (L12–15) and *not* expanding — if anything contracting — in the top layers. NoPE `k_pre` slot-level is similarly compact (~1 PC through L12, rising only to ~2.6 by L18–23). Neither shows a ~13-component blow-up; that figure is aggregate-only. So P1.5.d ("computed position is higher-dimensional") is **not supported at the slot level** on either model, and the "two-regime split at ~L15" flagged as an M1.6 target is an aggregate-projector artifact rather than a per-slot geometric fact.
+- **Projector Π fidelity (P1.5.f).** The per-slot position-removal projector is only partially effective at early/mid layers for **both** models — Pythia leaves R² `+0.20 / +0.27` at L1/L4; NoPE leaves `+0.33 / +0.21` at L4/L8 — and removes most position by the upper layers (Pythia L23 `0.96 → +0.076`; NoPE L23 `0.97 → +0.028`). Π's early-layer imperfection is therefore general, not Pythia-specific, and it is cleanest in the middle depths where M1 address heads are expected. The clean "0.91 → 0.005" on record is the aggregate projector (pooled across slots/L), a stronger and different operator than the per-slot basis; an M1 rerun that relies on Π should specify which of the two it uses.
+
+### Conclusion / Next Step
+
+The Pythia-410m M1.5 v1.1 CUDA run is complete and published. The result validates the repaired M1.5 gates on a RoPE model and gives positive evidence for nonzero, internally present pre-RoPE positional information beyond layer 0, but with small variance share compared with the explicit post-RoPE positional stamp. This is the first **stamped-position** model to show it: Pythia already carries RoPE position in `k_post`, yet still computes/leaks decodable position into `k_pre` at depth — so P1.5.c is affirmative here, extending the NoPE result beyond the no-positional-encoding case. The decodability-vs-variance dissociation (high `k_pre` R², low position fraction) and the depth-wise dilution of the stamped `k_post` fraction (mirroring GPT-2's learned-absolute pattern) also replicate.
+
+Two adjudications tighten on re-analysis: P1.5.d is **not supported at the slot level** (position stays ~2–3 dimensional; the ~13-PC expansion is aggregate-only), and P1.5.f's projector is only middling per-slot at early/late layers on both models. Next: (a) run qwen3 for P1.5.e (stamped fraction expected weaker than Pythia, θ=1e6 vs 1e4); (b) build the cross-model M1.5 summary over NoPE/GPT-2/Pythia (+qwen3) using slot-level metrics consistently; (c) before any paper-facing significance claim, raise the permutation count (currently p-value floored at 0.167) and decide whether the Π deliverable is the aggregate or per-slot projector.
+
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 gatefix CPU rerun prep
 
 ### Question / Hypothesis
@@ -304,6 +532,16 @@ The v1.1 NoPE CPU rerun is valid and supersedes the first M1.5 NoPE run for corr
 
 ## 2026-07-21 — K-address-space M1.5 NoPE-GPT-Small position-content run prep
 
+> **Absorbed report + superseded.** This is the **first (pre-v1.1)** NoPE M1.5 run. It is
+> **superseded by the v1.1 rerun** above (2026-07-21, "M1.5 v1.1 NoPE-GPT-Small CPU rerun
+> prep"), which adds the L=4/L=7 length sweep and a non-empty Family B. The standalone
+> `REPORT-M1.5.md` (formerly at the experiment root) is folded in here — its verdict:
+> *NoPE-GPT-Small has an architectural-zero key at layer 0, then develops strong decodable
+> position in `k_pre` with depth under repeated-token Family A stimuli.* Its gates/caveats
+> (G1 pass at ~1e-6; `shuffle_null_ok=false` at slot level but clean aggregate nulls;
+> Family B empty; Family C stronger but confounded) are recorded in the Results/Analysis
+> below. For a durable summary, prefer the v1.1 entry.
+
 ### Question / Hypothesis
 
 Does `andrewdalpino/NoPE-GPT-Small-Base` compute positional information into attention keys at depth when token content is held constant by repeated-segment stimuli? The primary prediction is that layer-0 `k_pre` is an architectural zero, while deeper layers develop measurable position fraction, ridge decodability, and a position subspace that may be difficult to remove without harming token identity.
@@ -407,6 +645,10 @@ This selected NoPE M1.5 run validates the depth-resolved key-level computed-posi
 
 ## 2026-07-20 — K-address-space M1 NoPE-GPT-Small full CUDA run prep
 
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below is valid; the address-space *conclusion* is not.
+
 ### Question / Hypothesis
 
 Does `andrewdalpino/NoPE-GPT-Small-Base`, a true NoPE model with no positional encoding path, show M1 address-purity heads when keys are measured directly from attention `qkv_proj` output?
@@ -506,13 +748,17 @@ Top same-type AUC head: layer 0 head 14, same-type AUC `0.6278`, position-matche
 
 NoPE-GPT-Small-Base shows no M1 address heads under the pre-registered threshold (AUC > 0.9 against both controls). Its best same-type AUC is 0.6278 and best position-matched AUC is 0.5691, far below threshold. Diff-surface same-referent purity is also weak (mean 0.3439, max 0.4956), so this NoPE endpoint does not reveal semantic address clustering in the implemented Track A/M1 slice.
 
-Across the implemented quartet M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B, and NoPE-GPT-Small-Base), the pre-registered small-model sweep finds zero address heads by the strict threshold. Because the NoPE run uses no positional encoding path, the negative result is not explained by RoPE namespace distortion; it points instead toward this M1 signal being absent or too weak at these small model scales and synthetic Track A conditions.
+Across the implemented quartet M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B, and NoPE-GPT-Small-Base), the pre-registered small-model sweep returns zero address heads by the strict threshold. **This was originally read as a possible small-scale/synthetic-corpus limit; that reading is withdrawn under F8** — the corpus has no valid trials, so the null is uninformative about scale or about the models, in the NoPE run and all three others.
 
 ### Conclusion / Next Step
 
-This is a valid CUDA extraction of NoPE-GPT-Small-Base Track A / M1 in direct `k_pre` coordinates. It completes the planned quartet M1 sweep with no address heads at these model scales. The next durable step is a cross-model comparison/report over the four published CSVs, followed by deciding whether to stop the line at small scale or repeat M1 on a larger model where semantic addressing may be more plausible.
+This is a valid CUDA extraction of NoPE-GPT-Small-Base Track A / M1 in direct `k_pre` coordinates. It completes the planned quartet M1 sweep with no address heads. **Caveat (F8): the null reflects an invalid corpus, not the model or scale** — the address-space question is unadjudicated pending corpus v3, which is deferred behind M1.6.
 
 ## 2026-07-20 — K-address-space M1 Qwen3 full CUDA run prep
+
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below is valid; the address-space *conclusion* is not.
 
 ### Question / Hypothesis
 
@@ -615,9 +861,14 @@ Across the implemented trio M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B), th
 
 ### Conclusion / Next Step
 
-This is a valid CUDA extraction of Qwen3-0.6B Track A / M1 for both Qwen3 address coordinates (`k_pre`) and cached RoPE coordinates (`k_post`). It completes the implemented trio M1 sweep with no address heads at these model scales. Next analysis should compare the three published CSVs directly and decide whether to stop this line at small scale or repeat M1 on a larger model where semantic addressing is more plausible.
+This is a valid CUDA extraction of Qwen3-0.6B Track A / M1 for both Qwen3 address coordinates (`k_pre`) and cached RoPE coordinates (`k_post`). It completes the implemented trio M1 sweep with no address heads. **Caveat (F8): the null reflects an invalid corpus, not the model or scale** — the address-space question is unadjudicated pending corpus v3, which is deferred behind M1.6.
 
 ## 2026-07-18 — K-address-space M1 Pythia full CUDA run
+
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below is valid; the address-space *conclusion* is not. The "namespace
+> direction" pre/post AUC deltas noted below are likewise not interpretable on this corpus.
 
 ### Question / Hypothesis
 
@@ -699,7 +950,7 @@ Modest support for the namespace hypothesis direction: k_pre purity > k_post pur
 
 ### Conclusion / Next Step
 
-This run is a valid CUDA extraction of Pythia-410m Track A / M1 for both k_pre and k_post. It does not show address heads by the pre-registered threshold.
+This run is a valid CUDA extraction of Pythia-410m Track A / M1 for both k_pre and k_post. It does not show address heads by the pre-registered threshold. **Caveat (F8): the null reflects an invalid corpus, not the model** — the address-space question is unadjudicated pending corpus v3.
 
 The trio census now has two of three models (GPT-2, Pythia-410m); Qwen3-0.6B remains for the full spec sweep.
 
@@ -839,6 +1090,10 @@ No scientific result is available from the interrupted full run. The failure is 
 Conclude this attempt as failed. Patch the M1 implementation so captured key tensors remain on the requested device and the cosine/AUC summarization can run on CUDA, then create a new pre-run entry and rerun only after GPU-use verification.
 
 ## 2026-07-17 — K-address-space M1 GPT-2 full CUDA rerun after GPU patch
+
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below (GPU-verified) is valid; the address-space *conclusion* is not.
 
 ### Question / Hypothesis
 

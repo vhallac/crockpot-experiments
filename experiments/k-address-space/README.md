@@ -4,6 +4,12 @@
 
 This pre-registered experiment tests whether cached key vectors behave like content addresses for referents: same-referent mentions clustering in K-space, RoPE splitting addresses by position as a namespace mechanism, and value/output norms acting as version-dominance signals during reads.
 
+> **M1 status — retracted (F8).** All published M1 address-purity results (GPT-2, Pythia,
+> Qwen3, NoPE) are instrument artifacts: the Track A corpus contains zero valid trials, so
+> the nulls say nothing about the models or scale. The M1 rerun is deferred behind M1.6.
+> See "Known corpus defect F8" at the top of [`NOTEBOOK.md`](NOTEBOOK.md). M1.5 and M1.6 are
+> unaffected (they use repeated-segment stimuli).
+
 ## Expected signal
 
 The primary predictions are:
