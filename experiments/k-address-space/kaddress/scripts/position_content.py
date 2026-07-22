@@ -1071,6 +1071,13 @@ def run(args: argparse.Namespace) -> None:
                                 f"stimulus={stim.stimulus_id} family={stim.family} variant={variant} layer={layer} head={head} slot={slot}",
                                 flush=True,
                             )
+        if device.type == "cuda":
+            # Each stimulus materializes full-layer key tensors. Drop the final
+            # references and release cached CUDA blocks before the next,
+            # potentially longer, stimulus so a late Family C extraction cannot
+            # inherit fragmentation from the many A/B passes.
+            del variants
+            torch.cuda.empty_cache()
         print(f"processed {stim.stimulus_id} family={stim.family} seq={len(stim.input_ids)} slots={len(stim.slots)} units={progress_done}", flush=True)
 
     print(f"building aggregate rows count={len(aggregates)}", flush=True)
