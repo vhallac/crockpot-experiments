@@ -319,7 +319,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dead-keys-census"
+name = "crockpot-experiments"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

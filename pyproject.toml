@@ -1,7 +1,7 @@
 [project]
-name = "dead-keys-census"
+name = "crockpot-experiments"
 version = "0.1.0"
-description = "Phase 1 weights-only dead-key census"
+description = "Transformer mechanistic experiment collection"
 requires-python = ">=3.10,<3.12"
 dependencies = [
   "torch==2.9.1+rocm6.3",

@@ -43,7 +43,7 @@ pods and new experiments reuse them without re-downloading.
 
 | Resource | Network-volume path | Notes |
 |----------|-------------------|-------|
-| CUDA venv | `$DEAD_KEYS_CUDA_VENV` (default: `<cache-root>/venvs/cuda`) | Single shared venv for all RunPod CUDA experiments; installed once per requirements change |
+| CUDA venv | `/workspace/venv` (`$DEAD_KEYS_CUDA_VENV`) | Canonical shared venv for all RunPod CUDA experiments; installed once per requirements change |
 | HuggingFace models | `$HF_HOME` (default: `<cache-root>/huggingface`) | Downloaded automatically by transformers on first use |
 | HuggingFace datasets | `$HF_HOME` | Downloaded automatically by datasets on first use |
 | Torch extensions | `$TORCH_HOME` (default: `<cache-root>/torch`) | Compiled Triton kernels etc. |
@@ -58,18 +58,24 @@ mounted at `/workspace` but the cache environment variables are not yet set.
 Run the setup script once:
 
 ```bash
-cd /workspace/crockpot-experiments  # or /workspace/dead-keys-census (legacy)
+cd /workspace/crockpot-experiments
 ./scripts/runpod-persistent-cache-setup
-. ~/.dead-keys-census-runpod-env
+. ~/.crockpot-experiments-runpod-env
 ```
 
-After this, `./scripts/cuda-run` automatically uses the shared network-volume
-venv. The first `cuda-run` invocation in a new pod installs packages into that
-venv if needed; subsequent invocations (and invocations from other experiments)
-skip the install step because the venv already exists. RunPod CUDA dependency
-state is the shared venv, not the uv wheel cache; if `$UV_CACHE_DIR` grows by
-multiple GB after dependency installation, treat it as purgeable installer
-scratch unless a rebuild is actively in progress.
+After this, set or verify:
+
+```bash
+export DEAD_KEYS_CUDA_VENV=/workspace/venv
+```
+
+`/workspace/venv` is the canonical shared network-volume venv. The first
+`cuda-run` invocation in a new pod installs packages into that venv if needed;
+subsequent invocations (and invocations from other experiments) skip the install
+step because the venv already exists. RunPod CUDA dependency state is the shared
+venv, not the uv wheel cache; if `$UV_CACHE_DIR` grows by multiple GB after
+dependency installation, treat it as purgeable installer scratch unless a
+rebuild is actively in progress.
 
 ### New experiments reuse the shared venv
 
@@ -152,6 +158,19 @@ test -d outputs/<run-id>
 find outputs/<run-id> -maxdepth 1 -type f | sort
 ```
 
+## Project scripts
+
+Scripts under `scripts/` are the preferred operational entry points:
+
+- `scripts/nix-cpu-run` — local NixOS CPU-only Python runner with torch, transformers, datasets, pandas, matplotlib, pyarrow, and accelerate. Use for weights-only/local smokes when the ROCm/uv environment would download large wheels or is unnecessary.
+- `scripts/rocm-run` — local ROCm wrapper for the AMD Radeon 890M. It exports `HSA_OVERRIDE_GFX_VERSION=11.0.0` and `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`, then executes `uv run "$@"`.
+- `scripts/rocm-python` — convenience wrapper that invokes `scripts/rocm-run python "$@"`.
+- `scripts/runpod-persistent-cache-setup` — run inside a RunPod pod after `cd /workspace/crockpot-experiments`. It creates/updates `/workspace/crockpot-experiments-cache`, writes `~/.crockpot-experiments-runpod-env`, points HuggingFace/torch/pip/uv/Triton caches at the network volume, and sets `DEAD_KEYS_CUDA_VENV=/workspace/venv`.
+- `scripts/cuda-run` — RunPod CUDA Python runner. It sources `~/.crockpot-experiments-runpod-env`, creates `/workspace/venv` if missing, installs `requirements-runpod-cuda.txt` with `uv pip` unless `DEAD_KEYS_CUDA_SKIP_INSTALL=1`, then execs the venv Python with the supplied arguments.
+- `scripts/cuda-python` — convenience wrapper around `scripts/cuda-run` for Python commands/modules.
+- `scripts/runpod-bring-up` — local helper to create a RunPod pod from project template id `1zpm2v05rn`, attach network volume `sndrrdckku` at `/workspace`, wait for SSH readiness, and print JSON metadata. Use for GPU experiment pods; for CPU-only cleanup pods, use the RunPod REST CPU `computeType: "CPU"` path documented in the RunPod API docs.
+- `scripts/watch-experiment-run` — remote/local process monitor for long runs. It polls a required `--pattern`, prints matching process CPU/memory plus system CPU/memory/GPU utilization every interval, and exits when no matching process remains or `--timeout` is reached.
+
 ## RunPod NVIDIA/CUDA environment
 
 Global skills `~/.pi/agent/skills/runpod-usage` (concepts, methodology, GPU selection, storage) and `~/.pi/agent/skills/runpodctl` (CLI for pod create/list/stop/delete, SSH, templates) are the procedural source of truth for all RunPod operations. Do not replicate procedural instructions here.
@@ -188,10 +207,9 @@ Recovered failure modes to avoid:
   to replace a binary under `/nix/store` and is not a useful recovery step.
 - If a pod is `RUNNING` but `runtime.ports` remains null after the two-minute
   readiness budget, stop/remove it instead of continuing to poll. The
-  `ghcr.io/vhallac/dead-keys-census-runpod:latest` image was observed in this
-  state on 2026-07-20; for SSH-driven work, fall back to the known-good
-  `dead-keys-census-cuda` template / official RunPod PyTorch image with
-  `startSsh: true`.
+  the old project-specific GHCR image was observed in this state on 2026-07-20;
+  for SSH-driven work, fall back to the known-good project template / official
+  RunPod PyTorch image with `startSsh: true`.
 - If `runpodctl exec` says `Waiting for Pod to come online...` against a pod
   with no runtime ports, stop the attempt within the same two-minute readiness
   budget.
@@ -211,31 +229,34 @@ Non-secret RunPod metadata discovered for this project:
 - Current desired status for idle project pods: keep `EXITED`
 - Local RunPod credential env var: `RUNPOD_API_KEY` (do not print or commit value)
 - In-pod GitHub credential env var: `RUNPOD_SECRET_GITHUB_TOKEN` (do not print or commit value)
-- Reusable private RunPod template: `dead-keys-census-cuda` (id `1zpm2v05rn`)
+- Reusable private RunPod template: id `1zpm2v05rn` (legacy name in RunPod may still be `dead-keys-census-cuda` until manually renamed)
 - When creating or refreshing that template (see `~/.pi/agent/skills/runpodctl` for template commands), set template `env.PUBLIC_KEY` to the currently active local SSH public key: `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC3+THEulpHy8+xqtiB0GEbsZM9GGrHEKmRTNrcqOAfx vedat@cowork.thinkerer.net` (`~/.ssh/id_ed25519.pub`, fingerprint `SHA256:Ln1JafG0riXUGmk8Dj85yxP7HgqoE49hOEtqYOIBrRI`).
 
 Ad-hoc replacement pod preferences when the latest pod is unavailable:
 
 - GPU: `RTX A5000` or `L4`
 - CPU: at most 6 cores
-- Container image: `ghcr.io/vhallac/dead-keys-census-runpod:latest` (public GHCR image for this project)
+- Container image for future publishes: `ghcr.io/vhallac/crockpot-experiments-runpod:latest`
 - RAM: around 60 GB
 - Disk: around 30 GB
 - Prefer the same datacenter / compatible GPU when possible so the existing network volume is available.
 - Attach the network volume at pod creation/deployment time; do not expect to attach one later to an existing pod.
 
-Project paths and cache parameters for RunPod remain legacy-named until the repo/image rename is deliberately performed:
+Current project paths and cache parameters for RunPod:
 
-- Repository path in pods: `/workspace/dead-keys-census`
-- Persistent cache root: `/workspace/dead-keys-census-cache`
+- Repository path in pods: `/workspace/crockpot-experiments`
+- Persistent cache root: `/workspace/crockpot-experiments-cache`
 - Setup script: `./scripts/runpod-persistent-cache-setup`
-- Cache env file: `~/.dead-keys-census-runpod-env`
+- Cache env file: `~/.crockpot-experiments-runpod-env`
 - CUDA wrappers: `scripts/cuda-run`, `scripts/cuda-python`
 - CUDA venv override: `DEAD_KEYS_CUDA_VENV=/path/to/venv`
-- Existing compatible CUDA venv observed on `dead-weight-migration-2`: `/venv-deadkeys`
-- To reuse that venv without reinstalling heavyweight wheels: `DEAD_KEYS_CUDA_VENV=/venv-deadkeys DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run ...`
+- Canonical shared CUDA venv on the network volume: `/workspace/venv`
+- Preserved old checkout after 2026-07-22 cleanup: `/workspace/crockpot-experiments-legacy`
+- Legacy compatible CUDA venv observed on `dead-weight-migration-2`: `/venv-deadkeys`
+- To reuse the network-volume venv without reinstalling heavyweight wheels: `DEAD_KEYS_CUDA_VENV=/workspace/venv DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run ...`
 - The shared CUDA venv on the network volume is the primary venv for all experiments; avoid creating per-experiment venvs.
-- A failed install into `/workspace/dead-keys-census-cache/uv` hit `Quota exceeded`; prefer the existing venv above unless intentionally rebuilding caches.
+- Empty or incomplete venvs previously found under the old cache root were purged on 2026-07-22.
+- Treat large uv/pip cache contents as installer scratch unless intentionally rebuilding caches.
 
 CUDA sanity check inside a RunPod host after following the RunPod skill:
 
