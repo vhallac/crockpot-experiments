@@ -490,47 +490,60 @@ def _analyse_matrix(x: np.ndarray, y: np.ndarray, token_ids: np.ndarray, *, seed
     }
 
 
-def _ridge_cv_r2_torch(x: torch.Tensor, y: torch.Tensor, *, folds: int, seed: int, alphas: torch.Tensor) -> float:
-    n = int(y.numel())
-    if n < folds + 2 or float(torch.var(y, unbiased=False).item()) <= 0:
-        return 0.0
+def _ridge_cv_r2_many_torch(x: torch.Tensor, y: torch.Tensor, *, folds: int, seed: int, alphas: torch.Tensor) -> torch.Tensor:
+    if y.ndim == 1:
+        y = y[:, None]
+    n = int(y.shape[0])
+    if n < folds + 2:
+        return torch.zeros((y.shape[1],), dtype=x.dtype, device=x.device)
     device = x.device
+    dtype = x.dtype
+    y = y.to(device=device, dtype=dtype)
+    alphas = alphas.to(device=device, dtype=dtype)
+    variances = torch.var(y, dim=0, unbiased=False)
+    valid = variances > 0
+    if not bool(valid.any().item()):
+        return torch.zeros((y.shape[1],), dtype=dtype, device=device)
+
     order = torch.as_tensor(np.random.default_rng(seed).permutation(n), dtype=torch.long, device=device)
-    best = -float("inf")
-    eye = torch.eye(x.shape[1], dtype=x.dtype, device=device)
-    for alpha in alphas.to(device=device, dtype=x.dtype):
-        scores: list[float] = []
-        for fold in range(folds):
-            val_mask = torch.zeros(n, dtype=torch.bool, device=device)
-            val_mask[order[fold::folds]] = True
-            tr = ~val_mask
-            x_tr = x[tr]
-            y_tr = y[tr]
-            x_val = x[val_mask]
-            y_val = y[val_mask]
-            xm = x_tr.mean(dim=0, keepdim=True)
-            ym = y_tr.mean()
-            xc = x_tr - xm
-            yc = y_tr - ym
-            xtx = xc.T @ xc
-            beta = torch.linalg.solve(xtx + alpha * eye, xc.T @ yc)
-            pred = (x_val - xm) @ beta + ym
-            denom = torch.sum((y_val - y_val.mean()) ** 2)
-            score = 0.0 if float(denom.item()) <= 0 else 1.0 - float((torch.sum((y_val - pred) ** 2) / denom).item())
-            scores.append(score)
-        best = max(best, float(np.mean(scores)))
-    return best
+    eye = torch.eye(x.shape[1], dtype=dtype, device=device)
+    fold_scores: list[torch.Tensor] = []
+    for fold in range(folds):
+        val_mask = torch.zeros(n, dtype=torch.bool, device=device)
+        val_mask[order[fold::folds]] = True
+        tr = ~val_mask
+        x_tr = x[tr]
+        y_tr = y[tr]
+        x_val = x[val_mask]
+        y_val = y[val_mask]
+        xm = x_tr.mean(dim=0, keepdim=True)
+        ym = y_tr.mean(dim=0, keepdim=True)
+        xc = x_tr - xm
+        yc = y_tr - ym
+        xtx = xc.T @ xc
+        rhs = xc.T @ yc
+        systems = xtx.unsqueeze(0) + alphas[:, None, None] * eye.unsqueeze(0)
+        beta = torch.linalg.solve(systems, rhs.expand(len(alphas), -1, -1))
+        pred = torch.einsum("nd,adm->nam", x_val - xm, beta) + ym
+        denom = torch.sum((y_val - y_val.mean(dim=0, keepdim=True)) ** 2, dim=0)
+        numer = torch.sum((y_val[:, None, :] - pred) ** 2, dim=0)
+        scores = torch.where(denom[None, :] > 0, 1.0 - numer / denom[None, :], torch.zeros_like(numer))
+        fold_scores.append(scores)
+    mean_scores = torch.stack(fold_scores).mean(dim=0)
+    best = mean_scores.max(dim=0).values
+    return torch.where(valid, best, torch.zeros_like(best))
+
+
+def _ridge_cv_r2_torch(x: torch.Tensor, y: torch.Tensor, *, folds: int, seed: int, alphas: torch.Tensor) -> float:
+    return float(_ridge_cv_r2_many_torch(x, y, folds=folds, seed=seed, alphas=alphas)[0].item())
 
 
 def _null_stats_torch(x: torch.Tensor, y: torch.Tensor, *, seed: int, alphas: torch.Tensor, permutations: int) -> tuple[float, float, float]:
     rng = np.random.default_rng(seed + 17)
-    vals = np.asarray(
-        [
-            _ridge_cv_r2_torch(x, y[torch.as_tensor(rng.permutation(int(y.numel())), dtype=torch.long, device=y.device)], folds=5, seed=seed + 1 + i, alphas=alphas)
-            for i in range(max(1, permutations))
-        ],
-        dtype=float,
-    )
+    perms = [torch.as_tensor(rng.permutation(int(y.numel())), dtype=torch.long, device=y.device) for _ in range(max(1, permutations))]
+    y_many = torch.stack([y[index] for index in perms], dim=1)
+    vals_t = _ridge_cv_r2_many_torch(x, y_many, folds=5, seed=seed + 1, alphas=alphas)
+    vals = vals_t.detach().cpu().numpy()
     return float(vals.mean()), float(np.quantile(vals, 0.99)), float(vals.max())
 
 
@@ -631,8 +644,14 @@ def _analyse_matrix_torch(x: torch.Tensor, y: torch.Tensor, token_ids: torch.Ten
             "basis": basis.cpu().numpy().astype(np.float32),
         }
     alphas = torch.logspace(-2, 4, 13, dtype=x.dtype, device=x.device)
-    r2 = _ridge_cv_r2_torch(x, y, folds=5, seed=seed, alphas=alphas)
-    null_mean, null_p99, null_max = _null_stats_torch(x, y, seed=seed, alphas=alphas, permutations=null_permutations)
+    rng = np.random.default_rng(seed + 17)
+    perm_count = max(1, null_permutations)
+    perm_indices = [torch.as_tensor(rng.permutation(int(y.numel())), dtype=torch.long, device=y.device) for _ in range(perm_count)]
+    y_many = torch.stack([y] + [y[index] for index in perm_indices], dim=1)
+    r2_values = _ridge_cv_r2_many_torch(x, y_many, folds=5, seed=seed, alphas=alphas).detach().cpu().numpy()
+    r2 = float(r2_values[0])
+    null_vals = r2_values[1:]
+    null_mean, null_p99, null_max = float(null_vals.mean()), float(np.quantile(null_vals, 0.99)), float(null_vals.max())
     k90, frac_resid_var, basis, _var = _pca_stats_torch(resid)
     pc1 = resid @ basis[0] if len(basis) else torch.zeros(len(y), dtype=x.dtype, device=x.device)
     dominant_bin = -1
@@ -955,12 +974,15 @@ def run(args: argparse.Namespace) -> None:
                         x_t = k_all[layer].index_select(0, pos_t)[:, head, :].detach().float()
                         y_t = torch.arange(len(positions), dtype=torch.float32, device=x_t.device)
                         token_ids_t = torch.full((len(positions),), stim.slot_token_ids[slot], dtype=torch.long, device=x_t.device)
-                        x = x_t.cpu().numpy()
-                        y = y_t.cpu().numpy()
-                        token_ids = token_ids_t.cpu().numpy()
                         if x_t.device.type == "cuda":
                             stats = _analyse_matrix_torch(x_t, y_t, token_ids_t, seed=args.seed + stim_i + layer * 1000 + head, variance_floor=args.variance_floor, null_permutations=args.null_permutations)
+                            x = x_t.detach().cpu().numpy()
+                            y = y_t.detach().cpu().numpy()
+                            token_ids = token_ids_t.detach().cpu().numpy()
                         else:
+                            x = x_t.cpu().numpy()
+                            y = y_t.cpu().numpy()
+                            token_ids = token_ids_t.cpu().numpy()
                             stats = _analyse_matrix(x, y, token_ids, seed=args.seed + stim_i + layer * 1000 + head, variance_floor=args.variance_floor, null_permutations=args.null_permutations)
                         basis = stats.pop("basis")
                         row = {

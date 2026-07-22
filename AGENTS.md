@@ -43,12 +43,13 @@ pods and new experiments reuse them without re-downloading.
 
 | Resource | Network-volume path | Notes |
 |----------|-------------------|-------|
-| CUDA uv venv | `$DEAD_KEYS_CUDA_VENV` (default: `<cache-root>/venvs/cuda`) | Single shared venv for all experiments; installed once per requirements change |
+| CUDA venv | `$DEAD_KEYS_CUDA_VENV` (default: `<cache-root>/venvs/cuda`) | Single shared venv for all RunPod CUDA experiments; installed once per requirements change |
 | HuggingFace models | `$HF_HOME` (default: `<cache-root>/huggingface`) | Downloaded automatically by transformers on first use |
 | HuggingFace datasets | `$HF_HOME` | Downloaded automatically by datasets on first use |
 | Torch extensions | `$TORCH_HOME` (default: `<cache-root>/torch`) | Compiled Triton kernels etc. |
 | Triton cache | `$TRITON_CACHE_DIR` (default: `<cache-root>/triton`) | Triton compiled kernels |
-| uv/pip caches | `$UV_CACHE_DIR`, `$PIP_CACHE_DIR` | Package wheels |
+| pip cache | `$PIP_CACHE_DIR` | Package wheels; may be purged after the shared CUDA venv is known-good if network-volume space is tight |
+| uv cache | `$UV_CACHE_DIR` | Scratch install cache only; do not preserve large CUDA wheels here unless intentionally rebuilding dependencies |
 
 ### Per-pod initialization
 
@@ -65,7 +66,10 @@ cd /workspace/crockpot-experiments  # or /workspace/dead-keys-census (legacy)
 After this, `./scripts/cuda-run` automatically uses the shared network-volume
 venv. The first `cuda-run` invocation in a new pod installs packages into that
 venv if needed; subsequent invocations (and invocations from other experiments)
-skip the install step because the venv already exists.
+skip the install step because the venv already exists. RunPod CUDA dependency
+state is the shared venv, not the uv wheel cache; if `$UV_CACHE_DIR` grows by
+multiple GB after dependency installation, treat it as purgeable installer
+scratch unless a rebuild is actively in progress.
 
 ### New experiments reuse the shared venv
 
@@ -86,7 +90,7 @@ DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m experiment.script --model gp
 
 ## Environment and package management
 
-Use `uv` / `uvx`; do not create ad-hoc `venv` directories and do not install packages as root.
+Use the repository wrappers; do not create ad-hoc `venv` directories and do not install packages as root. Local development may use `uv` / `uvx`, but RunPod CUDA runs should go through `./scripts/cuda-run` / `./scripts/cuda-python` so they reuse the single shared `$DEAD_KEYS_CUDA_VENV` instead of oscillating between separate environments.
 
 Typical local setup:
 
@@ -135,9 +139,11 @@ Use smoke-test limits before full-model runs:
 - `--limit-heads 1`
 - small samples/doc limits appropriate to the experiment
 
-Before a CUDA full run, review the code path that the command will execute and record the preflight finding in the checklist/notebook. The dominant computation must actually stay on GPU, not merely model loading or extraction. Audit hot loops for GPU-to-CPU escapes such as `.cpu()`, `.numpy()`, Pandas/DataFrame work, `np.linalg`/`np.fft`/`sklearn`, or Python loops immediately after CUDA tensor extraction. If such escapes are in the dominant path, either move that work to `torch` on the CUDA tensor, justify why it is not dominant, or do not start the paid CUDA run. The M1.5 Pythia aborted run on 2026-07-22 is the cautionary example: keys were captured on GPU, then every slot/head/layer matrix was converted with `.cpu().numpy()` and analysed by NumPy linear algebra/permutation loops, making the run CPU-bound.
+Before a CUDA full run, review the code path that the command will execute and record the preflight finding in the checklist/notebook. The dominant computation must actually stay on GPU, not merely model loading or extraction. Audit hot loops for GPU-to-CPU escapes such as `.cpu()`, `.numpy()`, `.tolist()`, `.item()`, `float(tensor)`, `int(tensor)`, `bool(tensor)`, Pandas/DataFrame work, `np.linalg`/`np.fft`/`sklearn`/`scipy`, or Python loops immediately after CUDA tensor extraction. If such escapes are in the dominant path, either move that work to batched `torch` on the CUDA tensor, justify why it is not dominant, or do not start the paid CUDA run. The M1.5 Pythia aborted run on 2026-07-22 is the cautionary example: keys were captured on GPU, then every slot/head/layer matrix was converted with `.cpu().numpy()` and analysed by NumPy linear algebra/permutation loops, making the run CPU-bound.
 
-Long or reproducible runs must publish progress while running. Prefer stdout progress lines with completed units, current stimulus/model slice, and rate/ETA. If stdout is reserved for machine-readable data, write the same information to a log file and record the log path in the notebook/checklist. Do not start an opaque long run where stopping at 10% and 99% would look the same to the operator.
+CUDA tripwire for paid/reproducible runs: after the static audit, run a bounded CUDA smoke whose command shape matches the full run closely enough to exercise the real hot path. Record progress rate, GPU utilization, CPU utilization, and an extrapolated full-run wall-clock estimate in the checklist/notebook. If extrapolated runtime exceeds the planned budget, if one CPU core is pegged while GPU utilization is low or bursty, or if progress is dominated by many tiny GPU kernels and scalar synchronizations, stop and fix/vectorize before launching the full run. Static `.item()`/`.cpu()` calls are allowed only when they are outside the hot path, after coarse batched work, or solely for final reporting/projector serialization.
+
+Long or reproducible runs must publish progress while running. Prefer stdout progress lines with completed units, current stimulus/model slice, rate, and ETA/budget comparison. If stdout is reserved for machine-readable data, write the same information to a log file and record the log path in the notebook/checklist. Do not start an opaque long run where stopping at 10% and 99% would look the same to the operator.
 
 Verify outputs externally before reporting success, for example:
 

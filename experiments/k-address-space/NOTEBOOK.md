@@ -95,6 +95,8 @@ Diagnosis: `position_content.py` captured Pythia keys on CUDA, but the dominant 
 
 Redo plan: patch the hot per-slot analysis path to use `torch` operations on CUDA tensors, add frequent progress lines (`--progress-every`), commit the fix, run a CUDA smoke test, then restart the full Pythia run from the new committed state.
 
+Second CUDA attempt after the first GPU fix was also stopped by operator request at `20260722T100224Z`: remote PID `1128` on RunPod pod `33cxmm98cdwse2` had run for `46:39` and reached only `progress units=12000 rate=4.31/s`, extrapolating beyond the intended budget. Diagnosis: the code no longer ran the main regression through NumPy, but the torch path still launched many tiny ridge/null solves and scalar synchronizations per slot/head/layer unit. Corrective action: batch ridge cross-validation across alphas and shuffled null targets on the device, defer CPU copies until after per-unit CUDA analysis, then run a bounded CUDA smoke before restarting the full run.
+
 ### Analysis
 
 _Pending corrected rerun output analysis._
