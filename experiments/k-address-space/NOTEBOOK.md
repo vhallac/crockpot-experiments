@@ -1,5 +1,38 @@
 # K-address-space lab notebook
 
+## Known corpus defect F8 — all M1 Track A results are retracted
+
+**Discovered:** 2026-07-21 (code review + data forensics), after the M1 runs below were
+published. **Scope:** every M1 address-purity result in this notebook — GPT-2, Pythia-410m,
+Qwen3-0.6B, and NoPE-GPT-Small — is an **instrument artifact, not a fact about the models.**
+
+**What F8 is.** The M1 address-purity test asks whether same-referent mentions cluster in
+K-space beyond lexical/positional controls. The discriminating (`diff-surface`) trials rest
+on shared-alias mentions (`"the person"`), but in the Track A generator the referent's
+disambiguating detail (place/value) is emitted **after** the alias token and rotates per
+round (`kaddress/corpus.py`, the `generate_track_a` update loop). So at the token position
+where the alias key is computed, the referent identity is **causally unavailable** — no
+correctly-built instrument could recover it. Same-surface trials, meanwhile, have
+referent = name and are lexically trivial. The net effect: **Track A contains zero valid
+address-purity trials.**
+
+**Consequences.**
+
+- The four M1 nulls below ("0 address heads", best AUCs ~0.5–0.68) measure a corpus with
+  nothing to measure. They do **not** support "semantic addressing is absent or too weak at
+  ≤0.6B scale", and their Conclusion sections must be read with that caveat.
+- The previously reported Pythia "whisper heads" (L2H4, L8H13) are **withdrawn** — they were
+  computed on poisoned rows and fall below chance on clean rows.
+- Fixing the M1 code defects alone (F2 row expansion, F3 proximity filter vs true
+  distance-matched control, F5 missing permutation null, F6 O(n²) AUC) is **not worth doing
+  in isolation** — they fix the instrument, not the corpus. Any M1 rerun requires a **corpus
+  v3** (disambiguators precede mentions) plus those code fixes as one package.
+
+**Status.** Corpus v3 is not yet designed/built; the M1 rerun is **deferred behind M1.6**
+(the hypothesis discriminator, `addendum-M1.6.md`), whose outcome decides whether a
+corpus-v3 M1 is worth building. **M1.5 and M1.6 do not depend on F8** — they use
+repeated-segment stimuli that need no referent labels.
+
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 gatefix CPU rerun prep
 
 ### Question / Hypothesis
@@ -304,6 +337,16 @@ The v1.1 NoPE CPU rerun is valid and supersedes the first M1.5 NoPE run for corr
 
 ## 2026-07-21 — K-address-space M1.5 NoPE-GPT-Small position-content run prep
 
+> **Absorbed report + superseded.** This is the **first (pre-v1.1)** NoPE M1.5 run. It is
+> **superseded by the v1.1 rerun** above (2026-07-21, "M1.5 v1.1 NoPE-GPT-Small CPU rerun
+> prep"), which adds the L=4/L=7 length sweep and a non-empty Family B. The standalone
+> `REPORT-M1.5.md` (formerly at the experiment root) is folded in here — its verdict:
+> *NoPE-GPT-Small has an architectural-zero key at layer 0, then develops strong decodable
+> position in `k_pre` with depth under repeated-token Family A stimuli.* Its gates/caveats
+> (G1 pass at ~1e-6; `shuffle_null_ok=false` at slot level but clean aggregate nulls;
+> Family B empty; Family C stronger but confounded) are recorded in the Results/Analysis
+> below. For a durable summary, prefer the v1.1 entry.
+
 ### Question / Hypothesis
 
 Does `andrewdalpino/NoPE-GPT-Small-Base` compute positional information into attention keys at depth when token content is held constant by repeated-segment stimuli? The primary prediction is that layer-0 `k_pre` is an architectural zero, while deeper layers develop measurable position fraction, ridge decodability, and a position subspace that may be difficult to remove without harming token identity.
@@ -407,6 +450,10 @@ This selected NoPE M1.5 run validates the depth-resolved key-level computed-posi
 
 ## 2026-07-20 — K-address-space M1 NoPE-GPT-Small full CUDA run prep
 
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below is valid; the address-space *conclusion* is not.
+
 ### Question / Hypothesis
 
 Does `andrewdalpino/NoPE-GPT-Small-Base`, a true NoPE model with no positional encoding path, show M1 address-purity heads when keys are measured directly from attention `qkv_proj` output?
@@ -506,13 +553,17 @@ Top same-type AUC head: layer 0 head 14, same-type AUC `0.6278`, position-matche
 
 NoPE-GPT-Small-Base shows no M1 address heads under the pre-registered threshold (AUC > 0.9 against both controls). Its best same-type AUC is 0.6278 and best position-matched AUC is 0.5691, far below threshold. Diff-surface same-referent purity is also weak (mean 0.3439, max 0.4956), so this NoPE endpoint does not reveal semantic address clustering in the implemented Track A/M1 slice.
 
-Across the implemented quartet M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B, and NoPE-GPT-Small-Base), the pre-registered small-model sweep finds zero address heads by the strict threshold. Because the NoPE run uses no positional encoding path, the negative result is not explained by RoPE namespace distortion; it points instead toward this M1 signal being absent or too weak at these small model scales and synthetic Track A conditions.
+Across the implemented quartet M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B, and NoPE-GPT-Small-Base), the pre-registered small-model sweep returns zero address heads by the strict threshold. **This was originally read as a possible small-scale/synthetic-corpus limit; that reading is withdrawn under F8** — the corpus has no valid trials, so the null is uninformative about scale or about the models, in the NoPE run and all three others.
 
 ### Conclusion / Next Step
 
-This is a valid CUDA extraction of NoPE-GPT-Small-Base Track A / M1 in direct `k_pre` coordinates. It completes the planned quartet M1 sweep with no address heads at these model scales. The next durable step is a cross-model comparison/report over the four published CSVs, followed by deciding whether to stop the line at small scale or repeat M1 on a larger model where semantic addressing may be more plausible.
+This is a valid CUDA extraction of NoPE-GPT-Small-Base Track A / M1 in direct `k_pre` coordinates. It completes the planned quartet M1 sweep with no address heads. **Caveat (F8): the null reflects an invalid corpus, not the model or scale** — the address-space question is unadjudicated pending corpus v3, which is deferred behind M1.6.
 
 ## 2026-07-20 — K-address-space M1 Qwen3 full CUDA run prep
+
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below is valid; the address-space *conclusion* is not.
 
 ### Question / Hypothesis
 
@@ -615,9 +666,14 @@ Across the implemented trio M1 Track A runs (GPT-2, Pythia-410m, Qwen3-0.6B), th
 
 ### Conclusion / Next Step
 
-This is a valid CUDA extraction of Qwen3-0.6B Track A / M1 for both Qwen3 address coordinates (`k_pre`) and cached RoPE coordinates (`k_post`). It completes the implemented trio M1 sweep with no address heads at these model scales. Next analysis should compare the three published CSVs directly and decide whether to stop this line at small scale or repeat M1 on a larger model where semantic addressing is more plausible.
+This is a valid CUDA extraction of Qwen3-0.6B Track A / M1 for both Qwen3 address coordinates (`k_pre`) and cached RoPE coordinates (`k_post`). It completes the implemented trio M1 sweep with no address heads. **Caveat (F8): the null reflects an invalid corpus, not the model or scale** — the address-space question is unadjudicated pending corpus v3, which is deferred behind M1.6.
 
 ## 2026-07-18 — K-address-space M1 Pythia full CUDA run
+
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below is valid; the address-space *conclusion* is not. The "namespace
+> direction" pre/post AUC deltas noted below are likewise not interpretable on this corpus.
 
 ### Question / Hypothesis
 
@@ -699,7 +755,7 @@ Modest support for the namespace hypothesis direction: k_pre purity > k_post pur
 
 ### Conclusion / Next Step
 
-This run is a valid CUDA extraction of Pythia-410m Track A / M1 for both k_pre and k_post. It does not show address heads by the pre-registered threshold.
+This run is a valid CUDA extraction of Pythia-410m Track A / M1 for both k_pre and k_post. It does not show address heads by the pre-registered threshold. **Caveat (F8): the null reflects an invalid corpus, not the model** — the address-space question is unadjudicated pending corpus v3.
 
 The trio census now has two of three models (GPT-2, Pythia-410m); Qwen3-0.6B remains for the full spec sweep.
 
@@ -839,6 +895,10 @@ No scientific result is available from the interrupted full run. The failure is 
 Conclude this attempt as failed. Patch the M1 implementation so captured key tensors remain on the requested device and the cosine/AUC summarization can run on CUDA, then create a new pre-run entry and rerun only after GPU-use verification.
 
 ## 2026-07-17 — K-address-space M1 GPT-2 full CUDA rerun after GPU patch
+
+> **RETRACTED (F8).** This run's null is a corpus artifact — Track A contains zero valid
+> address-purity trials. See "Known corpus defect F8" at the top of this notebook. The
+> extraction/execution below (GPU-verified) is valid; the address-space *conclusion* is not.
 
 ### Question / Hypothesis
 

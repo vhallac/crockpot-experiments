@@ -33,9 +33,17 @@ def generate_track_a(*, seed: int = 0, limit_docs: int | None = None) -> list[Do
     """Deterministic Track A subset from spec §2.
 
     This implements the first runnable slice: synthetic state-update interleave
-    with gold mention spans.  It deliberately starts small but covers the
-    load-bearing axes needed by M1/M2 smoke tests: same-surface vs diff-surface,
-    multiple referents, multiple updates, and short/long-ish filler gaps.
+    with gold mention spans, spanning same-surface vs diff-surface, multiple
+    referents, multiple updates, and short/long-ish filler gaps.
+
+    KNOWN DEFECT F8 — DO NOT RE-RUN M1 ON THIS CORPUS. The disambiguating detail
+    (place/value) is appended *after* the shared-alias mention ("the person") and
+    rotates per round, so referent identity is causally unavailable at the token
+    where the alias key is computed. The result is *zero* valid M1 address-purity
+    trials: same-surface mentions are lexically trivial (referent == name) and the
+    only same-token/diff-referent pairs are the unrecoverable "the person" ones.
+    All published M1 nulls are instrument artifacts. A valid M1 rerun needs a
+    corpus v3 where disambiguators precede mentions (see NOTEBOOK.md "F8").
     """
     rng = random.Random(seed)
     docs: list[Document] = []
