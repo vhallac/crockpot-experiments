@@ -70,7 +70,40 @@ def _family_a_candidate_texts() -> list[str]:
     verbs = ["waved", "smiled", "waited", "nodded", "listened", "arrived", "agreed", "replied", "looked", "paused", "rested", "worked"]
     adjectives = ["calm", "brave", "quiet", "quick", "steady", "kind", "bright", "careful", "formal", "gentle", "honest", "lucid"]
     nouns = ["engineer", "artist", "doctor", "lawyer", "teacher", "baker", "pilot", "writer", "nurse", "clerk", "market", "garden"]
-    texts: list[str] = []
+    texts: list[str] = [
+        # Short and long anchors keep the v1.1 length sweep populated across GPT-2,
+        # Pythia/GPT-NeoX, and NoPE tokenizers. Build-time token-length filtering
+        # below still decides which model each sentence is valid for.
+        "Bird flew.",
+        "Alice waved.",
+        "Iris rested.",
+        "Kara nodded.",
+        "Liam worked.",
+        "A cat sat.",
+        "The dog ran.",
+        "Red fox ran.",
+        "Old dog slept.",
+        "Eve waved.",
+        "Noel arrived.",
+        "Otto paused.",
+        "Ruth replied.",
+        "Elena listened while the gentle village baker listened.",
+        "Elena arrived while the gentle village baker listened.",
+        "Elena replied while the gentle village baker listened.",
+        "Elena waited while the gentle village baker listened.",
+        "Elena nodded while the gentle village baker listened.",
+        "Elena paused while the gentle village baker listened.",
+        "Elena rested while the gentle village baker listened.",
+        "Elena worked while the gentle village baker listened.",
+        "Priya listened while the gentle village baker listened.",
+        "Priya arrived while the gentle village baker listened.",
+        "Priya replied while the gentle village baker listened.",
+        "Priya waited while the gentle village baker listened.",
+        "Priya nodded while the gentle village baker listened.",
+        "Priya paused while the gentle village baker listened.",
+        "Priya rested while the gentle village baker listened.",
+        "Priya worked while the gentle village baker listened.",
+    ]
     for name in names:
         for verb in verbs:
             texts.append(f"{name} {verb} today.")
