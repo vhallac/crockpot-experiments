@@ -128,9 +128,31 @@ For `k_pre`, layer 0 is exactly zero, but deeper layers show high position decod
 
 Family-level aggregates from the run log are consistent with that interpretation: `pre` position fraction is about `0.0329` for Family A, `0.0976` for Family B, and `0.1740` for Family C, while `post` remains much larger (`0.2519`, `0.2663`, `0.3654`) and ridge R² remains near 1.
 
+The pre-RoPE signal is real, not a small-sample fluke: null-corrected `r2_minus_null_mean` for `k_pre` is about `+0.95` to `+1.02` at every depth L1–L23, with the shuffled-null mean sitting at about `−0.03`. (Note: the `permutation_p_value` column is quantised at `0.1667` throughout — too few permutations to ever cross significance — so `r2_minus_null` and the shuffled null, not the p-value, carry the evidence. Worth increasing the permutation count before any paper-facing significance claim.)
+
+**Added post-writeup: dimensionality and projector, computed at slot level.** These bear on the addendum's P1.5.d/P1.5.f and on the Π deliverable for an M1 rerun. **Metric caveat first:** the striking NoPE figures on record — aggregate-projector "~13 PCs to 90% at L15–23" (P1.5.d) and "L23 ridge R² 0.907 → 0.005 after projection" (P1.5.f) — are **aggregate** statistics. Recomputed **like-for-like at the slot level**, Pythia and NoPE behave similarly and those dramatic numbers do not appear.
+
+Pythia `k_pre` slot-level depth profile (all families):
+
+| layer | ridge R² | position fraction | PCA k90 | R² after PC projection |
+|---:|---:|---:|---:|---:|
+| 0 | 0.000 | 0.000 | 0.00 | 0.000 |
+| 1 | 0.926 | 0.019 | 1.88 | +0.204 |
+| 4 | 0.910 | 0.044 | 1.85 | +0.271 |
+| 8 | 0.990 | 0.083 | 2.67 | −0.006 |
+| 12 | 0.985 | 0.043 | 3.25 | −0.001 |
+| 15 | 0.985 | 0.034 | 3.24 | −0.002 |
+| 18 | 0.982 | 0.019 | 2.74 | +0.037 |
+| 23 | 0.961 | 0.010 | 2.58 | +0.076 |
+
+- **Dimensionality (P1.5.d).** At slot level Pythia `k_pre` position stays low-dimensional throughout (~2–3 PCs to 90%), peaking mid-stack (L12–15) and *not* expanding — if anything contracting — in the top layers. NoPE `k_pre` slot-level is similarly compact (~1 PC through L12, rising only to ~2.6 by L18–23). Neither shows a ~13-component blow-up; that figure is aggregate-only. So P1.5.d ("computed position is higher-dimensional") is **not supported at the slot level** on either model, and the "two-regime split at ~L15" flagged as an M1.6 target is an aggregate-projector artifact rather than a per-slot geometric fact.
+- **Projector Π fidelity (P1.5.f).** The per-slot position-removal projector is only partially effective at early/mid layers for **both** models — Pythia leaves R² `+0.20 / +0.27` at L1/L4; NoPE leaves `+0.33 / +0.21` at L4/L8 — and removes most position by the upper layers (Pythia L23 `0.96 → +0.076`; NoPE L23 `0.97 → +0.028`). Π's early-layer imperfection is therefore general, not Pythia-specific, and it is cleanest in the middle depths where M1 address heads are expected. The clean "0.91 → 0.005" on record is the aggregate projector (pooled across slots/L), a stronger and different operator than the per-slot basis; an M1 rerun that relies on Π should specify which of the two it uses.
+
 ### Conclusion / Next Step
 
-The Pythia-410m M1.5 v1.1 CUDA run is complete and published. The result validates the repaired M1.5 gates on a RoPE model and gives positive evidence for nonzero, internally present pre-RoPE positional information beyond layer 0, but with small variance share compared with the explicit post-RoPE positional stamp. Next, compare this pattern against the GPT-2 and NoPE runs in a cross-model M1.5 summary before drawing a paper-facing conclusion.
+The Pythia-410m M1.5 v1.1 CUDA run is complete and published. The result validates the repaired M1.5 gates on a RoPE model and gives positive evidence for nonzero, internally present pre-RoPE positional information beyond layer 0, but with small variance share compared with the explicit post-RoPE positional stamp. This is the first **stamped-position** model to show it: Pythia already carries RoPE position in `k_post`, yet still computes/leaks decodable position into `k_pre` at depth — so P1.5.c is affirmative here, extending the NoPE result beyond the no-positional-encoding case. The decodability-vs-variance dissociation (high `k_pre` R², low position fraction) and the depth-wise dilution of the stamped `k_post` fraction (mirroring GPT-2's learned-absolute pattern) also replicate.
+
+Two adjudications tighten on re-analysis: P1.5.d is **not supported at the slot level** (position stays ~2–3 dimensional; the ~13-PC expansion is aggregate-only), and P1.5.f's projector is only middling per-slot at early/late layers on both models. Next: (a) run qwen3 for P1.5.e (stamped fraction expected weaker than Pythia, θ=1e6 vs 1e4); (b) build the cross-model M1.5 summary over NoPE/GPT-2/Pythia (+qwen3) using slot-level metrics consistently; (c) before any paper-facing significance claim, raise the permutation count (currently p-value floored at 0.167) and decide whether the Π deliverable is the aggregate or per-slot projector.
 
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 gatefix CPU rerun prep
 
