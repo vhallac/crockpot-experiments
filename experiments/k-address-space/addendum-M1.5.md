@@ -229,7 +229,7 @@ its Family B and length-sweep cells never executed.
 | prediction | status | evidence |
 |---|---|---|
 | **P1.5.a** gates hold | **PASS** | G1 at ~1e-6 vs 1e-5 floor; perturbation can fail |
-| **P1.5.b** NoPE position rises with depth | **CONFIRMED** | R² 0 → 0.42 (L3) → 0.91 (L8) → ~0.94 plateau; position fraction 0.016 → 0.21 |
+| **P1.5.b** NoPE position rises with depth | **CONFIRMED** | R² 0 → ~0.35 (L3) → ~0.88 (L8) → ~0.94 plateau; position fraction ~0.008 → ~0.089 |
 | **P1.5.c** stamped models also compute position | **PENDING** | needs pythia/qwen3 `k_pre` |
 | **P1.5.d** computed position is higher-dimensional | **PARTLY WRONG** | 1–2 PCs of 64 through L8–L14 — far more compact than predicted; expands to ~13 PCs only at L15–23 while R² stays flat. Revise: the prediction may hold only for the upper-third regime. |
 | **P1.5.e** qwen3 `k_post` weakest stamped fraction | **PENDING** | needs qwen3 |
@@ -240,3 +240,9 @@ fixed by §2.0), and the entire induction control (Family B yielded nothing; fix
 
 **Additional finding not predicted:** position is not head-specialised — by layer 10, 16 of 16
 heads exceed R² 0.9. Worth carrying into the cross-model runs as a descriptive statistic.
+
+**Source of truth.** The figures in this §10 table are a derived summary of the durable
+run record in `NOTEBOOK.md` and the published CSV outputs, which are authoritative. On any
+discrepancy, trust the notebook and the CSVs, not this summary. (The original v1.0-era draft
+of this cell carried a NoPE Family-A position-fraction endpoint of `0.21`, a session-note slip
+corrected here to the measured `~0.089`.)
