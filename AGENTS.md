@@ -135,6 +135,10 @@ Use smoke-test limits before full-model runs:
 - `--limit-heads 1`
 - small samples/doc limits appropriate to the experiment
 
+Before a CUDA full run, review the code path that the command will execute and record the preflight finding in the checklist/notebook. The dominant computation must actually stay on GPU, not merely model loading or extraction. Audit hot loops for GPU-to-CPU escapes such as `.cpu()`, `.numpy()`, Pandas/DataFrame work, `np.linalg`/`np.fft`/`sklearn`, or Python loops immediately after CUDA tensor extraction. If such escapes are in the dominant path, either move that work to `torch` on the CUDA tensor, justify why it is not dominant, or do not start the paid CUDA run. The M1.5 Pythia aborted run on 2026-07-22 is the cautionary example: keys were captured on GPU, then every slot/head/layer matrix was converted with `.cpu().numpy()` and analysed by NumPy linear algebra/permutation loops, making the run CPU-bound.
+
+Long or reproducible runs must publish progress while running. Prefer stdout progress lines with completed units, current stimulus/model slice, and rate/ETA. If stdout is reserved for machine-readable data, write the same information to a log file and record the log path in the notebook/checklist. Do not start an opaque long run where stopping at 10% and 99% would look the same to the operator.
+
 Verify outputs externally before reporting success, for example:
 
 ```bash

@@ -5,6 +5,7 @@ import json
 import math
 import platform
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -489,6 +490,184 @@ def _analyse_matrix(x: np.ndarray, y: np.ndarray, token_ids: np.ndarray, *, seed
     }
 
 
+def _ridge_cv_r2_torch(x: torch.Tensor, y: torch.Tensor, *, folds: int, seed: int, alphas: torch.Tensor) -> float:
+    n = int(y.numel())
+    if n < folds + 2 or float(torch.var(y, unbiased=False).item()) <= 0:
+        return 0.0
+    device = x.device
+    order = torch.as_tensor(np.random.default_rng(seed).permutation(n), dtype=torch.long, device=device)
+    best = -float("inf")
+    eye = torch.eye(x.shape[1], dtype=x.dtype, device=device)
+    for alpha in alphas.to(device=device, dtype=x.dtype):
+        scores: list[float] = []
+        for fold in range(folds):
+            val_mask = torch.zeros(n, dtype=torch.bool, device=device)
+            val_mask[order[fold::folds]] = True
+            tr = ~val_mask
+            x_tr = x[tr]
+            y_tr = y[tr]
+            x_val = x[val_mask]
+            y_val = y[val_mask]
+            xm = x_tr.mean(dim=0, keepdim=True)
+            ym = y_tr.mean()
+            xc = x_tr - xm
+            yc = y_tr - ym
+            xtx = xc.T @ xc
+            beta = torch.linalg.solve(xtx + alpha * eye, xc.T @ yc)
+            pred = (x_val - xm) @ beta + ym
+            denom = torch.sum((y_val - y_val.mean()) ** 2)
+            score = 0.0 if float(denom.item()) <= 0 else 1.0 - float((torch.sum((y_val - pred) ** 2) / denom).item())
+            scores.append(score)
+        best = max(best, float(np.mean(scores)))
+    return best
+
+
+def _null_stats_torch(x: torch.Tensor, y: torch.Tensor, *, seed: int, alphas: torch.Tensor, permutations: int) -> tuple[float, float, float]:
+    rng = np.random.default_rng(seed + 17)
+    vals = np.asarray(
+        [
+            _ridge_cv_r2_torch(x, y[torch.as_tensor(rng.permutation(int(y.numel())), dtype=torch.long, device=y.device)], folds=5, seed=seed + 1 + i, alphas=alphas)
+            for i in range(max(1, permutations))
+        ],
+        dtype=float,
+    )
+    return float(vals.mean()), float(np.quantile(vals, 0.99)), float(vals.max())
+
+
+def _pca_stats_torch(resid: torch.Tensor) -> tuple[int, float, torch.Tensor, torch.Tensor]:
+    if resid.shape[0] < 2:
+        d = resid.shape[1]
+        return 0, 0.0, torch.zeros((0, d), dtype=resid.dtype, device=resid.device), torch.zeros((0,), dtype=resid.dtype, device=resid.device)
+    _u, s, vh = torch.linalg.svd(resid, full_matrices=False)
+    var = s**2
+    total = float(var.sum().item())
+    if total <= 0:
+        return 0, 0.0, vh[:0], var
+    cum = torch.cumsum(var, dim=0) / total
+    k90 = int(torch.searchsorted(cum, torch.tensor(0.90, dtype=cum.dtype, device=cum.device)).item() + 1)
+    return k90, float((var[:k90].sum() / total).item()), vh[:k90], var
+
+
+def _rankdata_torch(a: torch.Tensor) -> torch.Tensor:
+    order = torch.argsort(a, stable=True)
+    ranks = torch.empty(len(a), dtype=a.dtype, device=a.device)
+    ranks[order] = torch.arange(len(a), dtype=a.dtype, device=a.device)
+    values = a[order]
+    start = 0
+    while start < len(a):
+        end = start + 1
+        while end < len(a) and bool(values[end] == values[start]):
+            end += 1
+        if end - start > 1:
+            ranks[order[start:end]] = (start + end - 1) / 2.0
+        start = end
+    return ranks
+
+
+def _corr_torch(a: torch.Tensor, b: torch.Tensor) -> float:
+    if len(a) < 2:
+        return float("nan")
+    ac = a - a.mean()
+    bc = b - b.mean()
+    denom = torch.sqrt((ac @ ac) * (bc @ bc))
+    return float("nan") if float(denom.item()) == 0 else float(((ac @ bc) / denom).item())
+
+
+def _spearman_torch(a: torch.Tensor, b: torch.Tensor) -> float:
+    return _corr_torch(_rankdata_torch(a), _rankdata_torch(b))
+
+
+def _nearest_centroid_cv_accuracy_torch(x: torch.Tensor, labels: torch.Tensor, *, folds: int, seed: int) -> float:
+    unique = torch.unique(labels)
+    if int(unique.numel()) < 2 or int(labels.numel()) < folds + 2:
+        return float("nan")
+    n = int(labels.numel())
+    order = torch.as_tensor(np.random.default_rng(seed).permutation(n), dtype=torch.long, device=x.device)
+    accs: list[float] = []
+    for fold in range(folds):
+        val_mask = torch.zeros(n, dtype=torch.bool, device=x.device)
+        val_mask[order[fold::folds]] = True
+        tr = ~val_mask
+        labs = torch.unique(labels[tr])
+        if int(labs.numel()) == 0:
+            continue
+        centroids = torch.stack([x[tr & (labels == lab)].mean(dim=0) for lab in labs])
+        d2 = ((x[val_mask, None, :] - centroids[None, :, :]) ** 2).sum(dim=2)
+        pred = labs[torch.argmin(d2, dim=1)]
+        accs.append(float((pred == labels[val_mask]).float().mean().item()))
+    return float(np.mean(accs)) if accs else float("nan")
+
+
+def _analyse_matrix_torch(x: torch.Tensor, y: torch.Tensor, token_ids: torch.Tensor, *, seed: int, variance_floor: float, null_permutations: int) -> dict[str, Any]:
+    x = x.float()
+    y = y.to(device=x.device, dtype=x.dtype)
+    token_ids = token_ids.to(device=x.device)
+    raw = float(torch.mean(torch.abs(x)).item())
+    mean = x.mean(dim=0, keepdim=True)
+    resid = x - mean
+    resid_scale = float(torch.mean(torch.abs(resid)).item())
+    frac = 0.0 if raw <= 0 else resid_scale / raw
+    degenerate = frac < variance_floor
+    basis = torch.zeros((0, x.shape[1]), dtype=x.dtype, device=x.device)
+    token_acc_before = _nearest_centroid_cv_accuracy_torch(x, token_ids, folds=5, seed=seed + 3)
+    if degenerate:
+        return {
+            "raw_mean_abs": raw,
+            "resid_mean_abs": resid_scale,
+            "position_fraction": frac,
+            "degenerate": True,
+            "ridge_r2": 0.0,
+            "shuffled_ridge_r2": 0.0,
+            "shuffled_ridge_r2_p99": 0.0,
+            "r2_minus_null_mean": 0.0,
+            "permutation_p_value": float("nan"),
+            "pca_components_90pct": 0,
+            "pca_residual_variance_fraction_90pct": 0.0,
+            "pc1_spearman_repetition": float("nan"),
+            "pc1_dominant_fourier_bin": -1,
+            "r2_after_position_pc_projection": 0.0,
+            "token_identity_acc_before": token_acc_before,
+            "token_identity_acc_after": token_acc_before,
+            "basis": basis.cpu().numpy().astype(np.float32),
+        }
+    alphas = torch.logspace(-2, 4, 13, dtype=x.dtype, device=x.device)
+    r2 = _ridge_cv_r2_torch(x, y, folds=5, seed=seed, alphas=alphas)
+    null_mean, null_p99, null_max = _null_stats_torch(x, y, seed=seed, alphas=alphas, permutations=null_permutations)
+    k90, frac_resid_var, basis, _var = _pca_stats_torch(resid)
+    pc1 = resid @ basis[0] if len(basis) else torch.zeros(len(y), dtype=x.dtype, device=x.device)
+    dominant_bin = -1
+    if len(pc1) >= 4:
+        amp = torch.abs(torch.fft.rfft(pc1 - pc1.mean()))
+        if len(amp) > 1:
+            dominant_bin = int(torch.argmax(amp[1:]).item() + 1)
+    if len(basis):
+        proj = resid - (resid @ basis.T) @ basis
+        x_proj = mean + proj
+    else:
+        x_proj = x
+    r2_after = _ridge_cv_r2_torch(x_proj, y, folds=5, seed=seed + 2, alphas=alphas)
+    token_acc_after = _nearest_centroid_cv_accuracy_torch(x_proj, token_ids, folds=5, seed=seed + 4)
+    return {
+        "raw_mean_abs": raw,
+        "resid_mean_abs": resid_scale,
+        "position_fraction": frac,
+        "degenerate": False,
+        "ridge_r2": r2,
+        "shuffled_ridge_r2": null_mean,
+        "shuffled_ridge_r2_p99": null_p99,
+        "r2_minus_null_mean": r2 - null_mean,
+        "permutation_p_value": (1.0 + float(null_max >= r2)) / (1.0 + max(1, null_permutations)),
+        "pca_components_90pct": k90,
+        "pca_residual_variance_fraction_90pct": frac_resid_var,
+        "pc1_spearman_repetition": _spearman_torch(pc1, y) if len(basis) else float("nan"),
+        "pc1_dominant_fourier_bin": dominant_bin,
+        "r2_after_position_pc_projection": r2_after,
+        "token_identity_acc_before": token_acc_before,
+        "token_identity_acc_after": token_acc_after,
+        "basis": basis.detach().cpu().numpy().astype(np.float32),
+    }
+
+
 @dataclass
 class AggregateState:
     family: str
@@ -698,6 +877,17 @@ def _g2_perturbed_ridge_r2(x: np.ndarray, y: np.ndarray, *, seed: int) -> float:
     return _ridge_cv_r2(x[order], y.astype(float), folds=5, seed=seed + 4243, alphas=np.logspace(-2, 4, 13))
 
 
+def _g2_perturbed_ridge_r2_torch(x: torch.Tensor, y: torch.Tensor, *, seed: int) -> float:
+    if len(y) < 2:
+        return 0.0
+    rng = np.random.default_rng(seed + 4242)
+    order = rng.permutation(len(y))
+    if len(order) > 1 and np.array_equal(order, np.arange(len(y))):
+        order = np.roll(order, 1)
+    order_t = torch.as_tensor(order, dtype=torch.long, device=x.device)
+    return _ridge_cv_r2_torch(x[order_t], y.to(device=x.device, dtype=x.dtype), folds=5, seed=seed + 4243, alphas=torch.logspace(-2, 4, 13, dtype=x.dtype, device=x.device))
+
+
 def run(args: argparse.Namespace) -> None:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -735,6 +925,12 @@ def run(args: argparse.Namespace) -> None:
     gate_rows: list[dict[str, Any]] = []
     aggregates: dict[tuple[str, str, int, int], AggregateState] = {}
     sample_rng = np.random.default_rng(args.seed + 12345)
+    progress_done = 0
+    progress_start = time.monotonic()
+    print(
+        f"starting M1.5 analysis model={args.model} device={device} stimuli={len(stimuli)} families={','.join(sorted(families))}",
+        flush=True,
+    )
 
     for stim_i, stim in enumerate(stimuli):
         input_ids = torch.tensor([stim.input_ids], dtype=torch.long, device=device)
@@ -753,10 +949,16 @@ def run(args: argparse.Namespace) -> None:
                         if len(positions) < max(10, args.min_repetitions if stim.family != "C" else 10):
                             continue
                         pos_t = torch.as_tensor(positions, dtype=torch.long, device=k_all.device)
-                        x = k_all[layer].index_select(0, pos_t)[:, head, :].detach().float().cpu().numpy()
-                        y = np.arange(len(positions), dtype=float)
-                        token_ids = np.full(len(positions), stim.slot_token_ids[slot], dtype=np.int64)
-                        stats = _analyse_matrix(x, y, token_ids, seed=args.seed + stim_i + layer * 1000 + head, variance_floor=args.variance_floor, null_permutations=args.null_permutations)
+                        x_t = k_all[layer].index_select(0, pos_t)[:, head, :].detach().float()
+                        y_t = torch.arange(len(positions), dtype=torch.float32, device=x_t.device)
+                        token_ids_t = torch.full((len(positions),), stim.slot_token_ids[slot], dtype=torch.long, device=x_t.device)
+                        x = x_t.cpu().numpy()
+                        y = y_t.cpu().numpy()
+                        token_ids = token_ids_t.cpu().numpy()
+                        if x_t.device.type == "cuda":
+                            stats = _analyse_matrix_torch(x_t, y_t, token_ids_t, seed=args.seed + stim_i + layer * 1000 + head, variance_floor=args.variance_floor, null_permutations=args.null_permutations)
+                        else:
+                            stats = _analyse_matrix(x, y, token_ids, seed=args.seed + stim_i + layer * 1000 + head, variance_floor=args.variance_floor, null_permutations=args.null_permutations)
                         basis = stats.pop("basis")
                         row = {
                             "model": args.model,
@@ -786,10 +988,10 @@ def run(args: argparse.Namespace) -> None:
                         if _is_architectural_zero_case(lm, layer=layer, variant=variant):
                             raw = row["raw_mean_abs"]
                             rel = row["position_fraction"]
-                            perturbed = x.copy()
-                            perturbed += (np.arange(len(positions))[:, None] / max(1, len(positions) - 1)) * raw * 1e-3
-                            p_raw = float(np.mean(np.abs(perturbed)))
-                            p_rel = float(np.mean(np.abs(perturbed - perturbed.mean(axis=0, keepdims=True))) / max(p_raw, 1e-12))
+                            ramp = (torch.arange(len(positions), dtype=x_t.dtype, device=x_t.device)[:, None] / max(1, len(positions) - 1)) * raw * 1e-3
+                            perturbed = x_t + ramp
+                            p_raw = float(torch.mean(torch.abs(perturbed)).item())
+                            p_rel = float((torch.mean(torch.abs(perturbed - perturbed.mean(dim=0, keepdim=True))) / max(p_raw, 1e-12)).item())
                             gate_rows.append(
                                 {
                                     "gate": "G1_architectural_zero",
@@ -810,7 +1012,7 @@ def run(args: argparse.Namespace) -> None:
                             )
                         if _is_architectural_one_case(lm, layer=layer, variant=variant):
                             r2 = row["ridge_r2"]
-                            perturbed_r2 = _g2_perturbed_ridge_r2(x, y, seed=args.seed + stim_i + layer * 1000 + head)
+                            perturbed_r2 = _g2_perturbed_ridge_r2_torch(x_t, y_t, seed=args.seed + stim_i + layer * 1000 + head)
                             gate_rows.append(
                                 {
                                     "gate": "G2_architectural_one",
@@ -829,8 +1031,17 @@ def run(args: argparse.Namespace) -> None:
                                     "perturbation_can_fail": bool(perturbed_r2 < 0.9),
                                 }
                             )
-        print(f"processed {stim.stimulus_id} family={stim.family} seq={len(stim.input_ids)} slots={len(stim.slots)}")
+                        progress_done += 1
+                        if progress_done % args.progress_every == 0:
+                            elapsed = max(time.monotonic() - progress_start, 1e-9)
+                            print(
+                                f"progress units={progress_done} rate={progress_done / elapsed:.2f}/s "
+                                f"stimulus={stim.stimulus_id} family={stim.family} variant={variant} layer={layer} head={head} slot={slot}",
+                                flush=True,
+                            )
+        print(f"processed {stim.stimulus_id} family={stim.family} seq={len(stim.input_ids)} slots={len(stim.slots)} units={progress_done}", flush=True)
 
+    print(f"building aggregate rows count={len(aggregates)}", flush=True)
     for agg_i, state in enumerate(aggregates.values()):
         stats, basis = _aggregate_stats(state, seed=args.seed + 900_000 + agg_i, variance_floor=args.variance_floor)
         rows.append(
@@ -946,6 +1157,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--variance-floor", type=float, default=1e-5)
     p.add_argument("--shuffle-r2-abs-warn", type=float, default=0.05)
     p.add_argument("--null-permutations", type=int, default=5)
+    p.add_argument("--progress-every", type=int, default=100, help="Print one progress line after this many analysed slot/head/layer units.")
     p.add_argument(
         "--aggregate-sample-cap",
         type=int,

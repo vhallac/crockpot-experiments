@@ -76,15 +76,32 @@ The run is valid only if it used CUDA, emitted non-empty measurement and gate CS
 
 ### Results
 
-_Pending run._
+First full CUDA attempt was aborted by operator request because it was CPU-bound and opaque.
+
+Attempted command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-run -m kaddress.scripts.position_content \
+  --model pythia410 \
+  --device cuda \
+  --families A,B,C \
+  --segment-lengths 4,7,12 \
+  --output-dir outputs/k_address_space_m15_v11_pythia410_cuda_20260722
+```
+
+Failure evidence: remote PID `1789` on RunPod pod `j2001wsvr7vimt` was stopped at `20260722T084434Z` after roughly 90 minutes without completion/progress visibility beyond coarse stimulus-level output. No completed result is published from this attempt.
+
+Diagnosis: `position_content.py` captured Pythia keys on CUDA, but the dominant M1.5 analysis immediately converted every slot/head/layer matrix with `.cpu().numpy()` and then ran NumPy ridge regression, SVD/PCA, FFT, and permutation null loops on CPU. This invalidated the CUDA-run assumption even though model extraction used GPU.
+
+Redo plan: patch the hot per-slot analysis path to use `torch` operations on CUDA tensors, add frequent progress lines (`--progress-every`), commit the fix, run a CUDA smoke test, then restart the full Pythia run from the new committed state.
 
 ### Analysis
 
-_Pending output analysis._
+_Pending corrected rerun output analysis._
 
 ### Conclusion / Next Step
 
-_Pending._
+_Restart after GPU-utilization fix and progress instrumentation._
 
 ## 2026-07-21 — K-address-space M1.5 v1.1 GPT-2 gatefix CPU rerun prep
 
