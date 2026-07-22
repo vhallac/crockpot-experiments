@@ -109,6 +109,13 @@ def _family_a_candidate_texts() -> list[str]:
         for verb in verbs:
             texts.append(f"{name} {verb} today.")
             texts.append(f"{name} {verb} again today.")
+            # Qwen3's tokenizer did not yield any 12-token Family A segments from
+            # the original short pool, even though its context budget makes L=12
+            # feasible. These longer, still content-constant templates keep the
+            # mandatory length sweep populated without changing the Family A
+            # repeated-identical-segment design.
+            texts.append(f"In the morning, {name} {verb} beside the old city market.")
+            texts.append(f"Near the old bridge, {name} {verb} before the market opened.")
     for name in names:
         for adj in adjectives:
             for noun in nouns:
