@@ -106,6 +106,31 @@ Each experiment gets its own `spec.md` (pre-registration) before running.
   novel. Mechanistic hook: P1.5.c suggests RoPE bootstraps the emergent-position circuitry, which —
   once formed — may make RoPE dispensable early. **Requires from-scratch training** (a real step up
   from RS1's recalibration-from-pretrained) and a **novelty check** before scoping. Not started.
+  **Condition to pursue:** only if RS1 confirms the clean scaffold thesis (`P.RS1.a`+`b`+`c` hold,
+  ideally `b'`). Its hook *requires* RS1 to show emergent position genuinely fills in and
+  reconstructs; if RS1 instead shows position is *unnecessary* (b fails), *partially* reconstructed
+  / RoPE-residue (b' fails), *causal for retrieval* (c fails), or that DroPE doesn't even replicate
+  (a fails), this extension is respectively mis-framed, premature, moot, or blocked — do not spend
+  from-scratch-training budget on it.
+
+### Gating — RS1 is the program's decision point
+
+The expensive downstream work is conditioned on which RS1 branch lands:
+
+- **RS1 confirms (a+b+c, ideally b'):** scaffold thesis holds → RS4 (scale-generalize) and the
+  RoPE-warmup extension become well-motivated; RS2/RS3 are cheap analysis continuations on the RS1
+  checkpoints.
+- **a holds, b fails** (perplexity recovers, position *not* reconstructed): reframe to a
+  *dispensability* claim; the warmup hook is void → drop/rescope it. RS4 still relevant.
+- **b' fails** (partial NoPE / RoPE residue): removal isn't clean → the matched-pair from-scratch
+  gold standard is the priority, not the warmup extension.
+- **c fails** (addressing changes across the transition): E2 is wrong → stop the extensions and
+  rethink the thesis before spending more.
+- **a fails** (DroPE doesn't replicate at 0.6B): premise broken at this scale → only recipe-debug
+  or a larger-model retry make sense; all extensions premature.
+
+Nothing beyond RS1 (and the cheap RS2/RS3 analyses) should consume real training budget until RS1
+picks the branch.
 
 ## Result policy
 
