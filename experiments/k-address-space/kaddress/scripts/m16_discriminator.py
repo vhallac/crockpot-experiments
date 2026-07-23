@@ -694,7 +694,7 @@ def _classification(rows: pd.DataFrame, *, attention_margin: float, output_margi
         induction_mass = mean_col(base, "induction_match_plus_one_mass")
         trans_prob = mean_col(base, "transitivity_altered_marker_prob")
         trans_rank = mean_col(base, "transitivity_altered_marker_rank")
-        attention_above_noise = k_attn_delta > noise_attn_delta + attention_margin
+        attention_above_noise = k_attn_delta > 0 and k_attn_delta > noise_attn_delta + attention_margin
         output_above_noise = both_prob_delta > abs(noise_prob_delta) + output_margin
         transitivity_confirmed = trans_rank <= 10 and trans_prob > output_margin
 

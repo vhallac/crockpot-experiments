@@ -1,0 +1,53 @@
+{
+  "experiment_id": "k-address-space-m16-qwen3-v1.1-rope-kpre",
+  "date": "2026-07-23",
+  "spec": "experiments/k-address-space/addendum-M1.6.md",
+  "pre_run_commit": "af540ae",
+  "final_commit": "recorded in release notes and completion report after this manifest commit",
+  "model": "qwen3",
+  "hf_id": "Qwen/Qwen3-0.6B",
+  "revision": null,
+  "hardware": "RunPod NVIDIA L4",
+  "runpod_pod": "m55vlv45okg93c",
+  "run_command": "PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator --model qwen3 --device cuda --repetitions 128 --output-dir outputs/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723 --progress-every 20",
+  "local_output_dir": "outputs/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723",
+  "release_url": "https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m16-qwen3/20260723",
+  "assets": [
+    {
+      "name": "k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723.tar.gz",
+      "sha256": "65af38a577fc67ec727f2abc7c966742e68e7fc78e2c8513c14abeb92299e779",
+      "url": "https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m16-qwen3/20260723/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723.tar.gz"
+    },
+    {
+      "name": "SHA256SUMS_k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723",
+      "sha256": "dfa65bc6c9df8e466492d8421a9f1e0bf16dd9bedccc6608963d98d919f88d86",
+      "url": "https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m16-qwen3/20260723/SHA256SUMS_k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723"
+    }
+  ],
+  "output_file_checksums": {
+    "kaddress_m16_qwen3.csv": "9e9dc47e62387388256b524360a3939c3a0579fc15df65c73e51d615ecececcb",
+    "kaddress_m16_gates_qwen3.csv": "5d987c738413c0543863a9f8557a8ce6b0be07d4fc67c0f51d6f656222e31def",
+    "kaddress_m16_classification_qwen3.csv": "288d1ac85c3152f9efac98566a0b272d94d892b26f8dcc751b241569b2bb9f50",
+    "kaddress_m16_manifest_qwen3.json": "c7e91fb769ad71e1b99859f418f69e652cdaba327fa48de0fd75e470a8e06905"
+  },
+  "manifest_highlights": {
+    "repetitions": 128,
+    "stimulus_count": 4,
+    "summary_rows": 8960,
+    "classification_rows": 448,
+    "gate_g6_pass": "PASS",
+    "gate_g7_pass_count": 39,
+    "transitivity_confirmed_count": 448,
+    "derived_recomputed_from_raw_at_utc": "2026-07-23T10:43:31Z"
+  },
+  "classification_counts": {
+    "addressing": 2,
+    "anti_collision_or_content_driven": 40,
+    "anti_collision_or_inert_attention_only": 37,
+    "confounded_noise_sensitive": 150,
+    "inert": 65,
+    "mixed": 124,
+    "transitive_induction": 30
+  },
+  "classification_correction": "Post-run analysis found that the first derived G7 rule could pass when patch-K target-attention delta was non-positive but less negative than noise. The corrected derived artifacts require mean patch-K target_attention_delta > 0 and > mean noise target_attention_delta + attention_margin; raw measurements were not rerun."
+}

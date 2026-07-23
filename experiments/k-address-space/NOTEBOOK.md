@@ -43,22 +43,91 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP
 
 - Spec: `experiments/k-address-space/addendum-M1.6.md` v1.1, including RoPE `k_pre` patch-stage clarification
 - Code branch: `main`
-- Pre-run commit: _pending_
+- Pre-run commit: `af540ae`
 - Planned output location: `outputs/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723`
 - Checklist: `temp/repro-checklists/20260723-k-address-space-m16-qwen3-v11.md`
 - Local preparation evidence: `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (14 OK); `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m py_compile experiments/k-address-space/kaddress/scripts/m16_discriminator.py` passed. Local Transformers does not support qwen3, so qwen3 execution sanity is deferred to RunPod.
 
 ### Results
 
-_Pending run._
+Run command on RunPod NVIDIA L4 pod `m55vlv45okg93c` from pre-run commit `af540ae`:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator \
+  --model qwen3 \
+  --device cuda \
+  --repetitions 128 \
+  --output-dir outputs/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723 \
+  --progress-every 20
+```
+
+Tripwire evidence: the CUDA tripwire with `--repetitions 128 --limit-stimuli 1 --limit-layers 1 --limit-heads 1` passed G6 and ran at about `1.159` units/s, with GPU samples up to 100%. The full run completed `1792/1792` units at about `1.016` units/s with 95-100% GPU samples and wrote four files under `outputs/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723`.
+
+Post-run correction: initial analysis found a derived-classification bug in G7: `k_attn_delta > noise_attn_delta + margin` could pass even when patch-K target-attention movement was non-positive. The raw CUDA measurements were preserved; only `kaddress_m16_classification_qwen3.csv` and `kaddress_m16_manifest_qwen3.json` were recomputed locally from raw rows after patching the rule to require `mean patch-k target_attention_delta > 0` as well as above-noise movement. The recomputed manifest records `derived_recomputed_from_raw_at_utc=2026-07-23T10:43:31Z`.
+
+Corrected manifest highlights:
+
+| field | value |
+|---|---:|
+| repetitions | 128 |
+| stimulus count | 4 |
+| raw summary rows | 8960 |
+| classification rows | 448 |
+| G6 | PASS |
+| G7 pass count | 39 |
+| transitivity confirmed count | 448 |
+
+G6 per-stimulus marker search:
+
+| stimulus | max/min ratio | searched sets | selected markers |
+|---|---:|---:|---|
+| M16_00 | 1.624 | 58 | `exactly,together,same,thick` |
+| M16_01 | 2.141 | 8 | `maybe,first,best,tight` |
+| M16_02 | 2.923 | 18 | `equally,quiet,weak,round` |
+| M16_03 | 2.019 | 226 | `softly,currently,last,minor` |
+
+Per-head corrected classification counts:
+
+| classification | heads |
+|---|---:|
+| confounded_noise_sensitive | 150 |
+| mixed | 124 |
+| inert | 65 |
+| anti_collision_or_content_driven | 40 |
+| anti_collision_or_inert_attention_only | 37 |
+| transitive_induction | 30 |
+| addressing | 2 |
+
+Corrected aggregate addressing heads:
+
+| layer | head | mean K attention delta | mean noise attention delta | mean both donor-prob delta | mean noise donor-prob delta | per-stimulus addressing passes |
+|---:|---:|---:|---:|---:|---:|---|
+| 24 | 15 | 0.108811 | -0.025904 | 0.000507 | 0.000023 | M16_01 only |
+| 25 | 14 | 0.002021 | -0.111828 | 0.000637 | 0.000021 | M16_01 only |
+
+Published artifacts:
+
+- Release: https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m16-qwen3/20260723
+- Bundle: `k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723.tar.gz`
+- Bundle SHA256: `65af38a577fc67ec727f2abc7c966742e68e7fc78e2c8513c14abeb92299e779`
+- Checksum asset: `SHA256SUMS_k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723`
+- Git-side manifest: `experiments/k-address-space/artifacts/m16_qwen3_v11_rope_kpre_20260723_manifest.json`
 
 ### Analysis
 
-_Pending output analysis._
+The raw qwen3 RoPE `k_pre` run is valid for M1.6 v1.1: R is restored to 128, all four stimuli pass G6, the full layer/head/stimulus grid completed on CUDA, and the post-run G7 correction was applied only to derived classification from preserved raw rows.
+
+The corrected result is **not a robust positive address-space finding**. Only 39/448 heads pass the noise-controlled attention gate, and only 2/448 pass the aggregate addressing rule. Those two aggregate positives are fragile: each has a per-stimulus addressing pass on M16_01 only, and no head shows addressing across multiple stimuli. Output shifts are small (`~5e-4` to `~6e-4` in mean donor-marker probability), while many heads are noise-sensitive or mixed.
+
+The transitivity readout is not strong head-specific evidence in this summary. It is confirmed for all 448 heads with rank `4` and nearly constant altered-marker probability (`~0.017764`), so it currently reads more like a model/readout-level behavior than a discriminating per-head mechanism. The 30 `transitive_induction` classifications and high match+1 masses in some heads keep induction-like explanations live, but the all-head transitivity pass should not be over-interpreted as 448 independent confirmations.
+
+Compared with the pre-fix derived artifacts, the corrected rule removes the false-positive `L21H8` aggregate addressing call and reduces G7 passes from 77 to 39. The remaining late-layer heads (`L24H15`, `L25H14`) are best treated as weak/equivocal candidates, not as a confirmed query-readable tape address.
 
 ### Conclusion / Next Step
 
-_Pending._
+M1.6 Qwen3 v1.1 RoPE `k_pre` does **not** provide robust evidence that Qwen3 exposes a query-readable repetition address under this instrument. The defensible conclusion is a null/equivocal result: raw measurements are valid and two late heads weakly satisfy the aggregate addressing rule after correction, but the effect is one-stimulus-fragile, small in output, and not separated cleanly from induction/readout-level behavior.
+
+Use the corrected published artifacts for any downstream write-up. If Qwen3 is revisited, the next measurement should strengthen the per-head transitivity/addressing split rather than treating the current all-head transitivity flag as decisive.
 
 ## 2026-07-23 — K-address-space M1.6 Qwen3 v1.1 CUDA run prep
 

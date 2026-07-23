@@ -249,6 +249,20 @@ class M16BuildTests(unittest.TestCase):
         self.assertNotEqual(classified.iloc[0]['classification'], 'addressing')
         self.assertFalse(bool(classified.iloc[0]['g7_noise_controlled_attention_pass']))
 
+    def test_m16_classification_requires_positive_k_attention_redirection(self):
+        from kaddress.scripts import m16_discriminator as m16
+
+        rows = pd.DataFrame([
+            {'layer': 0, 'head': 0, 'patch_mode': 'baseline', 'target_attention_delta': 0.0, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'k', 'target_attention_delta': -0.05, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'v', 'target_attention_delta': 0.0, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'both', 'target_attention_delta': -0.05, 'donor_prob_delta': 0.001, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'noise', 'target_attention_delta': -0.19, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+        ])
+        classified = m16._classification(rows, attention_margin=0.02, output_margin=1e-4)
+        self.assertNotEqual(classified.iloc[0]['classification'], 'addressing')
+        self.assertFalse(bool(classified.iloc[0]['g7_noise_controlled_attention_pass']))
+
 
 if __name__ == '__main__':
     unittest.main()
