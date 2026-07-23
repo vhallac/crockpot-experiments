@@ -3,7 +3,7 @@
   "date": "2026-07-23",
   "spec": "experiments/k-address-space/addendum-M1.6.md",
   "pre_run_commit": "0b7c9a9",
-  "final_commit": "pending",
+  "final_commit": "recorded in release notes and completion report after this manifest commit",
   "model": "nope-gpt-small",
   "hf_id": "andrewdalpino/NoPE-GPT-Small-Base",
   "revision": "320681e33a029517e27c68a0f9c2b07ea0004155",
