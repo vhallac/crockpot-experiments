@@ -347,10 +347,12 @@ def _extract_logits(output: Any) -> torch.Tensor:
     raise TypeError(f"cannot extract logits from {type(output)!r}")
 
 
-def _layer_modules_nope(lm: Any) -> list[torch.nn.Module]:
-    if lm.tag != "nope-gpt-small":
-        raise NotImplementedError("M1.6 causal patching is currently implemented for NoPE-GPT-Small only")
-    return list(lm.model.model.body)
+def _layer_modules(lm: Any) -> list[torch.nn.Module]:
+    if lm.tag == "nope-gpt-small":
+        return list(lm.model.model.body)
+    if lm.tag == "qwen3":
+        return list(lm.model.model.layers)
+    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small and --model qwen3")
 
 
 def _plain_probs(lm: Any, input_ids: torch.Tensor, readout_pos: int) -> torch.Tensor:
@@ -371,7 +373,7 @@ def _run_nope_with_attention_patch(
     mode: str,
     noise_seed: int,
 ) -> ForwardReadout:
-    layer = _layer_modules_nope(lm)[layer_idx]
+    layer = _layer_modules(lm)[layer_idx]
     attn_mod = layer.attention
     original_forward = attn_mod.forward
     captured: dict[str, torch.Tensor] = {}
@@ -413,6 +415,106 @@ def _run_nope_with_attention_patch(
     logits = _extract_logits(output)
     probs = torch.softmax(logits[0, readout_pos, :], dim=-1).detach().float()
     return ForwardReadout(probs=probs, attention=captured["attention"], logits=logits.detach().float())
+
+
+def _rotate_half(x: torch.Tensor) -> torch.Tensor:
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def _apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    cos = cos.unsqueeze(1)
+    sin = sin.unsqueeze(1)
+    return (q * cos) + (_rotate_half(q) * sin), (k * cos) + (_rotate_half(k) * sin)
+
+
+def _repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    if n_rep == 1:
+        return x
+    b, h, t, d = x.shape
+    return x[:, :, None, :, :].expand(b, h, n_rep, t, d).reshape(b, h * n_rep, t, d)
+
+
+def _run_qwen_with_attention_patch(
+    lm: Any,
+    input_ids: torch.Tensor,
+    *,
+    layer_idx: int,
+    head_idx: int,
+    readout_pos: int,
+    target_pos: int,
+    donor_pos: int,
+    mode: str,
+    noise_seed: int,
+) -> ForwardReadout:
+    layer = _layer_modules(lm)[layer_idx]
+    attn_mod = layer.self_attn
+    original_forward = attn_mod.forward
+    captured: dict[str, torch.Tensor] = {}
+
+    def patched_forward(
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values: Any | None = None,
+        cache_position: torch.Tensor | None = None,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if past_key_values is not None:
+            raise NotImplementedError("M1.6 qwen3 patching expects a no-cache forward")
+        if position_embeddings is None:
+            raise RuntimeError("Qwen3 forward did not provide RoPE position embeddings")
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, attn_mod.head_dim)
+        q = attn_mod.q_norm(attn_mod.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        k = attn_mod.k_norm(attn_mod.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
+        v = attn_mod.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        q, k = _apply_rotary_pos_emb(q, k, *position_embeddings)
+        k = _repeat_kv(k, attn_mod.num_key_value_groups).clone()
+        v = _repeat_kv(v, attn_mod.num_key_value_groups).clone()
+        if mode in {"k", "both"}:
+            k[:, head_idx, target_pos, :] = k[:, head_idx, donor_pos, :]
+        if mode in {"v", "both"}:
+            v[:, head_idx, target_pos, :] = v[:, head_idx, donor_pos, :]
+        if mode == "noise":
+            gen = torch.Generator(device=hidden_states.device)
+            gen.manual_seed(noise_seed)
+            noise_k = torch.randn(k[:, head_idx, target_pos, :].shape, generator=gen, device=hidden_states.device, dtype=k.dtype)
+            noise_v = torch.randn(v[:, head_idx, target_pos, :].shape, generator=gen, device=hidden_states.device, dtype=v.dtype)
+            k_norm = torch.linalg.vector_norm(k[:, head_idx, target_pos, :], dim=-1, keepdim=True).clamp_min(1e-12)
+            v_norm = torch.linalg.vector_norm(v[:, head_idx, target_pos, :], dim=-1, keepdim=True).clamp_min(1e-12)
+            k[:, head_idx, target_pos, :] = noise_k * (k_norm / torch.linalg.vector_norm(noise_k, dim=-1, keepdim=True).clamp_min(1e-12))
+            v[:, head_idx, target_pos, :] = noise_v * (v_norm / torch.linalg.vector_norm(noise_v, dim=-1, keepdim=True).clamp_min(1e-12))
+        scores = torch.matmul(q, k.transpose(2, 3)) * attn_mod.scaling
+        if attention_mask is not None:
+            scores = scores + attention_mask[:, :, :, : k.shape[-2]]
+        else:
+            t = hidden_states.shape[1]
+            causal = torch.ones((t, t), dtype=torch.bool, device=hidden_states.device).tril()
+            scores = scores.masked_fill(~causal[None, None, :, :], float("-inf"))
+        weights = torch.softmax(scores, dim=-1, dtype=torch.float32).to(q.dtype)
+        captured["attention"] = weights[0, head_idx, readout_pos, :].detach().float()
+        z = torch.matmul(weights, v).transpose(1, 2).contiguous().reshape(*input_shape, -1)
+        return attn_mod.o_proj(z), weights
+
+    attn_mod.forward = patched_forward  # type: ignore[method-assign]
+    try:
+        with torch.no_grad():
+            output = lm.model(input_ids, use_cache=False)
+    finally:
+        attn_mod.forward = original_forward  # type: ignore[method-assign]
+    logits = _extract_logits(output)
+    probs = torch.softmax(logits[0, readout_pos, :], dim=-1).detach().float()
+    return ForwardReadout(probs=probs, attention=captured["attention"], logits=logits.detach().float())
+
+
+def _run_with_attention_patch(lm: Any, input_ids: torch.Tensor, **kwargs: Any) -> ForwardReadout:
+    if lm.tag == "nope-gpt-small":
+        return _run_nope_with_attention_patch(lm, input_ids, **kwargs)
+    if lm.tag == "qwen3":
+        return _run_qwen_with_attention_patch(lm, input_ids, **kwargs)
+    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small and --model qwen3")
 
 
 def _marker_probs(probs: torch.Tensor, marker_token_ids: list[int]) -> list[float]:
@@ -628,8 +730,8 @@ def run(args: argparse.Namespace) -> None:
     if args.repetitions < 128 and not args.allow_low_repetitions:
         raise RuntimeError("M1.6 v1.1 requires --repetitions >= 128; use --allow-low-repetitions only for smoke tests")
     lm = load_model(args.model, device=device, revision=args.revision)
-    if lm.tag != "nope-gpt-small":
-        raise NotImplementedError("This first M1.6 harness supports --model nope-gpt-small only")
+    if lm.tag not in {"nope-gpt-small", "qwen3"}:
+        raise NotImplementedError("M1.6 v1.1 harness supports --model nope-gpt-small and --model qwen3")
     stimuli, stimulus_gates = _select_g6_stimuli(
         lm,
         repetitions=args.repetitions,
@@ -653,11 +755,11 @@ def run(args: argparse.Namespace) -> None:
         donor_pos = stim.marker_positions[stim.marker_roles["donor"]]
         for layer in range(n_layers):
             for head in range(n_heads):
-                baseline = _run_nope_with_attention_patch(lm, input_ids, layer_idx=layer, head_idx=head, readout_pos=stim.readout_pos, target_pos=target_pos, donor_pos=donor_pos, mode="baseline", noise_seed=args.seed + unit)
+                baseline = _run_with_attention_patch(lm, input_ids, layer_idx=layer, head_idx=head, readout_pos=stim.readout_pos, target_pos=target_pos, donor_pos=donor_pos, mode="baseline", noise_seed=args.seed + unit)
                 gates.append(_neutrality_row(stim, baseline.probs) | {"layer": layer, "head": head})
                 base_probs = _marker_probs(baseline.probs, stim.marker_token_ids)
                 induction = _induction_metrics(stim, baseline.attention)
-                transitivity = _run_nope_with_attention_patch(lm, transitivity_ids, layer_idx=layer, head_idx=head, readout_pos=stim.transitivity_readout_pos, target_pos=target_pos if target_pos < len(stim.transitivity_input_ids) else 0, donor_pos=donor_pos if donor_pos < len(stim.transitivity_input_ids) else 0, mode="baseline", noise_seed=args.seed + 200_000 + unit)
+                transitivity = _run_with_attention_patch(lm, transitivity_ids, layer_idx=layer, head_idx=head, readout_pos=stim.transitivity_readout_pos, target_pos=target_pos if target_pos < len(stim.transitivity_input_ids) else 0, donor_pos=donor_pos if donor_pos < len(stim.transitivity_input_ids) else 0, mode="baseline", noise_seed=args.seed + 200_000 + unit)
                 trans_metrics = _transitivity_metrics(stim, transitivity)
                 base_target_attn = float(baseline.attention[target_pos].item())
                 base_donor_attn = float(baseline.attention[donor_pos].item())
@@ -693,7 +795,7 @@ def run(args: argparse.Namespace) -> None:
                 }
                 rows.append(common | {"patch_mode": "baseline", "target_attention": base_target_attn, "donor_attention": base_donor_attn, "target_prob": base_target_prob, "donor_prob": base_donor_prob, "target_attention_delta": 0.0, "donor_prob_delta": 0.0})
                 for mode in ("k", "v", "both", "noise"):
-                    patched = _run_nope_with_attention_patch(lm, input_ids, layer_idx=layer, head_idx=head, readout_pos=stim.readout_pos, target_pos=target_pos, donor_pos=donor_pos, mode=mode, noise_seed=args.seed + 100_000 + unit)
+                    patched = _run_with_attention_patch(lm, input_ids, layer_idx=layer, head_idx=head, readout_pos=stim.readout_pos, target_pos=target_pos, donor_pos=donor_pos, mode=mode, noise_seed=args.seed + 100_000 + unit)
                     probs = _marker_probs(patched.probs, stim.marker_token_ids)
                     target_attn = float(patched.attention[target_pos].item())
                     donor_attn = float(patched.attention[donor_pos].item())
@@ -752,7 +854,7 @@ def run(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="M1.6 addressing-vs-induction discriminator for NoPE-GPT-Small")
+    p = argparse.ArgumentParser(description="M1.6 addressing-vs-induction discriminator")
     p.add_argument("--model", default="nope-gpt-small", choices=sorted(MODEL_IDS))
     p.add_argument("--output-dir", default="outputs/k_address_space_m16_nope_gpt_small")
     p.add_argument("--device", default="cpu")

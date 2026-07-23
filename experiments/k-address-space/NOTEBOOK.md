@@ -1,5 +1,63 @@
 # K-address-space lab notebook
 
+## 2026-07-23 — K-address-space M1.6 Qwen3 v1.1 CUDA run prep
+
+### Question / Hypothesis
+
+Does Qwen3-0.6B's RoPE/GQA key space expose a query-readable repetition address under the corrected M1.6 v1.1 discriminator, or do the M1.5-style repeated-segment signals remain anti-collision/inert or induction-like rather than causal output-addressing?
+
+### Experiment Design Summary
+
+Run `kaddress.scripts.m16_discriminator` for `qwen3` (`Qwen/Qwen3-0.6B`) on RunPod CUDA with the final M1.6 v1.1 design: `R=128`, four stimuli, per-stimulus G6 marker search, G7 noise-controlled attention, output-above-noise addressing criterion, and mandatory altered-interior transitivity readout. The qwen3 harness patches query-head-local expanded K/V vectors after Qwen3 q/k RMSNorm and RoPE, so GQA heads are measured as per-query-head causal interventions while preserving the model's grouped key/value projections.
+
+### Planned Procedure
+
+1. Commit this pre-run notebook entry and the qwen3 M1.6 harness support.
+2. Bring up a RunPod CUDA pod using `scripts/runpod-bring-up`, initialize `/workspace` cache setup, and run through `scripts/cuda-run` with the shared `/workspace/venv`.
+3. Run a qwen3 CUDA tripwire matching the full command shape with `--repetitions 128 --limit-stimuli 1 --limit-layers 1 --limit-heads 1`; record progress rate and GPU/CPU utilization.
+4. If the tripwire is healthy, run the full qwen3 M1.6 v1.1 command across all layers/heads/stimuli with progress lines.
+5. Package outputs as `.tar.gz`, generate `SHA256SUMS`, publish through a GitHub Release, verify the release assets, analyse the CSVs, then complete this notebook entry.
+
+Planned full command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator \
+  --model qwen3 \
+  --device cuda \
+  --repetitions 128 \
+  --output-dir outputs/k_address_space_m16_qwen3_v11_cuda_20260723 \
+  --progress-every 20
+```
+
+### Expected Signal / Interpretation Plan
+
+- G6 must pass per stimulus after marker search; failed stimuli invalidate the run.
+- G7 requires Patch-K target-attention delta to exceed matched-noise attention by the registered margin.
+- Addressing requires both G7 attention redirection and donor-marker output movement above noise.
+- Attention movement without output movement is not addressing.
+- Match+1 attention and altered-interior marker tracking are used to assess whether induction explains the repeated-segment behavior.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.6.md` v1.1
+- Code branch: `main`
+- Pre-run commit: _pending_
+- Planned output location: `outputs/k_address_space_m16_qwen3_v11_cuda_20260723`
+- Checklist: `temp/repro-checklists/20260723-k-address-space-m16-qwen3-v11.md`
+- Local preparation evidence: `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (14 OK); `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m py_compile experiments/k-address-space/kaddress/scripts/m16_discriminator.py` passed. Local Transformers does not support qwen3, so qwen3 smoke is deferred to RunPod.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-23 — K-address-space M1.6 NoPE-GPT-Small v1.1 CUDA re-run prep
 
 ### Question / Hypothesis
