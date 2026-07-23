@@ -70,12 +70,18 @@ RoPE is a droppable scaffold," and the reason for this program.
 
 ## Relation to prior work
 
-The method (drop RoPE post-training) is **not novel** — DroPE owns it. The **novel-ish
-contribution this program targets is the mechanistic account**: *why* the scaffold is removable
-(E1 + E2 → C1–C3). See [`references/novelty-check.md`](references/novelty-check.md) for the gap
-analysis, including why [Deconstructing Positional Information (2505.13027)](references/novelty-check.md)
-— the nearest paper — does **not** cover the pre-rotation-key emergent-position claim. Full
-landscape in [`references/literature-survey.md`](references/literature-survey.md).
+The method (drop RoPE post-training) is **not novel** — DroPE owns it. An exhaustive novelty
+sweep (see [`references/novelty-check.md`](references/novelty-check.md)) further found that the
+program's *conceptual pillars are largely pre-existing*: "attention ≈ content-addressable
+memory" (Hopfield/Ramsauer 2020), the tape/delta-write framing (fast-weight programmers,
+Schlag/Irie 2021), and — critically — the epistemic core "**decodable ≠ causally used**" (already
+demonstrated for other latents in [2604.22128](https://arxiv.org/pdf/2604.22128)). So M1.6 is a
+*domain instance* of a known principle, not a new insight. **What remains genuinely open is
+narrow:** the specific causal measurement (position-in-K is non-addressable across the
+NoPE→full-RoPE gradient) and — the only piece that would be a new *result* rather than a new
+instance of an old idea — the **DroPE before/after (RS1)**. Consequence: RS1 is load-bearing;
+without it, reconsider whether the note is worth writing. Full landscape in
+[`references/literature-survey.md`](references/literature-survey.md).
 
 ## Planned experiments
 

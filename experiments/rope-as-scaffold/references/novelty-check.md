@@ -50,7 +50,50 @@ search confirms it is unclaimed.
 - **Outstanding before any claim of novelty:** (a) one targeted search on "pre-RoPE key emergent
   position in stamped models"; (b) the RS1 before/after run to make the DroPE link a *result*.
 
+## Exhaustive pass (2026-07-23) — prior art found, verdict refined downward
+
+A broader sweep (~14 queries across associative-memory, fast-weight, tie-breaking,
+causal-use, and position-head-interpretability framings) found substantial prior art for the
+program's *conceptual pillars*. The initial optimistic read above is refined: **the framing is
+largely pre-existing; only the specific causal measurement and the DroPE tie-in remain open.**
+
+Prior art per pillar:
+
+| framing pillar this program leans on | pre-existing work | status |
+|---|---|---|
+| "K / attention is content-addressable / associative memory" | Modern Hopfield ("Hopfield Networks is All You Need", Ramsauer et al. 2020); linear-attention = Hopfield | **established — do not claim** |
+| "tape / write-at-similar-key / delta-commit" memory | Fast-Weight Programmers (Schlag/Irie/Schmidhuber 2021); DeltaNet and its 2025–26 descendants | **established** |
+| "**decodable ≠ causally used**" (the epistemic core of M1.5→M1.6) | *Dissociating Decodability and Causal Use in Bracket-Sequence Transformers* ([2604.22128](https://arxiv.org/pdf/2604.22128)) — decodable depth/distance are causally inert, only top-of-stack is used | **established as a principle** — our M1.6 is a *domain instance*, not a new insight |
+| "position breaks ties / anti-collision among identical keys" | known property of PE under repeated tokens (softmax degeneracy; APE-keeps-sink vs RoPE/ALiBi-collapse literature) | **established** |
+| "RoPE is partly redundant / droppable" | DroPE; Selective RoPE ([2511.17388](https://arxiv.org/html/2511.17388v1)); half-dim RoPE | **established** |
+| "NoPE reconstructs position" | Haviv 2022; Kazemnejad 2023; [2501.00073](https://arxiv.org/abs/2501.00073); [2305.13571](https://arxiv.org/pdf/2305.13571) | **established** |
+| "RoPE concentrates position in shallow heads / deposit patterns" | [2505.13027](https://arxiv.org/html/2505.13027) (via selective-RoPE ablation) | **established, adjacent to P1.5.c** |
+| position/KV decoupled as a namespace for reuse | LazyAttention ([2606.04302](https://arxiv.org/pdf/2606.04302)) | **established (efficiency angle)** |
+
+**What genuinely remains unclaimed (narrowed):**
+- The **specific empirical result** — causal K/V patching showing the *positional* component of K
+  is decodable + attention-steerable but **not a query-readable retrieval address**, measured
+  **across the NoPE→full-RoPE gradient**, with the RoPE>NoPE steerability-without-addressing
+  contrast. Nobody ran *this* experiment — but it is an *instance* of decodability≠causal-use
+  (2604.22128), so the contribution is "a specific, clean instantiation on positional
+  information + the cross-PE comparison," not a new concept.
+- **P1.5.c** (pre-rotation emergent position at depth in stamped models) — still not directly
+  found; [2505.13027](https://arxiv.org/html/2505.13027)'s deposit-pattern result is the nearest
+  and must be cited/contrasted carefully.
+- The **DroPE mechanistic bridge** (E1+E2 → why removal is safe) — unclaimed **and unmeasured**;
+  RS1 is the only part that would be a genuinely new *result* rather than a new instance of an
+  old idea.
+
+**Revised recommendation.** The conceptual novelty is thin: every framing pillar has prior art,
+and the epistemic core (decodable ≠ causally used) is already published. A standalone note built
+only on M1.5/M1.6 would be a *small empirical instance* that must heavily cite Hopfield/Ramsauer,
+2604.22128, DroPE, and 2505.13027 — publishable at most as a short note, not a conceptual
+contribution. **RS1 (the DroPE before/after) is therefore not optional if the goal is a real
+contribution** — it is the one piece that converts this from "another instance of a known
+principle" into "mechanistic evidence about a specific method (DroPE)." Absent RS1, reconsider
+whether the tech note is worth writing.
+
 ## Open queries still to run
 
-- Precise search: pre-rotation-key emergent position in RoPE/stamped models (close out P1.5.c).
-- Whether anyone has causally shown position-in-K is non-addressable (close out M1.6 novelty).
+- Read 2604.22128 in full and position M1.6 explicitly as a positional-information instance of it.
+- One more targeted search on P1.5.c phrasing before claiming even the narrow pre-rotation result.
