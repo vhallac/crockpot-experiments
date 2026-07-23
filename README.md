@@ -7,6 +7,7 @@ A slow-simmering collection of transformer mechanistic-interpretability experime
 - [`experiments/dead-keys/`](experiments/dead-keys/) — census of dead keys across models, with follow-on RoPE and intervention phases.
 - [`experiments/queryability/`](experiments/queryability/) — paired `W_Q^T W_K` query/key geometry analysis.
 - [`experiments/k-address-space/`](experiments/k-address-space/) — pre-registered test of whether cached key vectors behave like content addresses, with RoPE acting as a positional namespace mechanism.
+- [`experiments/rope-as-scaffold/`](experiments/rope-as-scaffold/) — directed program testing whether RoPE's positional contribution is a removable training scaffold, motivated by the k-address-space M1.5/M1.6 findings and connecting to DroPE.
 
 Each group carries its own `README.md` (what it measures, expected signal, how to run it, result policy) and, where available, a `spec.md` pre-registration. Reproducible runs additionally keep a `NOTEBOOK.md` lab notebook in the experiment directory.
 
