@@ -114,6 +114,11 @@ apples-to-apples.
   directions, per layer.
 - **Native-NoPE reference (state 4):** M1.5 only, via a new model tag `nope-gpt-400m` reusing the
   existing `nope-gpt` hook path (`_capture_nope_k` on `qkv_proj`) — no new probe code. Inference-only.
+- **(OPTIONAL, nice-to-have) Length-extrapolation perplexity.** Evaluate each state (RoPE /
+  dropped / DroPE'd) at **1× and ~2× the recalibration context length** on the held-out slice.
+  External-validity garnish: confirms the DroPE'd model exhibits DroPE's *signature* benefit
+  (better extrapolation than RoPE). Inference-only, near-free. **Not load-bearing for C1/C2** —
+  omit freely; see P.RS1.e.
 
 ---
 
@@ -156,6 +161,12 @@ apples-to-apples.
   substantially overlaps the RoPE `k_post` positional subspace (principal-angle alignment above a
   random-rotation baseline). *Falsifier:* disjoint subspaces → emergent position is a *different*
   code, not a reconstruction of what RoPE supplied.
+- **(P.RS1.e — OPTIONAL, external-validity garnish)** The DroPE'd model extrapolates better than
+  the RoPE baseline: perplexity at ~2× context degrades less for DroPE'd than for RoPE — DroPE's
+  own signature benefit, reproduced as confirmation. **Not a requirement for C1/C2** and **no
+  falsifier gates the experiment on it**; it exists only to show our checkpoint behaves like a real
+  DroPE'd model. (Full LongBench/RULER length-gen benchmarking is deliberately *out of scope* —
+  DroPE owns that headline; RS1 needs only the perplexity-recovery reproduction in P.RS1.a.)
 
 ---
 

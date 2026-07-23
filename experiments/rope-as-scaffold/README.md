@@ -95,6 +95,18 @@ without it, reconsider whether the note is worth writing. Full landscape in
 RS1 is the load-bearing one: it converts the DroPE connection from *citation* to *result*.
 Each experiment gets its own `spec.md` (pre-registration) before running.
 
+### Candidate extensions (unscoped)
+
+- **RoPE as a training warmup for NoPE (proposed).** Instead of dropping RoPE from a fully
+  RoPE-pretrained model (RS1), use RoPE only as an *early scaffold* for an otherwise-NoPE run:
+  add RoPE for the unstable early phase (per DroPE's vanishing-gradient rationale), drop it early,
+  continue as NoPE. Question: *how little RoPE, and only when, is needed to get a good NoPE model?*
+  **Caveat — overlaps DroPE:** the basic "RoPE → train → de-RoPE beats from-scratch NoPE" loop is
+  essentially DroPE's own claim #2, so only the **minimal/early-warmup** refinement is potentially
+  novel. Mechanistic hook: P1.5.c suggests RoPE bootstraps the emergent-position circuitry, which —
+  once formed — may make RoPE dispensable early. **Requires from-scratch training** (a real step up
+  from RS1's recalibration-from-pretrained) and a **novelty check** before scoping. Not started.
+
 ## Result policy
 
 Follows repo conventions (`AGENTS.md`, `.pi/skills/reproducible-research`): committed spec +
