@@ -93,7 +93,31 @@ contribution** — it is the one piece that converts this from "another instance
 principle" into "mechanistic evidence about a specific method (DroPE)." Absent RS1, reconsider
 whether the tech note is worth writing.
 
+## P1.5.c targeted sweep (2026-07-23) — appears unclaimed
+
+A focused ~5-query sweep on the exact claim (RoPE-*stamped* models compute emergent position
+into the **pre-rotation** key stream at depth), plus a read of the nearest adjacent paper,
+found **no direct prior art**:
+
+- The well-established emergent-position results ([2203.16634](https://arxiv.org/pdf/2203.16634),
+  Kazemnejad, [2501.00073](https://arxiv.org/abs/2501.00073), [2305.13571](https://arxiv.org/pdf/2305.13571))
+  are all about **NoPE models**. P1.5.c is the **RoPE-model analog** — a smaller, distinct delta.
+- The **conventional framing explicitly assumes the opposite**: standard RoPE expositions state
+  "content lives in the *unrotated* representation, and the rotation frame encodes distance"
+  (i.e. pre-rotation keys are treated as position-free). P1.5.c *refutes that assumption at
+  depth*, and no source was found measuring it.
+- [2505.13027](https://arxiv.org/html/2505.13027) (deposit patterns) and
+  [2604.06070](https://arxiv.org/abs/2604.06070) (*Short Data, Long Context* — long-context
+  **distillation** via short data; positional propagation for the distillation signal) are the
+  nearest adjacent works; neither probes pre-rotation keys for emergent position by depth.
+
+**Verdict:** P1.5.c appears genuinely unclaimed — the narrowest but cleanest novel empirical
+point in the program — with the usual caveat that this is a web sweep (~19 queries total), not a
+systematic review, and the general NoPE emergent-position result makes it an *analog*, not a
+first-of-kind. It runs *against* the textbook "pre-rotation = pure content" assumption, which is
+its main claim to interest.
+
 ## Open queries still to run
 
-- Read 2604.22128 in full and position M1.6 explicitly as a positional-information instance of it.
-- One more targeted search on P1.5.c phrasing before claiming even the narrow pre-rotation result.
+- Read 2604.22128 in full and position M1.6 explicitly as a positional-information instance of it
+  (owner: user, in progress).
