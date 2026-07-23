@@ -53,6 +53,18 @@ Primary subject: **Qwen3-0.6B** (base). Three probed states on a **single held-o
 3. **DroPE'd** — RoPE removed *and* the model recalibrated per the DroPE recipe (below), then
    re-probed. This is the load-bearing state.
 
+Plus one **native-NoPE reference profile** (not part of the transition — a static comparison
+target, M1.5 only):
+
+4. **Native NoPE** — a model that learned NoPE from scratch, to answer *"did the DroPE'd model
+   become a proper NoPE, or a partial one leaning on residual RoPE-era circuitry?"* Primary:
+   **`andrewdalpino/NoPE-GPT-400M-Base`** (20L, hidden 1280, GQA 20Q/5KV, head-dim 64, ctx 8192,
+   `nope_gpt` family — same hook path as the existing `nope-gpt-small`, so harness reuse is a new
+   model tag `nope-gpt-400m`, not new probe code). ~400M is the same size *class* as Qwen3-0.6B.
+   Optional robustness reference: **`starmpcc/NoPE_1.5B_FW_EDU_15T`** (Llama-3 arch, 15T tokens —
+   the "Behind RoPE" checkpoint), better-trained but larger. Neither is a controlled match (see
+   §7); they bracket the reference, and the comparison is of **depth-profile shape**, not magnitude.
+
 ### 2.2 DroPE recipe (state 3)
 
 - Remove the rotary transform from all attention layers (keep QK-norm; the result is a
@@ -90,6 +102,8 @@ apples-to-apples.
 - **C2 analysis (secondary):** subspace overlap (CCA / principal-angle alignment) between the
   RoPE state's `k_post` positional directions and the DroPE'd state's emergent key-position
   directions, per layer.
+- **Native-NoPE reference (state 4):** M1.5 only, via a new model tag `nope-gpt-400m` reusing the
+  existing `nope-gpt` hook path (`_capture_nope_k` on `qkv_proj`) — no new probe code. Inference-only.
 
 ---
 
@@ -118,6 +132,12 @@ apples-to-apples.
   position. *Falsifier:* emergent position is absent in the DroPE'd model **yet** perplexity
   recovers → position was even more dispensable than "redundant" (a different, still-interesting
   result).
+- **(P.RS1.b′) Became a proper NoPE (native-NoPE contrast).** The DroPE'd model's emergent
+  key-position **depth-profile shape** matches the native-NoPE reference (characteristic
+  architectural-zero at L0 → rising with depth → plateau), not merely exceeds its own before-state.
+  *Falsifier:* the DroPE'd profile sits **well below** the native-NoPE reference (weak/absent
+  emergent position) → the recalibration produced a *partial* NoPE **leaning on residual RoPE-era
+  circuitry**, not a genuine reconstruction. (Read as *shape*, given the size/training confounds in §7.)
 - **(P.RS1.c) Addressing profile unchanged (C1 / E2).** The DroPE'd model shows **no more
   query-readable addressing** than the RoPE model (both null under M1.6). *Falsifier:* addressing
   **appears or disappears** across the transition → the positional component *was* doing something
@@ -138,6 +158,10 @@ apples-to-apples.
 - **a holds, b fails (perplexity recovers, no emergent position)** → position is *unnecessary*,
   not merely *redundant*; the model routes around it. Reframe the thesis (stronger claim about
   dispensability), still publishable.
+- **b holds but b′ fails (position fills in, but below the native-NoPE shape)** → the DroPE'd model
+  is a *partial* NoPE running partly on residual RoPE-era circuitry rather than a full
+  reconstruction → the "scaffold cleanly removed" claim is qualified; the matched-pair gold
+  standard (§7) becomes the needed follow-up.
 - **a fails (perplexity does not recover)** → DroPE does not replicate at 0.6B under our recipe →
   debug recipe (token budget, LR, corpus) or report a scope limit; do not over-interpret b/c on a
   broken model.
@@ -160,6 +184,13 @@ Any outcome is a reportable result; the point is to make the DroPE mechanism *me
   program. Pythia-410m (partial RoPE) is an optional robustness subject; a from-scratch small
   RoPE→DroPE model (matched data, full control of the before-state) is the stronger but heavier
   validation, deferred.
+- **The native-NoPE reference is not a controlled match.** NoPE-GPT-400M is ~400M vs Qwen3's 600M
+  (same class, not exact) and is *lightly trained* (FineWeb/SmolTalk/UltraFeedback) versus Qwen3's
+  heavy training, and uses a different tokenizer/data — so a profile *difference* could reflect
+  training budget or capacity, not the RoPE→dropped history. Mitigations: (i) compare **shape**,
+  not magnitude; (ii) bracket with the better-trained-but-larger `NoPE_1.5B` reference; (iii) the
+  only fully-controlled version is the deferred gold standard — a **matched-pair** RoPE+NoPE
+  trained from scratch on identical data, DroPE the RoPE one. Treat b′ as suggestive, not decisive.
 - **Compute step-up.** This is the first program experiment needing real training; a bad recipe
   can masquerade as a null (P.RS1.a falsifier + G-RS1.2 guard against silently accepting that).
 - **Reused-probe assumption.** M1.5/M1.6 are validated on the RoPE/NoPE states already; the only
@@ -175,7 +206,9 @@ Any outcome is a reportable result; the point is to make the DroPE mechanism *me
   run**, single GPU, order **1–3 days** rented; est. **~$50–150 GPU** depending on hardware. This
   is materially above the k-address-space "< $5" runs and is the honest price of turning the DroPE
   bridge into a result.
-- **Analysis** (M1.5/M1.6/C2 before-vs-after): CPU/GPU, reuses harness.
+- **Native-NoPE reference** (state 4, M1.5 on `nope-gpt-400m`; optional `NoPE_1.5B`): inference-only,
+  hours, ~free — one added model tag, no training.
+- **Analysis** (M1.5/M1.6/C2 before-vs-after + native-NoPE shape contrast): CPU/GPU, reuses harness.
 
 Follows the repo `reproducible-research` lifecycle: committed spec + pre-run notebook entry (a new
 `experiments/rope-as-scaffold/NOTEBOOK.md`), pre-run commit, published recalibrated-checkpoint +
