@@ -1,5 +1,65 @@
 # K-address-space lab notebook
 
+## 2026-07-23 — K-address-space M1.6 Qwen3 v1.1 RoPE k_pre CUDA re-run prep
+
+### Question / Hypothesis
+
+Does Qwen3-0.6B's RoPE/GQA key space expose a query-readable repetition address when the M1.6 donor K patch is applied to `k_pre` (post Q/K norm, pre-RoPE) and then rotated into the target slot's position, or do the repeated-segment signals remain anti-collision/inert or induction-like rather than causal output-addressing?
+
+### Experiment Design Summary
+
+Run `kaddress.scripts.m16_discriminator` for `qwen3` (`Qwen/Qwen3-0.6B`) on RunPod CUDA with M1.6 v1.1 at `R=128`, four stimuli, per-stimulus G6 marker search, G7 noise-controlled attention, output-above-noise addressing criterion, and mandatory altered-interior transitivity readout. The RoPE-specific correction in commit `4ea8fc4` patches qwen3 K before `_apply_rotary_pos_emb`, so donor content is transplanted while target-slot RoPE supplies the target position; the previous post-RoPE `k_post` transplant is treated as confounded and superseded.
+
+### Planned Procedure
+
+1. Review the M1.6 addendum and qwen3 patch implementation for protocol/code alignment and CUDA suitability.
+2. Commit this fresh pre-run notebook state.
+3. Bring up a RunPod CUDA pod using `scripts/runpod-bring-up`, initialize `/workspace` cache setup, and run through `scripts/cuda-run` with the shared `/workspace/venv`.
+4. Run a qwen3 CUDA tripwire matching the full command shape with `--repetitions 128 --limit-stimuli 1 --limit-layers 1 --limit-heads 1`; record progress rate and GPU/CPU utilization.
+5. If the tripwire is healthy, run the full qwen3 M1.6 v1.1 RoPE `k_pre` command across all layers/heads/stimuli with progress lines.
+6. Package outputs as `.tar.gz`, generate `SHA256SUMS`, publish through a GitHub Release, verify the release assets, analyse the CSVs, then complete this notebook entry.
+
+Planned full command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator \
+  --model qwen3 \
+  --device cuda \
+  --repetitions 128 \
+  --output-dir outputs/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723 \
+  --progress-every 20
+```
+
+### Expected Signal / Interpretation Plan
+
+- G6 must pass per stimulus after marker search; failed stimuli invalidate the run.
+- G7 requires Patch-K target-attention delta to exceed matched-noise attention by the registered margin.
+- Addressing requires both G7 attention redirection and donor-marker output movement above noise.
+- Attention movement without output movement is not addressing.
+- Match+1 attention and altered-interior marker tracking are used to assess whether induction explains the repeated-segment behavior.
+- For RoPE models, a null after `k_pre` patching is interpretable as lack of content-addressing under this instrument; it is not the donor-position-rotation confound of the interrupted `k_post`-patch run.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.6.md` v1.1, including RoPE `k_pre` patch-stage clarification
+- Code branch: `main`
+- Pre-run commit: _pending_
+- Planned output location: `outputs/k_address_space_m16_qwen3_v11_rope_kpre_cuda_20260723`
+- Checklist: `temp/repro-checklists/20260723-k-address-space-m16-qwen3-v11.md`
+- Local preparation evidence: `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (14 OK); `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m py_compile experiments/k-address-space/kaddress/scripts/m16_discriminator.py` passed. Local Transformers does not support qwen3, so qwen3 execution sanity is deferred to RunPod.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-23 — K-address-space M1.6 Qwen3 v1.1 CUDA run prep
 
 ### Question / Hypothesis
@@ -41,22 +101,26 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP
 
 - Spec: `experiments/k-address-space/addendum-M1.6.md` v1.1
 - Code branch: `main`
-- Pre-run commit: _pending_
+- Pre-run commit: `292ea1f`; attention-mask fix commit before full run: `e5b0973`
 - Planned output location: `outputs/k_address_space_m16_qwen3_v11_cuda_20260723`
 - Checklist: `temp/repro-checklists/20260723-k-address-space-m16-qwen3-v11.md`
 - Local preparation evidence: `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (14 OK); `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m py_compile experiments/k-address-space/kaddress/scripts/m16_discriminator.py` passed. Local Transformers does not support qwen3, so qwen3 smoke is deferred to RunPod.
 
 ### Results
 
-_Pending run._
+Run interrupted by user on 2026-07-23T09:51Z before completion because the M1.6 RoPE addendum needs an additional hypothesis/measurement before this qwen3 run should be interpreted or published.
+
+Interruption evidence: full command was running on RunPod pod `t4q2qswjocnx0x` (`crockpot-debug-20260723092803`, NVIDIA L4) from commit `e5b0973`; log tail before termination showed progress through `760/1792` units at about `1.045` units/s, last reported slice `stimulus=M16_01 layer=19 head=7`, with GPU monitor samples at 96-100% utilization and about 5602 MiB used. The process PID `828` was terminated, and the RunPod pod was stopped with `desiredStatus=EXITED` at `2026-07-23 09:51:34 UTC`.
+
+No completed output package or release was produced for this interrupted run.
 
 ### Analysis
 
-_Pending output analysis._
+Not analysed. The partial run is intentionally superseded by the planned RoPE-specific addendum update and must not be treated as a completed qwen3 M1.6 result.
 
 ### Conclusion / Next Step
 
-_Pending._
+Revise `experiments/k-address-space/addendum-M1.6.md` with the new RoPE hypothesis/measurement, then rerun qwen3 M1.6 from a fresh pre-run entry/checklist.
 
 ## 2026-07-23 — K-address-space M1.6 NoPE-GPT-Small v1.1 CUDA re-run prep
 
