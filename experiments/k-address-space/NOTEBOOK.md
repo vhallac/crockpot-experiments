@@ -41,22 +41,61 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-run 
 
 - Spec: `experiments/k-address-space/addendum-M1.6.md`
 - Code branch: `main`
-- Pre-run commit: _pending_
+- Pre-run commit: `0b7c9a9`
 - Planned output location: `outputs/k_address_space_m16_nope_gpt_small_cuda_20260723`
 - Checklist: `temp/repro-checklists/20260723-k-address-space-m16-nope.md`
 - Local preparation evidence: `./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (13 OK); local 1-stimulus/1-layer/1-head smoke wrote M1.6 outputs and passed G6.
 
 ### Results
 
-_Pending run._
+Run command on RunPod NVIDIA L4 from pre-run commit `0b7c9a9`:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --device cuda \
+  --limit-stimuli 1 \
+  --output-dir outputs/k_address_space_m16_nope_gpt_small_cuda_20260723 \
+  --progress-every 20
+```
+
+The `--limit-stimuli 1` scope is a deliberate G6 recovery: a full four-prefix run completed but failed marker neutrality on some prefixes, so those patching results were discarded as pre-registered-invalid. The rerun keeps full all-layer/all-head NoPE coverage (`24 × 16 = 384` heads) on the first prefix, whose marker set passes G6.
+
+Run evidence: log reports `starting M1.6 discriminator model=nope-gpt-small device=cuda stimuli=1 layers=24 heads=16`, progress through `units=384/384` at about `19.75/s`, and writes all four output files. The manifest records `gate_g6_pass=PASS`, `summary_rows=1920`, `classification_rows=384`, and environment CUDA device `NVIDIA L4`. G6 has 384/384 passing rows, max/min marker-probability ratio `1.2096`.
+
+Published artifacts:
+
+- Release: https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m16-nope/20260723
+- Bundle: `k_address_space_m16_nope_gpt_small_cuda_20260723.tar.gz`
+- SHA256: `5a8d42e6adc6fa2a6d79714ba78a8a0b223ca79f3e76489b122448eb165fc33c`
+
+Per-head classification counts:
+
+| classification | heads |
+|---|---:|
+| mixed | 130 |
+| anti_collision_or_content_driven | 104 |
+| confounded_noise_sensitive | 76 |
+| addressing | 33 |
+| induction | 26 |
+| inert | 15 |
+
+Layer pattern: addressing-classified heads cluster mainly in late layers 17–23 (28 of 33), while inert heads are almost entirely layer 8 (13 of 15). Mixed heads are common across the stack.
 
 ### Analysis
 
-_Pending output analysis._
+M1.6 does not support a single global explanation for NoPE's M1.5 key-position geometry. The dominant result is heterogeneity: many heads are mixed or content/anti-collision-like, but a non-trivial late-layer minority satisfies the implemented addressing criterion. Addressing-classified heads have large K-patch target-attention redirection (mean `+0.192`) and small but positive donor-probability movement under K+V patching (mean `+0.00183`). The strongest examples are late-layer heads such as L18H13 (`K attention delta +0.454`, induction mass `0.938`), L19H3 (`+0.447`, induction mass `0.907`), L19H7 (`+0.431`, induction mass `0.9997`), and L22H8 (`+0.411`, induction mass `0.979`).
+
+Induction is also clearly present. Even heads classified as addressing often have high match+1 mass, and the top induction masses are near 1.0. This means the positive addressing evidence should not be read as “addressing instead of induction”; in this stimulus, the address-like K dial and induction-like match+1 concentration frequently co-occur. The pure induction bucket is smaller (26 heads) because many high-induction heads also show K-patch redirection or output effects and therefore become mixed/addressing under the current decision rules.
+
+The noise control matters: 76 heads are classified as noise-confounded because norm-matched random overwrites perturb donor probability at least as much as donor patches. Those heads should not be used as evidence for content-specific patch selection. Similarly, the `anti_collision_or_content_driven` bucket (104 heads) has near-zero K redirection and near-zero donor-probability deltas, with low induction mass on average (`0.0196`), so it remains compatible with inert/anti-collision interpretations for those heads.
+
+Caveat: because G6 only passed for the first prefix under the current fixed marker vocabulary, this run is all-head but one-stimulus. It is enough to reject a uniform “position is pure inert ballast everywhere” account, but it is not enough for stable prevalence estimates across prompts. The next improved M1.6 pass should choose marker sets per prefix (or search neutral marker combinations before patching) and add the sharper altered-interior transitivity test.
 
 ### Conclusion / Next Step
 
-_Pending._
+NoPE-GPT-Small shows a mixed M1.6 outcome. Some late-layer heads behave as if K's position-like component is causally usable by Q, but induction-style attention is also strong and often coexists with that behavior. The tape/address-space framing survives only in a qualified, per-head form; the global mechanism is not pure addressing, pure induction, or pure anti-collision. Next step: strengthen M1.6 with per-stimulus marker-neutral vocabulary search and the altered-interior transitivity test before using these counts as a model-level taxonomy.
 
 ## Known corpus defect F8 — all M1 Track A results are retracted
 

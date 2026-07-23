@@ -1,0 +1,43 @@
+{
+  "experiment_id": "k-address-space-m16-nope",
+  "date": "2026-07-23",
+  "spec": "experiments/k-address-space/addendum-M1.6.md",
+  "pre_run_commit": "0b7c9a9",
+  "final_commit": "pending",
+  "model": "nope-gpt-small",
+  "hf_id": "andrewdalpino/NoPE-GPT-Small-Base",
+  "revision": "320681e33a029517e27c68a0f9c2b07ea0004155",
+  "run_command": "PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator --model nope-gpt-small --revision 320681e33a029517e27c68a0f9c2b07ea0004155 --device cuda --limit-stimuli 1 --output-dir outputs/k_address_space_m16_nope_gpt_small_cuda_20260723 --progress-every 20",
+  "environment": {
+    "host": "RunPod pod oybk56w5yveys5",
+    "gpu": "NVIDIA L4",
+    "cuda_wrapper": "scripts/cuda-run",
+    "venv": "/workspace/venv"
+  },
+  "local_output_dir": "outputs/k_address_space_m16_nope_gpt_small_cuda_20260723",
+  "release_url": "https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m16-nope/20260723",
+  "assets": [
+    {
+      "name": "k_address_space_m16_nope_gpt_small_cuda_20260723.tar.gz",
+      "sha256": "5a8d42e6adc6fa2a6d79714ba78a8a0b223ca79f3e76489b122448eb165fc33c",
+      "url": "https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m16-nope/20260723/k_address_space_m16_nope_gpt_small_cuda_20260723.tar.gz"
+    },
+    {
+      "name": "SHA256SUMS_k_address_space_m16_nope_gpt_small_cuda_20260723",
+      "url": "https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m16-nope/20260723/SHA256SUMS_k_address_space_m16_nope_gpt_small_cuda_20260723"
+    }
+  ],
+  "result_summary": {
+    "gate_g6_pass": true,
+    "summary_rows": 1920,
+    "classification_rows": 384,
+    "classification_counts": {
+      "mixed": 130,
+      "anti_collision_or_content_driven": 104,
+      "confounded_noise_sensitive": 76,
+      "addressing": 33,
+      "induction": 26,
+      "inert": 15
+    }
+  }
+}
