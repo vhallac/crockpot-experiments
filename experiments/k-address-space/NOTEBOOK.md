@@ -123,6 +123,14 @@ The transitivity readout is not strong head-specific evidence in this summary. I
 
 Compared with the pre-fix derived artifacts, the corrected rule removes the false-positive `L21H8` aggregate addressing call and reduces G7 passes from 77 to 39. The remaining late-layer heads (`L24H15`, `L25H14`) are best treated as weak/equivocal candidates, not as a confirmed query-readable tape address.
 
+**Added post-review (recomputed from the published CSVs).** Three points the summary above leaves implicit — the first two matter for the cross-model story.
+
+1. **The `k_pre` fix worked, and Qwen3 is *more* steerable than NoPE at the attention level.** Content-specific K-patch attention redirection (K-patch attn minus noise-patch attn) reaches **+0.170** across the 448 heads, with **9 heads > 0.10** — versus NoPE v1.1 (R=128), where it collapsed to a max of ~+0.05 and essentially no heads > 0.10. So full RoPE gives a genuinely stronger, content-specific positional handle in the keys than NoPE's emergent position does. This is a real RoPE > NoPE gradient in *attention* steerability, even though (per below) it does not translate into robust output-addressing.
+
+2. **The output effect is real in relative terms but stimulus-confounded, not head-addressing.** Baseline donor-marker probability is tiny at R=128 (mean `~5.6e-4`), so the two "addressing" heads' `~5–6e-4` shifts are ~1–2× baseline, not negligible. But per-stimulus, **both** heads spike on the **same single stimulus, M16_01** (L24H15: `+2.0e-3`, +1.7× base, K-attn +0.21; L25H14: `+2.0e-3`, +1.7× base) and are flat on the other three. M16_01 also has the **highest baseline donor prob** (`1.15e-3` vs `~3–5e-4`). Two different heads lighting up on the same, easiest stimulus points to a **stimulus-level** effect (that marker set is more reachable), not a head-level address — which is why "fragile" is the right call. There is at most a hint (L24H15 on M16_01 shows the clean attention-redirect + output-follow signature), but it does not reproduce.
+
+3. **Transitivity is fully uninformative here.** The altered-marker rank is a constant `4` across **all four stimuli and all 448 heads** (head- *and* stimulus-independent), so `transitivity_confirmed=448` is a threshold artifact carrying zero mechanistic signal — even more degenerate than the NoPE run (which at least varied per stimulus). Induction vs anti-collision stays unadjudicated; the instrument, not the mechanism, is the limit.
+
 ### Conclusion / Next Step
 
 M1.6 Qwen3 v1.1 RoPE `k_pre` does **not** provide robust evidence that Qwen3 exposes a query-readable repetition address under this instrument. The defensible conclusion is a null/equivocal result: raw measurements are valid and two late heads weakly satisfy the aggregate addressing rule after correction, but the effect is one-stimulus-fragile, small in output, and not separated cleanly from induction/readout-level behavior.
