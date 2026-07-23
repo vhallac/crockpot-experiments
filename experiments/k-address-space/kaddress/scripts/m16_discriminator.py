@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import random
 import time
@@ -457,8 +456,7 @@ def _search_g6_stimulus(
         # then sample the expanded vocabulary. Exact G6 is evaluated after marker
         # insertion, so cheap random search is more reliable than base-frequency
         # sorting for prefixes whose inserted probe words perturb the readout.
-        for combo in itertools.combinations(range(min(len(candidates), 16)), len(PROBED_MARKER_ROLES)):
-            yield combo
+        yield tuple(range(len(PROBED_MARKER_ROLES)))
         while True:
             yield tuple(sorted(rng.sample(range(len(candidates)), len(PROBED_MARKER_ROLES))))
 
@@ -765,7 +763,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit-stimuli", type=int, default=None)
     p.add_argument("--limit-layers", type=int, default=None)
     p.add_argument("--limit-heads", type=int, default=None)
-    p.add_argument("--max-marker-sets", type=int, default=256)
+    p.add_argument("--max-marker-sets", type=int, default=512)
     p.add_argument("--attention-margin", type=float, default=0.02)
     p.add_argument("--output-margin", type=float, default=1e-4)
     p.add_argument("--progress-every", type=int, default=20)
