@@ -69,11 +69,21 @@ target, M1.5 only):
 
 - Remove the rotary transform from all attention layers (keep QK-norm; the result is a
   NoPE+QK-norm model).
-- **Recalibrate** on a generic corpus (e.g. FineWeb-Edu / C4 / OpenWebText subset) at the model's
-  original context length, for a **small token budget** in the DroPE range (target ~1–2B tokens,
-  ≤ a few % of pretraining-scale; exact count fixed at build time, bounded and recorded).
-- Standard LM objective, cosine LR decay, a single seed. Record every hyperparameter in the
-  manifest. No architecture change beyond the rotation removal.
+- **Recalibrate** on **FineWeb-Edu `sample-10BT`** (`HuggingFaceFW/fineweb-edu`, open ODC-BY,
+  streamable) — the corpus DroPE used *and* the data lineage of the NoPE-GPT-400M reference, so
+  recipe, subject, and reference share a distribution. Take ~1–2B tokens of its ~10B for training
+  (bounded, recorded), tokenize with **Qwen3's tokenizer**, pre-tokenize once to a mmap'd shard
+  (**uint32**; Qwen3 vocab ~152k). Original context length; standard LM objective, cosine LR decay,
+  single seed; record every hyperparameter.
+- **Eval slice:** hold out a **disjoint ~5–10M-token** slice of the same corpus for the perplexity
+  measurement used across *all three* states (and gate G-RS1.2) — matched train/eval distribution
+  so the before/after perplexity delta isolates *position*, not domain. This slice is needed from
+  the first (inference-only) stage.
+- **Data caveat:** Qwen3 is multilingual + code + math; FineWeb-Edu is English web, so the
+  recalibrated model shifts toward English web. Controlled for the position claim by the matched
+  held-out eval; optionally add small code/multilingual eval slices to *characterize* the shift,
+  but do not treat the recalibrated checkpoint as a general Qwen3.
+- No architecture change beyond the rotation removal.
 
 Note: this is the program's **first experiment that requires actual training** (a real, if light,
 GPU commitment — see §7), unlike the inference-only k-address-space runs.
