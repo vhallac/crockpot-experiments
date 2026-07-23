@@ -202,32 +202,52 @@ class PositionContentStatsTests(unittest.TestCase):
 
 
 class M16BuildTests(unittest.TestCase):
-    def test_m16_builds_single_token_marker_stimuli_with_interior_target(self):
+    def test_m16_builds_probed_only_marker_stimuli_with_interior_target(self):
         from kaddress.scripts import m16_discriminator as m16
 
         tokenizer = FakeTokenizer()
-        build = m16.build_stimuli(tokenizer, repetitions=8, limit_stimuli=1)
+        build = m16.build_stimuli(tokenizer, repetitions=128, limit_stimuli=1)
         self.assertEqual(len(build), 1)
         stim = build[0]
-        self.assertEqual(len(stim.markers), 8)
-        self.assertEqual(len(stim.marker_positions), 8)
+        self.assertEqual(len(stim.markers), 4)
+        self.assertEqual(len(stim.marker_positions), 4)
+        self.assertEqual(len(stim.continuation_positions), 128)
         self.assertGreater(stim.target_rep, 0)
-        self.assertLess(stim.target_rep, len(stim.markers) - 1)
+        self.assertLess(stim.target_rep, 127)
         self.assertNotEqual(stim.target_rep, stim.donor_rep)
+        self.assertNotEqual(stim.altered_rep, stim.target_rep)
         self.assertEqual(stim.readout_pos, len(stim.input_ids) - 1)
+        marker_position_set = set(stim.marker_positions)
+        self.assertEqual(len(marker_position_set), 4)
+        marked_reps = {i for i, pos in enumerate(stim.continuation_positions) if pos in marker_position_set}
+        self.assertEqual(marked_reps, {stim.target_rep, stim.donor_rep, stim.altered_rep, stim.readout_rep})
 
     def test_m16_induction_metrics_use_marker_positions_as_match_plus_one(self):
         from kaddress.scripts import m16_discriminator as m16
         import torch
 
         tokenizer = FakeTokenizer()
-        stim = m16.build_stimuli(tokenizer, repetitions=4, limit_stimuli=1)[0]
+        stim = m16.build_stimuli(tokenizer, repetitions=8, limit_stimuli=1)[0]
         attn = torch.zeros(len(stim.input_ids))
-        for pos in stim.marker_positions:
+        for pos in stim.continuation_positions:
             attn[pos] = 0.1
         metrics = m16._induction_metrics(stim, attn)
-        self.assertAlmostEqual(metrics['induction_match_plus_one_mass'], 0.4, places=6)
+        self.assertAlmostEqual(metrics['induction_match_plus_one_mass'], 0.8, places=6)
         self.assertAlmostEqual(metrics['induction_most_recent_match_plus_one_mass'], 0.1, places=6)
+
+    def test_m16_classification_requires_attention_and_output_above_noise_for_addressing(self):
+        from kaddress.scripts import m16_discriminator as m16
+
+        rows = pd.DataFrame([
+            {'layer': 0, 'head': 0, 'patch_mode': 'baseline', 'target_attention_delta': 0.0, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'k', 'target_attention_delta': 0.20, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'v', 'target_attention_delta': 0.0, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'both', 'target_attention_delta': 0.20, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+            {'layer': 0, 'head': 0, 'patch_mode': 'noise', 'target_attention_delta': 0.19, 'donor_prob_delta': 0.0, 'induction_match_plus_one_mass': 0.01, 'transitivity_altered_marker_prob': 0.0, 'transitivity_altered_marker_rank': 100},
+        ])
+        classified = m16._classification(rows, attention_margin=0.02, output_margin=1e-4)
+        self.assertNotEqual(classified.iloc[0]['classification'], 'addressing')
+        self.assertFalse(bool(classified.iloc[0]['g7_noise_controlled_attention_pass']))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,64 @@
 # K-address-space lab notebook
 
+## 2026-07-23 — K-address-space M1.6 NoPE-GPT-Small v1.1 CUDA re-run prep
+
+### Question / Hypothesis
+
+Does the compact NoPE-GPT-Small key-position signal from M1.5 act as a query-readable address at the M1.5 scale (`R >= 128`), or is the v1.0 attention-moves/output-null result better explained by anti-collision/inert key cargo or transitive induction? This v1.1 re-run implements the addendum corrections C1-C3 before interpreting any model-level taxonomy.
+
+### Experiment Design Summary
+
+Run `kaddress.scripts.m16_discriminator` for `nope-gpt-small` (`andrewdalpino/NoPE-GPT-Small-Base`, revision `320681e33a029517e27c68a0f9c2b07ea0004155`) on RunPod CUDA with the v1.1 harness. The repaired implementation keeps all non-probed repetitions marker-free, marks only target/donor/altered/readout repetitions, searches marker sets separately per stimulus for G6 neutrality, records noise-patch target-attention deltas for G7, requires addressing to pass both attention-above-noise and output-above-noise, and runs the altered-interior transitivity readout for every layer/head.
+
+### Planned Procedure
+
+1. Commit this pre-run notebook entry, the v1.1 script changes, and smoke tests.
+2. Bring up a RunPod CUDA pod with `scripts/runpod-bring-up`, initialize the network-volume cache, and use `/workspace/venv` through `scripts/cuda-run` / `scripts/cuda-python`.
+3. Run a CUDA tripwire matching the real command shape with `--repetitions 128 --limit-stimuli 1 --limit-layers 1 --limit-heads 1`; record progress rate, utilization, and extrapolated runtime.
+4. If the tripwire is GPU-bound and within budget, run the full NoPE v1.1 command on CUDA with all four stimuli and progress lines enabled.
+5. Package outputs as `.tar.gz`, generate `SHA256SUMS`, publish via a GitHub Release, verify release assets, analyse the CSVs, then complete this notebook entry.
+
+Planned full command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --device cuda \
+  --repetitions 128 \
+  --output-dir outputs/k_address_space_m16_nope_gpt_small_v11_cuda_20260723 \
+  --progress-every 20
+```
+
+### Expected Signal / Interpretation Plan
+
+- G6 must pass per stimulus after marker search; failed stimuli invalidate patching readouts rather than being averaged in.
+- G7 requires Patch-K target-attention delta to exceed norm-matched-noise target-attention delta by the pre-set margin.
+- Addressing requires both G7 attention redirection and donor-marker output movement above the noise-output baseline.
+- Attention-above-noise with output-null is not addressing; it supports anti-collision/inert attention-only behavior.
+- High match+1 mass plus altered-marker tracking in the mandatory transitivity stimulus supports transitive induction.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.6.md` v1.1
+- Code branch: `main`
+- Pre-run commit: _pending_
+- Planned output location: `outputs/k_address_space_m16_nope_gpt_small_v11_cuda_20260723`
+- Checklist: `temp/repro-checklists/20260723-k-address-space-m16-nope-v11.md`
+- Local preparation evidence: `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (14 OK); R=128 1-stimulus/1-layer/1-head local smoke wrote `outputs/k_address_space_m16_nope_v11_r128_local_smoke` with `gate_g6_pass=PASS`.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-23 — K-address-space M1.6 NoPE-GPT-Small CUDA run prep
 
 ### Question / Hypothesis
