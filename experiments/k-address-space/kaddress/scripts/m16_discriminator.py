@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,142 @@ CANDIDATE_MARKERS = [
     "surely",
     "calmly",
     "once",
+    "then",
+    "always",
+    "often",
+    "usually",
+    "sometimes",
+    "perhaps",
+    "maybe",
+    "likely",
+    "certainly",
+    "possibly",
+    "already",
+    "finally",
+    "simply",
+    "mostly",
+    "really",
+    "actually",
+    "gradually",
+    "quickly",
+    "slowly",
+    "carefully",
+    "steadily",
+    "gently",
+    "softly",
+    "plainly",
+    "directly",
+    "exactly",
+    "fully",
+    "partly",
+    "equally",
+    "nearly",
+    "slightly",
+    "newly",
+    "recently",
+    "previously",
+    "currently",
+    "meanwhile",
+    "afterward",
+    "before",
+    "after",
+    "here",
+    "there",
+    "locally",
+    "globally",
+    "jointly",
+    "separately",
+    "together",
+    "apart",
+    "onward",
+    "forward",
+    "back",
+    "away",
+    "around",
+    "inside",
+    "outside",
+    "above",
+    "below",
+    "near",
+    "far",
+    "first",
+    "second",
+    "third",
+    "next",
+    "last",
+    "final",
+    "initial",
+    "fresh",
+    "clean",
+    "neutral",
+    "common",
+    "ordinary",
+    "regular",
+    "constant",
+    "stable",
+    "simple",
+    "plain",
+    "blank",
+    "quiet",
+    "calm",
+    "fair",
+    "even",
+    "mild",
+    "spare",
+    "extra",
+    "other",
+    "same",
+    "different",
+    "small",
+    "large",
+    "short",
+    "long",
+    "low",
+    "high",
+    "real",
+    "true",
+    "false",
+    "good",
+    "better",
+    "best",
+    "worst",
+    "weak",
+    "strong",
+    "loose",
+    "tight",
+    "open",
+    "closed",
+    "empty",
+    "full",
+    "round",
+    "square",
+    "sharp",
+    "dull",
+    "bright",
+    "dark",
+    "warm",
+    "cool",
+    "hot",
+    "cold",
+    "dry",
+    "wet",
+    "thin",
+    "thick",
+    "light",
+    "heavy",
+    "basic",
+    "advanced",
+    "major",
+    "minor",
+    "prime",
+    "solid",
+    "rough",
+    "smooth",
+    "public",
+    "private",
+    "central",
+    "remote",
+    "local",
 ]
 
 PROBED_MARKER_ROLES = ("target", "donor", "altered", "readout")
@@ -307,11 +444,28 @@ def _search_g6_stimulus(
     repetitions: int,
     device: torch.device,
     max_marker_sets: int,
+    seed: int,
 ) -> tuple[M16Stimulus, dict[str, Any]]:
-    candidates, candidate_ids = _single_token_markers(lm.tokenizer, min(len(CANDIDATE_MARKERS), 16))
+    candidates, candidate_ids = _single_token_markers(lm.tokenizer, len(CANDIDATE_MARKERS))
     checked = 0
     best: tuple[float, M16Stimulus, dict[str, Any]] | None = None
-    for combo in itertools.combinations(range(len(candidates)), len(PROBED_MARKER_ROLES)):
+    seen: set[tuple[int, ...]] = set()
+    rng = random.Random(seed)
+
+    def candidate_combos() -> Any:
+        # Try a small deterministic prefix first for stable historical behavior,
+        # then sample the expanded vocabulary. Exact G6 is evaluated after marker
+        # insertion, so cheap random search is more reliable than base-frequency
+        # sorting for prefixes whose inserted probe words perturb the readout.
+        for combo in itertools.combinations(range(min(len(candidates), 16)), len(PROBED_MARKER_ROLES)):
+            yield combo
+        while True:
+            yield tuple(sorted(rng.sample(range(len(candidates)), len(PROBED_MARKER_ROLES))))
+
+    for combo in candidate_combos():
+        if combo in seen:
+            continue
+        seen.add(combo)
         markers = [candidates[i] for i in combo]
         marker_ids = [candidate_ids[i] for i in combo]
         stim = _build_one_stimulus(
@@ -335,7 +489,10 @@ def _search_g6_stimulus(
         if checked >= max_marker_sets:
             break
     assert best is not None
-    return best[1], best[2]
+    raise RuntimeError(
+        f"G6 marker search failed for {stimulus_id} after {checked} sets; "
+        f"best_ratio={best[0]:.3f} best_markers={best[2]['selected_markers']}"
+    )
 
 
 def _select_g6_stimuli(lm: Any, *, repetitions: int, limit_stimuli: int | None, device: torch.device, max_marker_sets: int) -> tuple[list[M16Stimulus], list[dict[str, Any]]]:
@@ -357,6 +514,7 @@ def _select_g6_stimuli(lm: Any, *, repetitions: int, limit_stimuli: int | None, 
             repetitions=repetitions,
             device=device,
             max_marker_sets=max_marker_sets,
+            seed=17_003 + stim_i,
         )
         stimuli.append(stim)
         gates.append(gate)
