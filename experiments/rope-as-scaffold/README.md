@@ -87,7 +87,7 @@ without it, reconsider whether the note is worth writing. Full landscape in
 
 | id | claim | sketch | cost |
 |---|---|---|---|
-| **RS1** | C1 | DroPE recipe on a small model + before/after M1.5/M1.6 probes (the "M1.7" increment) | needs light training — step up from k-address-space's inference-only runs |
+| **RS1** ([spec](RS1-spec.md)) | C1 (+C2) | DroPE recipe on Qwen3-0.6B + before/after M1.5/M1.6 probes (the "M1.7" increment) | needs light training — step up from k-address-space's inference-only runs |
 | RS2 | C2 | emergent-vs-RoPE positional subspace overlap on the RS1 checkpoints | analysis-only |
 | RS3 | C3 | task/perplexity ablations along a local-order axis vs a retrieval axis, RoPE vs dropped | eval harness |
 | RS4 | C4 | E1/E2 spot-check on one >0.6B model | GPU |
