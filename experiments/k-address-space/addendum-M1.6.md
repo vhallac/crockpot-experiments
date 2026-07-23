@@ -1,7 +1,12 @@
-# ADDENDUM §5-M1.6 — Hypothesis Discriminator: Addressing vs Anti-Collision vs Transitive Induction
+# ADDENDUM §5-M1.6 v1.1 — Hypothesis Discriminator: Addressing vs Anti-Collision vs Transitive Induction
 
-**Dated:** 2026-07-21
-**Status:** pre-registered, not yet run
+**Dated:** 2026-07-23
+**Supersedes:** v1.0 (pre-run commit `6f45f91`, retained unmodified in git history —
+`git show 6f45f91:experiments/k-address-space/addendum-M1.6.md`). This is a corrections
+revision, not a rewrite of the predictions: all P1.6.* in §5 are unchanged. §10 records the
+adjudication after the first (v1.0-design) NoPE run.
+**Status:** pre-registered; v1.0 run once on NoPE-GPT-Small (2026-07-23), superseded by the
+v1.1 re-run (pending).
 **Parent:** builds on M1.5's confirmed result (position is ~1-2 dimensions, ~94% decodable
 from K by mid-depth in NoPE-GPT-Small). Does not modify M1.5; M1.5's gates and stimuli are
 reused where possible.
@@ -9,6 +14,19 @@ reused where possible.
 future extensions.
 **Budget:** < $5. Reuses M1.5 extraction hooks; adds one patched forward pass and one
 attention-readout pass per stimulus. CPU-feasible.
+
+---
+
+## CHANGELOG v1.0 → v1.1
+
+Three design defects surfaced by the first NoPE run (`nope-gpt-small`, 2026-07-23) and its
+review. All are spec-level; v1.0's predictions are unchanged.
+
+| # | Defect | Level | Fix |
+|---|---|---|---|
+| **C1** | **Marker design caps R (§2.1).** "Each repetition ends in a *distinct* single-token continuation marker" bounds R by the neutral-marker vocabulary size; the run got **R = 4**, versus the M1.5 regime (R = 128–248) whose signal M1.6 is meant to probe. Whether the M1.5 position signal even exists at R=4 is unestablished, so the run could not bear on M1.5. | **SPEC** | §2.1 places distinct markers **only at the probed repetitions** (target r\*, donor r′, altered-interior, readout); all other repetitions are marker-free. R_min ≥ 128 is restored by reusing M1.5 Family A generation. The per-repetition-distinct requirement is dropped. |
+| **C2** | **Noise control was applied to output only, not attention (§3/§4.1).** The addressing call keyed on K-patch *attention* redirection, but the norm-matched-noise control was compared only against the output/donor-probability readout. Noise redirects attention as much as a donor K-patch (run: noise +0.179 vs donor +0.192), so the attention criterion was uncontrolled — producing a phantom 33-head "addressing" bucket. | **SPEC** | §3/§4.1 make the norm-matched-noise control mandatory on **both** the attention-redirection and the output readouts; extraction records a noise-attention delta (new gate G7), and the addressing criterion must exceed it. |
+| **C3** | **Addressing was callable on attention alone; transitivity was skipped (§4.1/§4.2.3).** The §4.1 key let attention-redirect-alone read as addressing, and §4.2.3 transitivity — the sharp discriminator — was treated as optional and not run, so induction vs anti-collision stayed unadjudicated. | **SPEC** | §4.1 requires addressing = attention redirects **above noise** AND output follows **above noise**; attention-moves/output-null is explicitly *not* addressing. §4.2.3 transitivity becomes **mandatory** and is the deciding measurement whenever patch-K output is null. |
 
 ---
 
@@ -60,10 +78,18 @@ This is the causal version of two things already in the program:
 
 Reuses M1.5 Family A generation (§5-M1.5 v1.1 §2.1), with one mandatory addition.
 
-### 2.1 Continuation-divergence marker
+### 2.1 Continuation-divergence marker — REVISED v1.1 (fixes C1)
 
-Each repetition of the segment must end in a **distinct one-word continuation**, so that
-selection has a checkable behavioral signature rather than only an attention-weight signature.
+**v1.1 change:** distinct markers are placed **only at the probed repetitions** — the target
+r\*, the donor r′, the altered-interior repetition (§4.2.3), and the final readout — not on
+every repetition. All other repetitions are left marker-free (a shared neutral continuation or
+none), so the segment can be repeated at the **M1.5 scale (R_min ≥ 128)** using M1.5 Family A
+generation directly. v1.0 required a distinct marker on *every* repetition, which capped R at
+the neutral-marker vocabulary size (the first run got R = 4) and severed the link to the M1.5
+regime this test is meant to probe.
+
+Only the probed repetitions need a checkable behavioral signature: the divergence markers exist
+so selection has a next-token signature there, rather than only an attention-weight signature.
 
 ```
 "Alice is a successful engineer today."
@@ -72,10 +98,13 @@ selection has a checkable behavioral signature rather than only an attention-wei
 ...
 ```
 
-- Continuation vocabulary: R distinct, single-token (verify per tokenizer), semantically
-  interchangeable words, so next-token probability is otherwise unbiased between them absent
-  any selection mechanism. Candidates: `{today, again, still, now, once, indeed, truly, ...}`
-  — filter to single-token per model, as Family B should have done (§5-M1.5 v1.1 D1).
+- Marker vocabulary for the probed slots: a small set of single-token (verify per tokenizer),
+  semantically interchangeable words — enough distinct markers for {r\*, r′, altered-interior,
+  readout}, not for all R. Next-token probability across the markers actually used must be
+  unbiased absent any selection mechanism (that is G6). Candidates: `{today, again, still, now,
+  once, indeed, truly, ...}`, filtered to single-token per model. Because only a handful of
+  markers are needed, per-stimulus neutral-marker selection is cheap — search for a G6-passing
+  set before patching rather than reusing one fixed set across stimuli.
 - Record the continuation-token id per repetition in the stimulus metadata.
 - The probed readout is the model's next-token distribution at the final query position
   (after the last full repetition, at the point where the next word would be predicted), or,
@@ -107,6 +136,13 @@ Reuses M1.5 hooks. Two additional captures:
 - **Full attention weight matrix** at the readout position, over all cached positions —
   not just the aggregate statistics M1.5 recorded, but the raw per-key weight, so induction
   score and patched-vs-unpatched attention deltas can be computed exactly.
+- **Noise-patch attention delta (REVISED v1.1, fixes C2).** For every head, record the
+  target-attention delta induced by the norm-matched-noise control patch, not only its effect
+  on the output/donor probability. The addressing criterion (§4.1) is defined against this
+  noise-attention baseline; without it, "K-patch redirects attention" is uncontrolled, because
+  overwriting a key with *any* vector — donor or noise — perturbs the softmax. In the v1.0 run,
+  noise moved target attention +0.179 vs the donor's +0.192 (nearly equal), so the effect was
+  generic perturbation, not content-specific selection.
 
 **Gate G6 — marker neutrality (new).** Before any patching, verify that in an **unpatched**
 stimulus, next-token probability across the R continuation words is roughly uniform
@@ -115,6 +151,14 @@ strongly prefers one continuation word irrespective of position, the marker voca
 biased and must be replaced — this gate must be able to fail, and should be tested against a
 deliberately biased vocabulary (e.g. reusing "again" for two different repetitions) to confirm
 it can.
+
+**Gate G7 — noise-controlled attention (new, v1.1, fixes C2).** A head may be considered for an
+addressing call only if its donor K-patch target-attention delta exceeds its noise-patch
+target-attention delta by a pre-set margin. This is the attention-side analogue of the noise
+control the addendum already required on the output side. The gate must be able to fail, and
+does: in the v1.0 run almost no head clears it (donor +0.192 ≈ noise +0.179 for the bucket that
+v1.0 mislabelled "addressing"). Heads that fail G7 are perturbation-sensitive, not address-like,
+regardless of how large their raw K-patch attention delta is.
 
 ---
 
@@ -138,14 +182,18 @@ For each stimulus, target r\*, donor r′, at every (layer, head) or at a select
   perturbation disrupts attention" from "patching does something because r′'s specific content
   was selected."
 
-**Interpretation key:**
+**Interpretation key — REVISED v1.1 (fixes C3).** "Redirects" below means **above the noise-patch
+attention baseline** (G7); "output follows" means the donor-marker probability shift exceeds the
+noise-patch output baseline. **Attention redirection alone is not addressing** — overwriting K
+with any vector perturbs the softmax, so the addressing row requires *both* effects above noise.
 
-| Patch-K effect | Patch-V effect | Reading |
+| Patch-K attention (vs noise) | Output (vs noise) | Reading |
 |---|---|---|
-| attention redirects to r\* as if reading r′ | output follows | **addressing**: K's position-like value is a dialable coordinate; Q can be steered by it |
-| no attention change | output follows content regardless | **content-driven selection, K position inert** — consistent with anti-collision or induction (need §4.2 to split these) |
-| no attention change | no output change | neither K nor V position content is causally load-bearing here — position code may be pure ballast, or selection routes through a different part of the residual entirely |
-| noise-control produces same disruption as donor patch | — | effect is generic perturbation sensitivity, not selection of r′ specifically — **discard the K/V patch findings above**, they are confounded |
+| redirects to r\* above noise | follows toward r′ above noise | **addressing**: K's position-like value is a dialable coordinate Q can be steered by — the only cell that supports the tape/address framing |
+| redirects above noise | **null** (≤ noise) | **not addressing**: K content shapes attention weights but is not read into the output — anti-collision / inert-leaning; the position code is decodable and even attention-relevant but causally sterile for retrieval (**this is the v1.0 NoPE outcome**) |
+| no redirect above noise | follows above noise | content-driven selection, K position inert — anti-collision or induction (need §4.2, esp. §4.2.3, to split) |
+| no redirect above noise | null | neither K nor V position content is causally load-bearing — pure ballast, or selection routes elsewhere in the residual |
+| donor patch ≈ noise patch (attention *or* output) | — | generic perturbation sensitivity, not selection of r′ — **discard that head's patch findings**, confounded |
 
 ### 4.2 Induction score (tests transitive induction vs. addressing/anti-collision)
 
@@ -168,7 +216,13 @@ segment-length sweep is in place), these two predictions can be pulled apart: a 
 account degrades with absolute distance regardless of match structure; an induction account
 tracks the match position exactly regardless of how far back it sits.
 
-#### 4.2.3 Transitivity test (the sharp discriminator)
+#### 4.2.3 Transitivity test (the sharp discriminator) — MANDATORY in v1.1 (fixes C3)
+
+**v1.1 change:** this test is required, not optional, and is the deciding measurement whenever
+the patch-K output effect (§4.1) is null — which is the v1.0 NoPE outcome. It is the only
+measurement that cleanly separates transitive induction from anti-collision. A v1.1 run that
+omits it does not adjudicate the mechanism and is incomplete.
+
 In the altered-interior stimulus (§2.2): swap one interior repetition's continuation to a
 unique marker word, and construct the sequence so this altered repetition is the most recent
 match at the point where a synthetic query with matching preceding-token context is inserted.
@@ -277,3 +331,23 @@ patch. Any of the three is a real, reportable result.
 - **Step 4** (~30 min): classification table, `REPORT-M1.6.md` with P1.6.a–e adjudicated.
 
 Estimated total: **< $5**, CPU-feasible throughout, no new model downloads.
+
+---
+
+## 10. Adjudication after run 1 (v1.0 design, `nope-gpt-small`, 2026-07-23)
+
+Run under the v1.0 design (R = 4, single G6-valid stimulus, transitivity not run). Full results
+and the corrected reading are in the lab notebook (M1.6 NoPE entry, 2026-07-23). Summary:
+
+| prediction | status | evidence |
+|---|---|---|
+| **P1.6.a** G6 holds | **PASS** | marker max/min ratio 1.21 < 3 on the valid prefix |
+| **P1.6.b** noise < donor disruption | **FAILS on attention** (C2) | noise-patch target-attention +0.179 ≈ donor +0.192; output readout was at noise for the flagged heads |
+| **P1.6.c** patch-K redirects attention → addressing | **NO — addressing not supported** | output-following null across all 384 heads (max donor-marker shift +0.010 over a ~0.036 baseline). ~25 late-layer heads (L17–22) show content-specific attention redirection (e.g. L19H7 K +0.43 vs noise −0.07), but it does not propagate to output → attention-moves/output-null = anti-collision/inert, not addressing |
+| **P1.6.d** induction present | **PRESENT** (expected, not a finding) | match+1 mass high, ~0.58 mean among flagged heads, top near 1.0 |
+| **P1.6.e** transitivity decides if P1.6.c negative | **NOT RUN** | §4.2.3 skipped under v1.0; induction vs anti-collision therefore unadjudicated |
+
+**Verdict:** weak evidence **against** causal addressing at this scale/regime; the tape-as-address
+framing is weakened. **Superseded by the v1.1 re-run** — probed-only markers at R ≥ 128 (C1),
+multi-stimulus with per-stimulus G6 marker search, noise-controlled attention via G7 (C2), and
+mandatory §4.2.3 transitivity (C3) — pending.
