@@ -202,10 +202,16 @@ Any outcome is a reportable result; the point is to make the DroPE mechanism *me
 
 - **RS1a** (states 1–2, inference + M1.5/M1.6 re-run on eval set): hours; reuses harness; ~free
   beyond a GPU session. Gate G-RS1.1/G-RS1.2 checked here before committing to training.
-- **RS1b** (recalibration ~1–2B tokens on 0.6B + re-probe): the cost — a **real, light training
-  run**, single GPU, order **1–3 days** rented; est. **~$50–150 GPU** depending on hardware. This
-  is materially above the k-address-space "< $5" runs and is the honest price of turning the DroPE
-  bridge into a result.
+- **RS1b** (recalibration ~1–2B tokens on 0.6B + re-probe): a **single-GPU, few-hour** job, not a
+  cluster job. Compute ≈ 6·N·T ≈ 5×10¹⁸ FLOPs → **~3–4 h on one H100, ~10 h on one A100, ~15–20 h
+  on one 24 GB 4090**. Full FT of 0.6B needs only ~7 GB (bf16 weights + grads + AdamW states), so a
+  **24 GB card suffices** — no 80 GB GPU, no multi-node. Cost **~$6–16** on a single RunPod pod
+  (A100-80GB ~$1.39/hr, H100-SXM ~$1.49/hr), **~$5** on Vast.ai (4090 ~$0.3/hr, interruptible →
+  checkpoint every ~15 min), or possibly **free** under Modal's $30/mo credit. **Full-parameter,
+  not LoRA:** dropping RoPE is a large mechanistic shift where LoRA underperforms, and full FT is
+  cheap at this size. Tooling: HF Transformers + rotary-identity monkeypatch (reuse
+  `m16_discriminator._apply_rotary_pos_emb`) + streamed FineWeb-Edu, packed to context. (Earlier
+  "1–3 days / ~$50–150" estimate was over-conservative and is corrected here.)
 - **Native-NoPE reference** (state 4, M1.5 on `nope-gpt-400m`; optional `NoPE_1.5B`): inference-only,
   hours, ~free — one added model tag, no training.
 - **Analysis** (M1.5/M1.6/C2 before-vs-after + native-NoPE shape contrast): CPU/GPU, reuses harness.
