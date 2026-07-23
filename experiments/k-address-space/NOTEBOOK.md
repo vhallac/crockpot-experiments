@@ -85,17 +85,65 @@ Layer pattern: addressing-classified heads cluster mainly in late layers 17–23
 
 ### Analysis
 
-M1.6 does not support a single global explanation for NoPE's M1.5 key-position geometry. The dominant result is heterogeneity: many heads are mixed or content/anti-collision-like, but a non-trivial late-layer minority satisfies the implemented addressing criterion. Addressing-classified heads have large K-patch target-attention redirection (mean `+0.192`) and small but positive donor-probability movement under K+V patching (mean `+0.00183`). The strongest examples are late-layer heads such as L18H13 (`K attention delta +0.454`, induction mass `0.938`), L19H3 (`+0.447`, induction mass `0.907`), L19H7 (`+0.431`, induction mass `0.9997`), and L22H8 (`+0.411`, induction mass `0.979`).
+> **Interpretation corrected 2026-07-23 (post-review).** The raw counts/numbers in Results
+> are accurate, but the original reading below over-stated the evidence for addressing. Two
+> errors: (1) it treated K-patch *attention* redirection as addressing without noise-controlling
+> that criterion; (2) it did not weight the **null output-following**, which is the decisive
+> measurement. Corrected analysis follows.
 
-Induction is also clearly present. Even heads classified as addressing often have high match+1 mass, and the top induction masses are near 1.0. This means the positive addressing evidence should not be read as “addressing instead of induction”; in this stimulus, the address-like K dial and induction-like match+1 concentration frequently co-occur. The pure induction bucket is smaller (26 heads) because many high-induction heads also show K-patch redirection or output effects and therefore become mixed/addressing under the current decision rules.
+**Output-following is null across all heads — the decisive result.** Addressing (addendum §4.1)
+requires attention to redirect *and* the output to follow. It does not follow: patch-both (donor
+K+V into the target slot) moves the donor marker's next-token probability by at most `+0.010` in
+the single best head (L17H9), against a baseline donor prob of `~0.036` and a noise floor of
+`~0.001`; the max content-specific output shift across all 384 heads is `+0.010`. No head
+causally steers the readout toward the donor's continuation. By the addendum's own key, this is
+**not** the addressing quadrant.
 
-The noise control matters: 76 heads are classified as noise-confounded because norm-matched random overwrites perturb donor probability at least as much as donor patches. Those heads should not be used as evidence for content-specific patch selection. Similarly, the `anti_collision_or_content_driven` bucket (104 heads) has near-zero K redirection and near-zero donor-probability deltas, with low induction mass on average (`0.0196`), so it remains compatible with inert/anti-collision interpretations for those heads.
+**The 33-head "addressing" bucket is an artifact of an un-noise-controlled attention criterion.**
+The classifier keys on K-patch attention redirection, but the noise control was applied only to
+the output readout (`mean_noise_abs_donor_prob_delta`), not to attention — there is no
+noise-attention column. Noise-controlled, the bucket collapses: addressing-classified heads show
+K-patch attention delta `+0.192` versus **noise-patch attention delta `+0.179`** — essentially
+equal, i.e. generic perturbation, which the addendum key says to discard. Only ~25 heads (mostly
+L17–22) show genuinely content-specific redirection where noise does *not* move attention — e.g.
+L19H7 (`K +0.431` vs `noise −0.065`), L22H8 (`+0.411` vs `−0.068`), L19H3 (`+0.447` vs `+0.037`).
+For those ~25 heads the attention redirection is real, but it still does not propagate to the
+output (per the null above). So the honest reading is: **some late-layer heads redirect attention
+content-specifically under a K-patch, but nothing is read into the output** — attention-moves /
+output-null, which the decision tree maps to **anti-collision / inert**, not addressing.
 
-Caveat: because G6 only passed for the first prefix under the current fixed marker vocabulary, this run is all-head but one-stimulus. It is enough to reject a uniform “position is pure inert ballast everywhere” account, but it is not enough for stable prevalence estimates across prompts. The next improved M1.6 pass should choose marker sets per prefix (or search neutral marker combinations before patching) and add the sharper altered-interior transitivity test.
+Induction is present (P1.6.d), as expected in this maximally repetitive regime: match+1 mass is
+high in many heads (mean `~0.58` among the flagged heads, top near `1.0`). Per the addendum this
+is a baseline, not a finding, and the sharp discriminator that would confirm induction as *the*
+mechanism — the §4.2.3 altered-interior transitivity test — was **not run**. So induction vs
+anti-collision is not finally adjudicated here.
+
+Caveats on scope: (1) **R = 4.** The stimulus is four repetitions (`soon/early/briefly/now`)
+because the distinct-single-token-marker requirement caps R at the marker-vocabulary size. That
+is 20–60× smaller than the M1.5 regime (R = 128–248) whose signal M1.6 is meant to probe;
+whether the M1.5 position signal is even present at R=4 is unestablished. This is a design
+tension in `addendum-M1.6.md` §2.1, not just this run. (2) **One stimulus** (G6 passed only for
+the first prefix), so no prevalence stability. (3) The `anti_collision_or_content_driven` bucket
+(104 heads) has near-zero K redirection, near-zero output deltas, and low induction mass
+(`0.0196`) — consistent with inert/anti-collision.
 
 ### Conclusion / Next Step
 
-NoPE-GPT-Small shows a mixed M1.6 outcome. Some late-layer heads behave as if K's position-like component is causally usable by Q, but induction-style attention is also strong and often coexists with that behavior. The tape/address-space framing survives only in a qualified, per-head form; the global mechanism is not pure addressing, pure induction, or pure anti-collision. Next step: strengthen M1.6 with per-stimulus marker-neutral vocabulary search and the altered-interior transitivity test before using these counts as a model-level taxonomy.
+M1.6 gives **weak evidence against** causal addressing in NoPE-GPT-Small at this scale and
+regime, not qualified support for it. Attention is content-specifically redirectable under a
+K-patch in ~25 late-layer heads, but the redirection does not propagate to the output in any
+head (max donor-marker shift `+0.010` over a `~0.036` baseline), and the aggregate "addressing"
+count was inflated by an attention criterion that was not noise-controlled. Read against the
+addendum decision tree, this leans anti-collision/inert with induction present; the
+tape-as-address framing is **weakened**, and the corpus-v3 M1 rerun stays low priority.
+
+This is a first-pass, single-stimulus, R=4 result and does not settle the mechanism. A proper
+M1.6 pass needs: (a) the §4.2.3 altered-interior **transitivity** test (the deciding measurement);
+(b) a **noise-controlled attention** criterion, not just noise-controlled output; (c)
+multi-stimulus runs with per-stimulus neutral markers; and (d) a resolution of the R=4-vs-M1.5
+regime gap — either raise R (needs a larger neutral-marker vocabulary or markers only at probe
+points) or explicitly scope M1.6's claims to the low-R regime. Until then these per-head counts
+should not be used as a model-level taxonomy.
 
 ## Known corpus defect F8 — all M1 Track A results are retracted
 
