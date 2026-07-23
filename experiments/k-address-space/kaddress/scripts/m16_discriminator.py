@@ -488,7 +488,11 @@ def _run_qwen_with_attention_patch(
             v[:, head_idx, target_pos, :] = noise_v * (v_norm / torch.linalg.vector_norm(noise_v, dim=-1, keepdim=True).clamp_min(1e-12))
         scores = torch.matmul(q, k.transpose(2, 3)) * attn_mod.scaling
         if attention_mask is not None:
-            scores = scores + attention_mask[:, :, :, : k.shape[-2]]
+            mask = attention_mask[:, :, :, : k.shape[-2]]
+            if mask.dtype == torch.bool:
+                scores = scores.masked_fill(~mask, float("-inf"))
+            else:
+                scores = scores + mask
         else:
             t = hidden_states.shape[1]
             causal = torch.ones((t, t), dtype=torch.bool, device=hidden_states.device).tril()
