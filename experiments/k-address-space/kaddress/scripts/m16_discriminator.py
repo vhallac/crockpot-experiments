@@ -470,7 +470,11 @@ def _run_qwen_with_attention_patch(
         q = attn_mod.q_norm(attn_mod.q_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         k = attn_mod.k_norm(attn_mod.k_proj(hidden_states).view(hidden_shape)).transpose(1, 2)
         v = attn_mod.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        q, k = _apply_rotary_pos_emb(q, k, *position_embeddings)
+        # v1.1 fix (RoPE addressing test): transplant the donor's PRE-rotation key (k_pre) into
+        # the target slot, then rotate — so the donor CONTENT is re-addressed to target_pos by
+        # RoPE instead of carrying the donor's own position rotation. Patching post-rotation
+        # (k_post) would confound content with the donor's absolute position and make the
+        # addressing readout uninterpretable. V is unrotated, so its patch stage is immaterial.
         k = _repeat_kv(k, attn_mod.num_key_value_groups).clone()
         v = _repeat_kv(v, attn_mod.num_key_value_groups).clone()
         if mode in {"k", "both"}:
@@ -486,6 +490,10 @@ def _run_qwen_with_attention_patch(
             v_norm = torch.linalg.vector_norm(v[:, head_idx, target_pos, :], dim=-1, keepdim=True).clamp_min(1e-12)
             k[:, head_idx, target_pos, :] = noise_k * (k_norm / torch.linalg.vector_norm(noise_k, dim=-1, keepdim=True).clamp_min(1e-12))
             v[:, head_idx, target_pos, :] = noise_v * (v_norm / torch.linalg.vector_norm(noise_v, dim=-1, keepdim=True).clamp_min(1e-12))
+        # Rotate after patching: each slot (including the patched target) is rotated by its own
+        # position, so the transplanted donor content is addressed to target_pos. RoPE preserves
+        # norm, so the norm-matched noise control above stays valid across the rotation.
+        q, k = _apply_rotary_pos_emb(q, k, *position_embeddings)
         scores = torch.matmul(q, k.transpose(2, 3)) * attn_mod.scaling
         if attention_mask is not None:
             mask = attention_mask[:, :, :, : k.shape[-2]]

@@ -170,6 +170,16 @@ For each stimulus, target r\*, donor r′, at every (layer, head) or at a select
 (start with the heads M1.5 flagged as carrying the position signal, e.g. those with
 `ridge_r2 > 0.9` at that depth):
 
+**Patch stage for RoPE models (REVISED v1.1, C2/C3 clarification).** For rotary models
+(pythia/qwen3) the K-patch is applied to `k_pre` (**pre-rotation**), and RoPE is then applied so
+the transplanted donor content is re-addressed to r\*'s position. Patching `k_post` (the literal
+cached, already-rotated key) transplants the donor's *own position rotation* along with its
+content, confounding content with absolute position and making the addressing readout
+uninterpretable — a null could be a position mismatch rather than absent addressing. NoPE has no
+rotation, so its single K is patched directly. A separate rotation-only swap (target content,
+donor rotation) may be used to test position-as-coordinate, but the primary content-addressing
+test uses the pre-rotation patch.
+
 - **Patch-K.** Overwrite the cached K vectors at r\*'s slot(s) with r′'s K vectors (V
   untouched). Re-run the forward from that point; record (a) attention weight at the readout
   position onto r\*'s slot before vs. after, (b) next-token probability shift toward r′'s
