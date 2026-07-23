@@ -1,0 +1,34 @@
+{
+  "experiment_id": "k-address-space-m16-nope-v1.1",
+  "date": "2026-07-23",
+  "spec": "experiments/k-address-space/addendum-M1.6.md",
+  "pre_run_commit": "fcb2bd7",
+  "final_commit": "recorded in release notes and completion report after this manifest commit",
+  "model": "nope-gpt-small",
+  "hf_id": "andrewdalpino/NoPE-GPT-Small-Base",
+  "revision": "320681e33a029517e27c68a0f9c2b07ea0004155",
+  "hardware": "RunPod NVIDIA L4",
+  "run_command": "PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator --model nope-gpt-small --revision 320681e33a029517e27c68a0f9c2b07ea0004155 --device cuda --repetitions 128 --output-dir outputs/k_address_space_m16_nope_gpt_small_v11_cuda_20260723 --progress-every 20",
+  "local_output_dir": "outputs/k_address_space_m16_nope_gpt_small_v11_cuda_20260723",
+  "release_url": "https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m16-nope/20260723-2",
+  "assets": [
+    {
+      "name": "k_address_space_m16_nope_gpt_small_v11_cuda_20260723.tar.gz",
+      "sha256": "8f7f6051eb17fcd0dbf06c4f3e1b9aa116827b2f7b93899c92fb57fcee214f00",
+      "url": "https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m16-nope/20260723-2/k_address_space_m16_nope_gpt_small_v11_cuda_20260723.tar.gz"
+    },
+    {
+      "name": "SHA256SUMS_k_address_space_m16_nope_gpt_small_v11_cuda_20260723",
+      "url": "https://github.com/vhallac/crockpot-experiments/releases/download/run/k-address-space-m16-nope/20260723-2/SHA256SUMS_k_address_space_m16_nope_gpt_small_v11_cuda_20260723"
+    }
+  ],
+  "manifest_highlights": {
+    "repetitions": 128,
+    "stimulus_count": 4,
+    "summary_rows": 7680,
+    "classification_rows": 384,
+    "gate_g6_pass": "PASS",
+    "gate_g7_pass_count": 4,
+    "transitivity_confirmed_count": 0
+  }
+}

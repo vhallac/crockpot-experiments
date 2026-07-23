@@ -42,22 +42,69 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP
 
 - Spec: `experiments/k-address-space/addendum-M1.6.md` v1.1
 - Code branch: `main`
-- Pre-run commit: _pending_
+- Pre-run commit: `fcb2bd7`
 - Planned output location: `outputs/k_address_space_m16_nope_gpt_small_v11_cuda_20260723`
 - Checklist: `temp/repro-checklists/20260723-k-address-space-m16-nope-v11.md`
 - Local preparation evidence: `PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (14 OK); R=128 1-stimulus/1-layer/1-head local smoke wrote `outputs/k_address_space_m16_nope_v11_r128_local_smoke` with `gate_g6_pass=PASS`.
 
 ### Results
 
-_Pending run._
+Run command on RunPod NVIDIA L4 from valid pre-run commit `fcb2bd7`:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space DEAD_KEYS_CUDA_SKIP_INSTALL=1 ./scripts/cuda-run -m kaddress.scripts.m16_discriminator \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --device cuda \
+  --repetitions 128 \
+  --output-dir outputs/k_address_space_m16_nope_gpt_small_v11_cuda_20260723 \
+  --progress-every 20
+```
+
+Redo note: the first full v1.1 run completed but was discarded because G6 failed for one stimulus (`M16_01` ratio `4.25`). The harness was fixed to expand marker search, sample exact candidate sets, and abort if G6 cannot pass; the valid run below is after that redo.
+
+Run evidence: the CUDA tripwire over all four stimuli with `--limit-layers 1 --limit-heads 1` passed G6 and ran at `~1.75` units/s with ~99-100% GPU utilization. The full run log reports `starting M1.6 discriminator model=nope-gpt-small device=cuda stimuli=4 layers=24 heads=16 repetitions=128`, progress through `units=1520/1536` at `~1.76` units/s, then writes all four output files. Manifest highlights: `repetitions=128`, `stimulus_count=4`, `summary_rows=7680`, `classification_rows=384`, `gate_g6_pass=PASS`, `gate_g7_pass_count=4`, `transitivity_confirmed_count=0`.
+
+G6 per-stimulus marker search:
+
+| stimulus | max/min ratio | searched sets | selected markers |
+|---|---:|---:|---|
+| M16_00 | 2.295 | 46 | `soon,quietly,forward,third` |
+| M16_01 | 2.759 | 40 | `previously,final,tight,square` |
+| M16_02 | 1.767 | 12 | `currently,there,away,different` |
+| M16_03 | 2.734 | 64 | `truly,steadily,cool,solid` |
+
+Published artifacts:
+
+- Release: https://github.com/vhallac/crockpot-experiments/releases/tag/run/k-address-space-m16-nope/20260723-2
+- Bundle: `k_address_space_m16_nope_gpt_small_v11_cuda_20260723.tar.gz`
+- SHA256: `8f7f6051eb17fcd0dbf06c4f3e1b9aa116827b2f7b93899c92fb57fcee214f00`
+- Git-side manifest: `experiments/k-address-space/artifacts/m16_nope_v11_20260723_manifest.json`
+
+Per-head classification counts:
+
+| classification | heads |
+|---|---:|
+| confounded_noise_sensitive | 201 |
+| mixed | 65 |
+| induction_unconfirmed | 51 |
+| inert | 35 |
+| anti_collision_or_content_driven | 28 |
+| anti_collision_or_inert_attention_only | 4 |
 
 ### Analysis
 
-_Pending output analysis._
+The v1.1 result is stronger against the address-reading interpretation than the v1.0 run. **No heads classify as addressing.** Only 4/384 heads pass G7, and all four are `anti_collision_or_inert_attention_only`: Patch-K target attention exceeds matched-noise attention, but output does not follow. Their donor-probability shifts under patch-both are tiny (`~3e-08`, `1e-07`, `1.5e-06`, `7e-08`) and `output_above_noise=False` in all cases. Across all rows, the largest patch-both donor-probability shift is only `7.7e-06`, below the largest absolute noise-output shift (`3.5e-05`).
+
+Most late/mid-depth heads are labelled `confounded_noise_sensitive` because the K-patch attention movement is not cleanly above the noise-patch attention movement. This directly confirms why C2 mattered: raw attention perturbation is common, but content-specific/noise-controlled attention redirection is rare.
+
+Induction-style match+1 attention is present in many heads but the altered-interior transitivity output test does **not** confirm transitive induction as the output mechanism. Mean match+1 mass across heads is `0.210`, with top heads near `0.94`, but `transitivity_confirmed_count=0`. The altered marker's output rank is stimulus-dependent and head-independent in this harness (e.g. rank 3 for one stimulus, rank 42/750/1647 for the others), so it reads as marker/base-rate behavior rather than systematic head-level transitive copying.
+
+Layer pattern: layers 9-16 are dominated by `confounded_noise_sensitive`; layers 0-8 contain most `inert` and low-effect anti-collision/content-driven heads; the four G7-passing attention-only heads are late (L17H6, L18H11, L20H7, L22H8). This is compatible with late attention perturbability without a causal output read.
 
 ### Conclusion / Next Step
 
-_Pending._
+At the M1.5 scale (`R=128`) with probed-only markers, per-stimulus G6, G7 noise-controlled attention, and mandatory transitivity, NoPE-GPT-Small shows **no evidence for query-readable addressing** in M1.6. The cleanest positive effect is limited to four late heads where K-patching moves attention above noise, but none moves the output above noise. Transitivity is not confirmed, so this run does not replace addressing with a clean transitive-induction account; instead it supports a conservative reading: the M1.5 key-position signal is decodable and sometimes attention-relevant, but causally sterile for next-token retrieval in this instrument. The tape-as-address framing should remain retired/down-scoped for NoPE-GPT-Small unless a future design finds output-following under a less marker-sensitive transitivity readout.
 
 ## 2026-07-23 — K-address-space M1.6 NoPE-GPT-Small CUDA run prep
 
