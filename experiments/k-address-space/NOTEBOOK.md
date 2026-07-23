@@ -1,5 +1,63 @@
 # K-address-space lab notebook
 
+## 2026-07-23 — K-address-space M1.6 NoPE-GPT-Small CUDA run prep
+
+### Question / Hypothesis
+
+Does the compact, highly decodable repetition-position signal found in NoPE-GPT-Small keys by M1.5 act as a usable address read by queries, or is it better explained by anti-collision/inert cargo or ordinary transitive induction? M1.6 discriminates these accounts with marker-neutral continuation stimuli, per-head K/V patching, noise controls, and induction-score readouts.
+
+### Experiment Design Summary
+
+Run `kaddress.scripts.m16_discriminator` for `nope-gpt-small` (`andrewdalpino/NoPE-GPT-Small-Base`) on RunPod CUDA. The implementation constructs repeated Family-A-style clauses ending in distinct single-token continuation markers, checks G6 marker neutrality on the unpatched next-token distribution, then for each selected NoPE layer/head performs baseline, K-only, V-only, K+V, and norm-matched-noise patch passes at an interior target marker slot using a separated donor marker slot. The first implementation is NoPE-only because it patches the audited NoPE attention module directly; RoPE pre/post generalization is deferred.
+
+### Planned Procedure
+
+1. Commit this pre-run notebook entry, the M1.6 script, and smoke tests.
+2. Bring up a RunPod CUDA pod with `scripts/runpod-bring-up`, initialize the shared network-volume cache, and use `/workspace/venv` through `scripts/cuda-run` / `scripts/cuda-python`.
+3. Run a CUDA tripwire matching the real command shape with `--limit-stimuli 1 --limit-layers 1 --limit-heads 1`; record GPU/CPU utilization and extrapolated runtime.
+4. If the tripwire is GPU-bound and within budget, run the full NoPE M1.6 command on CUDA with progress lines enabled.
+5. Package outputs as `.tar.gz`, generate `SHA256SUMS`, publish via a GitHub Release, verify release assets, then analyse the CSVs and complete this notebook entry.
+
+Planned full command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-run -m kaddress.scripts.m16_discriminator \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --device cuda \
+  --output-dir outputs/k_address_space_m16_nope_gpt_small_cuda_20260723 \
+  --progress-every 20
+```
+
+### Expected Signal / Interpretation Plan
+
+- G6 must pass before patching results are interpretable; an initial local biased-marker smoke failed, so the default marker order was changed to a NoPE-neutral four-marker set and resmoked.
+- Patch-K attention redirection plus donor-specific probability movement supports addressing.
+- Patch-V probability movement without K attention redirection supports content-driven use with position not acting as a dial.
+- Noise effects comparable to donor patches confound causal patch interpretation.
+- High match+1 attention mass supports induction; classifications are reported per layer/head as addressing, induction, anti-collision/content-driven, inert, mixed, or noise-confounded.
+
+### Pre-run Provenance
+
+- Spec: `experiments/k-address-space/addendum-M1.6.md`
+- Code branch: `main`
+- Pre-run commit: _pending_
+- Planned output location: `outputs/k_address_space_m16_nope_gpt_small_cuda_20260723`
+- Checklist: `temp/repro-checklists/20260723-k-address-space-m16-nope.md`
+- Local preparation evidence: `./scripts/nix-cpu-run -m unittest experiments/k-address-space/tests/test_position_content.py` (13 OK); local 1-stimulus/1-layer/1-head smoke wrote M1.6 outputs and passed G6.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## Known corpus defect F8 — all M1 Track A results are retracted
 
 **Discovered:** 2026-07-21 (code review + data forensics), after the M1 runs below were

@@ -200,5 +200,35 @@ class PositionContentStatsTests(unittest.TestCase):
         self.assertFalse(np.quantile(leaked, 0.99) <= 0.05)
 
 
+
+class M16BuildTests(unittest.TestCase):
+    def test_m16_builds_single_token_marker_stimuli_with_interior_target(self):
+        from kaddress.scripts import m16_discriminator as m16
+
+        tokenizer = FakeTokenizer()
+        build = m16.build_stimuli(tokenizer, repetitions=8, limit_stimuli=1)
+        self.assertEqual(len(build), 1)
+        stim = build[0]
+        self.assertEqual(len(stim.markers), 8)
+        self.assertEqual(len(stim.marker_positions), 8)
+        self.assertGreater(stim.target_rep, 0)
+        self.assertLess(stim.target_rep, len(stim.markers) - 1)
+        self.assertNotEqual(stim.target_rep, stim.donor_rep)
+        self.assertEqual(stim.readout_pos, len(stim.input_ids) - 1)
+
+    def test_m16_induction_metrics_use_marker_positions_as_match_plus_one(self):
+        from kaddress.scripts import m16_discriminator as m16
+        import torch
+
+        tokenizer = FakeTokenizer()
+        stim = m16.build_stimuli(tokenizer, repetitions=4, limit_stimuli=1)[0]
+        attn = torch.zeros(len(stim.input_ids))
+        for pos in stim.marker_positions:
+            attn[pos] = 0.1
+        metrics = m16._induction_metrics(stim, attn)
+        self.assertAlmostEqual(metrics['induction_match_plus_one_mass'], 0.4, places=6)
+        self.assertAlmostEqual(metrics['induction_most_recent_match_plus_one_mass'], 0.1, places=6)
+
+
 if __name__ == '__main__':
     unittest.main()

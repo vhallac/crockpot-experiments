@@ -46,6 +46,18 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-r
   --output-dir outputs/k_address_space_m15_nope_smoke
 ```
 
+The M1.6 hypothesis discriminator from `addendum-M1.6.md` has a NoPE-only smoke command:
+
+```bash
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run -m kaddress.scripts.m16_discriminator \
+  --model nope-gpt-small \
+  --revision 320681e33a029517e27c68a0f9c2b07ea0004155 \
+  --limit-stimuli 1 \
+  --limit-layers 1 \
+  --limit-heads 1 \
+  --output-dir outputs/k_address_space_m16_nope_smoke
+```
+
 Before full RoPE-model M1 runs, implement and pass the remaining sanity gates in `spec.md`, especially key reconstruction from `k_pre` + RoPE to `k_post` and a perturbation check that proves the gate can fail for RoPE models.
 
 ## Result policy
