@@ -1,5 +1,12 @@
 # K-space as address space experiment
 
+> **STATUS: CLOSED (2026-07-23).** Central question answered — negatively: K is not a
+> query-readable address (M1.6, causal, across NoPE→full-RoPE). See
+> [`CLOSING-NOTE.md`](CLOSING-NOTE.md) for why the group is frozen and
+> [`FINDINGS.md`](FINDINGS.md) for the consolidated M1/M1.5/M1.6 results. The two
+> forward-looking findings (P1.5.c, M1.6 method) migrate to
+> [`../rope-as-scaffold/`](../rope-as-scaffold/).
+
 ## What this measures
 
 This pre-registered experiment tests whether cached key vectors behave like content addresses for referents: same-referent mentions clustering in K-space, RoPE splitting addresses by position as a namespace mechanism, and value/output norms acting as version-dominance signals during reads.
