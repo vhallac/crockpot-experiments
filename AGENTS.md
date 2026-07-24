@@ -176,7 +176,7 @@ Scripts under `scripts/` are the preferred operational entry points:
 - `scripts/runpod-persistent-cache-setup` — run inside a RunPod pod after `cd /workspace/crockpot-experiments`. It creates/updates `/workspace/crockpot-experiments-cache`, writes `~/.crockpot-experiments-runpod-env`, points HuggingFace/torch/pip/uv/Triton caches at the network volume, and sets `DEAD_KEYS_CUDA_VENV=/workspace/venv`.
 - `scripts/cuda-run` — RunPod CUDA Python runner. It sources `~/.crockpot-experiments-runpod-env`, creates `/workspace/venv` if missing, installs `requirements-runpod-cuda.txt` with `uv pip` unless `DEAD_KEYS_CUDA_SKIP_INSTALL=1`, then execs the venv Python with the supplied arguments.
 - `scripts/cuda-python` — convenience wrapper around `scripts/cuda-run` for Python commands/modules.
-- `scripts/runpod-bring-up` — local helper to create a RunPod pod from project template id `1zpm2v05rn`, attach network volume `sndrrdckku` at `/workspace`, wait for SSH readiness, and print JSON metadata. Use for GPU experiment pods; for CPU-only cleanup pods, use the RunPod REST CPU `computeType: "CPU"` path documented in the RunPod API docs.
+- `scripts/runpod-bring-up` — local helper to create a RunPod pod from project template id `1zpm2v05rn`, attach network volume `et0mntsj6x` at `/workspace`, wait for SSH readiness, and print JSON metadata. Use for GPU experiment pods; for CPU-only cleanup pods, use the RunPod REST CPU `computeType: "CPU"` path documented in the RunPod API docs.
 - `scripts/watch-experiment-run` — remote/local process monitor for long runs. It polls a required `--pattern`, prints matching process CPU/memory plus system CPU/memory/GPU utilization every interval, and exits when no matching process remains or `--timeout` is reached.
 
 ## RunPod NVIDIA/CUDA environment
@@ -193,7 +193,7 @@ scripts/runpod-bring-up "NVIDIA L4"
 ```
 
 The helper creates a pod from template `1zpm2v05rn`, attaches network volume
-`sndrrdckku` at `/workspace`, waits for direct public-IP SSH readiness, and
+`et0mntsj6x` at `/workspace`, waits for direct public-IP SSH readiness, and
 prints JSON containing the pod id and SSH command. It times out after 120s by
 default (`RUNPOD_BRING_UP_TIMEOUT=<seconds>` to override) and deletes the newly
 created pod on timeout unless `RUNPOD_KEEP_ON_TIMEOUT=1` is set. Use this helper

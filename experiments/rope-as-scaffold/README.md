@@ -138,6 +138,16 @@ probing phase that consumes the resulting checkpoint (M1.5/M1.6/perplexity/C2) i
 
 ### Candidate extensions (unscoped)
 
+- **RS1b-ctrl — RoPE-recalibrated confound control (pre-registered).** RS1b compares the original
+  RoPE checkpoint (zero extra training) against the DroPE'd checkpoint (~1–2B extra FineWeb-Edu
+  tokens) — a confound, since any observed difference could reflect RoPE removal *or* just extra
+  training. Fix: recalibrate a copy of the *unmodified RoPE* Qwen3-0.6B on the identical
+  corpus/recipe (RoPE stays on; skip the identity patch) and compare against that instead. Full
+  pre-registration, predictions, and falsifiers in
+  [RS1-spec.md §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control).
+  **Gated on RS1b's own results** (§11): optional if RS1b lands crisp and wide-margin, necessary if
+  borderline — do not run blindly.
+
 - **RoPE as a training warmup for NoPE (proposed).** Instead of dropping RoPE from a fully
   RoPE-pretrained model (RS1), use RoPE only as an *early scaffold* for an otherwise-NoPE run:
   add RoPE for the unstable early phase (per DroPE's vanishing-gradient rationale), drop it early,

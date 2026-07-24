@@ -202,6 +202,12 @@ Any outcome is a reportable result; the point is to make the DroPE mechanism *me
 - **Recalibration corpus ≠ original pretraining distribution.** Perplexity is compared on a fixed
   *held-out generic* set across all three states, not on Qwen3's original mix — so the claim is
   "recovers on held-out generic data," not "recovers original loss." State this.
+- **State 3 receives extra training state 1 doesn't (confound).** State 1 is the original
+  checkpoint with zero additional training; state 3 has seen ~1–2B extra FineWeb-Edu tokens. Any
+  state-1-vs-state-3 difference (perplexity recovery, M1.5/M1.6 shifts) could reflect RoPE removal
+  *or* simply extra domain training, and the design doesn't separate them. See
+  [§11 addendum](#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control) for the
+  control arm this motivates and its gating.
 - **QK-norm remains.** Dropped Qwen3 is NoPE+QK-norm, not vanilla NoPE. Legitimate NoPE variant;
   record it and avoid over-generalizing to all NoPE.
 - **Single model / single seed / 0.6B.** Scale- and architecture-qualified, as in the parent
@@ -389,3 +395,54 @@ apples-to-apples. This is a probe-stimulus length and is independent of the two 
    cost — it is the forcing function that proves the machinery before any GPU spend.
 3. **RS1b:** train State 3; **G-RS1.2 half-2** (ppl(DroPE'd) ≪ ppl(dropped)); re-probe; publish the
    checkpoint (~1.2 GB bf16) + outputs as a GitHub Release with checksums, per `AGENTS.md`.
+
+---
+
+## 11. Addendum (2026-07-24): RS1b-ctrl — RoPE-recalibrated confound control
+
+**Status:** pre-registered, not yet run. Raised during RS1b's actual execution (mid-run
+methodological review), not part of the original §§0–10 design.
+
+**The concern.** RS1's C1 claim rests on comparing **state 1** (original RoPE checkpoint, zero
+additional training) against **state 3** (DroPE'd, recalibrated on ~1–2B FineWeb-Edu tokens — see
+§10.C). That comparison confounds two variables that are never independently manipulated: *RoPE
+removed* and *received extra domain-specific training*. Any observed state-1-vs-state-3 difference
+— perplexity recovery (P.RS1.a), M1.5 position-decodability shift (P.RS1.b), M1.6 addressing-profile
+shift (P.RS1.c) — could be caused by either one, and the current design can't tell them apart.
+
+**Partial existing mitigation.** RS1a already found the *dropped, unrecalibrated* state's key-position
+decodability near-ceiling **before any additional training happened** (`NOTEBOOK.md`, 2026-07-24 entry)
+— evidence against "extra training alone explains the position result," at least for M1.5. This does
+**not** cover M1.6 (addressing) or P.RS1.a (perplexity recovery), where the confound is untested and
+the concern stands at full strength.
+
+**The fix — a 5th state, `qwen3-rope-recal`.** Apply the **exact same** recalibration recipe as RS1b
+(§10.C: same corpus/revision/eval-slice rule, same token budget, same LR/schedule/optimizer/seed) to
+the **unmodified RoPE** Qwen3-0.6B checkpoint — i.e. **skip** `set_qwen_rotary_identity`; RoPE stays
+active for the entire run. Everything else (data pipeline, frozen eval definition, M1.5 probe length)
+is identical to §10.C–§10.E unchanged. This isolates the RoPE-vs-not variable while holding "received
+the same extra training on the same data" constant across the comparison that matters.
+
+**Pre-registered predictions:**
+- **(P.RS1.ctrl.a)** `qwen3-rope-recal`'s held-out perplexity does not improve past state 1's baseline
+  (~21.8 PPL) by a margin comparable to state 3's recovery (from ~30,849 toward ~21.8). *Supports:*
+  P.RS1.a's recovery is RoPE-removal-specific, not generic extra training. *Falsifier:* if
+  `qwen3-rope-recal`'s perplexity improves by a similar margin, P.RS1.a's causal attribution is
+  undercut — the "recovery" is at least partly explained by extra training alone, independent of RoPE.
+- **(P.RS1.ctrl.b)** `qwen3-rope-recal`'s M1.5 position-decodability profile and M1.6 addressing
+  verdict stay close to state 1's un-recalibrated baseline. *Supports:* state 3's C1-relevant shifts
+  (if any) are attributable to RoPE removal, not extra training. *Falsifier:* if `qwen3-rope-recal`
+  shows a shift similar in size to whatever state 3 shows, C1's causal claim is weakened
+  correspondingly — the mechanism would be "more training," not "RoPE is a removable scaffold."
+
+**Gating — decide after RS1b's results land, do not run blindly:**
+- RS1b's P.RS1.a/b/c results land crisp, with a wide margin matching pre-registration → note this
+  confound as a caveat in write-up; running the control becomes optional (strengthens the causal
+  claim, doesn't block reporting a result).
+- RS1b's results are borderline / ambiguous on any of P.RS1.a/b/c → running this control becomes
+  necessary before making any causal claim in a write-up.
+
+**Cost/schedule.** Identical shape to RS1b (§8): single-GPU, few-hour run. Measured directly during
+RS1b itself on A100 SXM: ~12.5h, ~$18–19 (flash-attention confirmed working on Ampere/Hopper; avoid
+Blackwell GPUs — see the RS1b training note's GPU-selection history). No new engineering: the RS1b
+training script with the rotary-identity patch left disabled is a one-flag change, not a new script.

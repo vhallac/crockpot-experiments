@@ -110,6 +110,13 @@ progress is still lost and training restarts from step 0 (reading from the now-l
 Acceptable given the low cost, but worth confirming the pod type before launching a multi-hour job
 with zero training-progress resumability.
 
+**Lesson from the actual RS1b run (retrospective):** the no-periodic-checkpoint policy above is
+still fine, but the script should have trapped **SIGHUP/SIGTERM to save an on-demand snapshot**
+before exit. That's a cheap, small addition, distinct from periodic checkpointing — it doesn't add
+the complexity/cost of resuming mid-run, it just means a deliberate stop (pod teardown, hardware
+switch, maintenance window) doesn't have to lose all progress. Add this to the next training
+script written for this program.
+
 ## If this checkpoint gets published later
 
 No GH Release / `NOTEBOOK.md` flow applies to this training step by design. If the trained NoPE
