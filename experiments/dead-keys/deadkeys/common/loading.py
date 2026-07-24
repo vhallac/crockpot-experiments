@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
+import os
 import sys
 import types
 
@@ -19,11 +21,12 @@ MODEL_IDS = {
     "qwen25": "Qwen/Qwen2.5-0.5B",
     "qwen3": "Qwen/Qwen3-0.6B",
     "qwen3-dropped": "Qwen/Qwen3-0.6B",
+    "qwen3-droped": "Qwen/Qwen3-0.6B",
     "nope-gpt-small": "andrewdalpino/NoPE-GPT-Small-Base",
 }
 
-QWEN_LIKE_TAGS = {"qwen25", "qwen3", "qwen3-dropped", "openllama7"}
-DROPPED_ROPE_TAGS = {"qwen3-dropped"}
+QWEN_LIKE_TAGS = {"qwen25", "qwen3", "qwen3-dropped", "qwen3-droped", "openllama7"}
+DROPPED_ROPE_TAGS = {"qwen3-dropped", "qwen3-droped"}
 
 
 def uses_dropped_rope(tag: str) -> bool:
@@ -119,11 +122,15 @@ def load_model(tag: str, *, device: str | torch.device | None = None, revision: 
     if tag not in MODEL_IDS:
         raise ValueError(f"unknown model tag {tag!r}; choose one of {sorted(MODEL_IDS)}")
     hf_id = MODEL_IDS[tag]
-    rev_kw = {} if revision is None else {"revision": revision}
+    model_path = os.environ.get("QWEN3_DROPED_PATH") if tag == "qwen3-droped" else None
+    if tag == "qwen3-droped" and not model_path:
+        raise ValueError("qwen3-droped requires QWEN3_DROPED_PATH=/path/to/trained/checkpoint")
+    source_id = str(Path(model_path).expanduser()) if model_path else hf_id
+    rev_kw = {} if revision is None or model_path else {"revision": revision}
     if tag == "nope-gpt-small":
         _install_nope_remote_shims()
     trust_remote_code = tag == "nope-gpt-small"
-    config = AutoConfig.from_pretrained(hf_id, trust_remote_code=trust_remote_code, **rev_kw)
+    config = AutoConfig.from_pretrained(source_id, trust_remote_code=trust_remote_code, **rev_kw)
     if tag == "nope-gpt-small":
         # The HF checkpoint stores the inner NoPEGPT weights as `body.*`,
         # `token_embeddings.*`, ... while the Transformers wrapper expects them
@@ -142,7 +149,7 @@ def load_model(tag: str, *, device: str | torch.device | None = None, revision: 
         model.model.output_layer.weight = model.model.token_embeddings.weight
     else:
         model = AutoModelForCausalLM.from_pretrained(
-            hf_id,
+            source_id,
             torch_dtype=torch.float32,
             low_cpu_mem_usage=True,
             **rev_kw,
@@ -152,7 +159,8 @@ def load_model(tag: str, *, device: str | torch.device | None = None, revision: 
     if device is not None:
         model.to(torch.device(device))
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(hf_id, **rev_kw)
+    tokenizer_source = hf_id if model_path else source_id
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, **rev_kw)
 
     d_model = int(getattr(config, "hidden_size", getattr(config, "n_embd", getattr(config, "embedding_dimensions", 0))))
     n_heads = int(getattr(config, "num_attention_heads", getattr(config, "n_head", getattr(config, "num_heads", 0))))

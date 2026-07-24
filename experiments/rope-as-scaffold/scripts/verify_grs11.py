@@ -30,8 +30,8 @@ def verify_grs11(
     fail on the same input.
     """
     lm = load_model(model, device=device)
-    if model != "qwen3-dropped":
-        raise ValueError("G-RS1.1 helper currently expects --model qwen3-dropped")
+    if model not in {"qwen3-dropped", "qwen3-droped"}:
+        raise ValueError("G-RS1.1 helper currently expects --model qwen3-dropped or qwen3-droped")
     encoded = lm.tokenizer(text, return_tensors="pt")
     input_ids = encoded["input_ids"].to(next(lm.model.parameters()).device)
 
@@ -66,7 +66,7 @@ def verify_grs11(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify RS1 G-RS1.1 dropped-Qwen rotary identity gate")
-    parser.add_argument("--model", default="qwen3-dropped", choices=["qwen3-dropped"])
+    parser.add_argument("--model", default="qwen3-dropped", choices=["qwen3-dropped", "qwen3-droped"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--text", default="G-RS1.1 verifies that dropped Qwen rotary embeddings are identity.")
     parser.add_argument("--atol", type=float, default=1e-5)
