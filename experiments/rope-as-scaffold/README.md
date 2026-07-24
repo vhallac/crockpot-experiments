@@ -85,9 +85,18 @@ without it, reconsider whether the note is worth writing. Full landscape in
 
 ## Planned experiments
 
+> **Implementing or executing an RS experiment (e.g. RS1a/RS1b)? Read the
+> [RS1 Implementation Contract (§10)](RS1-spec.md#10-implementation-contract-execution-brief)
+> first.** It pins the engineering decisions the science sections leave open — model tags and
+> loading, the rotary-disable mechanism, the training recipe, the frozen perplexity/eval
+> definition, and which "reuse unchanged" probe claims are *not* literally true — with `[MUST]` /
+> `[D]` markers and a staged acceptance checklist. Handing an implementer the spec **without** §10
+> means they will invent load-bearing details (LR schedule, packing, perplexity definition) that
+> decide whether the gates are even valid.
+
 | id | claim | sketch | cost |
 |---|---|---|---|
-| **RS1** ([spec](RS1-spec.md)) | C1 (+C2) | DroPE recipe on Qwen3-0.6B + before/after M1.5/M1.6 probes (the "M1.7" increment) | needs light training — step up from k-address-space's inference-only runs |
+| **RS1** ([spec](RS1-spec.md) · [impl contract §10](RS1-spec.md#10-implementation-contract-execution-brief)) | C1 (+C2) | DroPE recipe on Qwen3-0.6B + before/after M1.5/M1.6 probes (the "M1.7" increment) | needs light training — step up from k-address-space's inference-only runs |
 | RS2 | C2 | emergent-vs-RoPE positional subspace overlap on the RS1 checkpoints | analysis-only |
 | RS3 | C3 | task/perplexity ablations along a local-order axis vs a retrieval axis, RoPE vs dropped | eval harness |
 | RS4 | C4 | E1/E2 spot-check on one >0.6B model | GPU |

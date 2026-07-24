@@ -73,8 +73,11 @@ target, M1.5 only):
   streamable) — the corpus DroPE used *and* the data lineage of the NoPE-GPT-400M reference, so
   recipe, subject, and reference share a distribution. Take ~1–2B tokens of its ~10B for training
   (bounded, recorded), tokenize with **Qwen3's tokenizer**, pre-tokenize once to a mmap'd shard
-  (**uint32**; Qwen3 vocab ~152k). Original context length; standard LM objective, cosine LR decay,
-  single seed; record every hyperparameter.
+  (**uint32**; Qwen3 vocab ~152k). Standard LM objective, cosine LR decay, single seed; record
+  every hyperparameter. **Context length, LR, and the full recipe are pinned in [§10 Implementation
+  Contract](#10-implementation-contract-execution-brief) — read it before implementing** (it
+  supersedes any "original context length" reading here: the pinned training context is 2048, not
+  Qwen3's 40960).
 - **Eval slice:** hold out a **disjoint ~5–10M-token** slice of the same corpus for the perplexity
   measurement used across *all three* states (and gate G-RS1.2) — matched train/eval distribution
   so the before/after perplexity delta isolates *position*, not domain. This slice is needed from
@@ -247,3 +250,127 @@ pass.**
 A three-state (RoPE / dropped / DroPE'd) before-after table on perplexity, M1.5 emergent-position
 profiles, M1.6 addressing verdict, and C2 subspace overlap — adjudicating P.RS1.a–d — i.e. the
 first *mechanistic* account of why DroPE's scaffold removal is safe, or a falsification of it.
+
+---
+
+## 10. Implementation Contract (execution brief)
+
+**Read this before writing any RS1 code.** §§0–9 pin the *science* (hypotheses, gates, falsifiers,
+decision tree). This section pins the *engineering* decisions an implementer would otherwise have to
+invent — and where those decisions silently affect a gate, they are marked **[MUST]**. Defaults
+marked **[D]** are recommendations: override with a recorded rationale, but *record the value used*.
+
+**Trust boundary (per `reproducible-research`):** treat this contract as design to *execute and
+question*, not gospel. If a stated assumption contradicts what you find in the code — an arch field,
+a hook path, a config attribute — surface it as a finding and stop; do not paper over it. Several
+"reuse unchanged" claims in §3 are **not** literally true (see §10.G) and are called out here.
+
+**Context — what does not yet exist in the repo.** Everything to date is inference-only probing.
+RS1 is the first experiment that introduces: (i) a training loop (there is **no** `optimizer.step`/
+`backward`/`AdamW` anywhere), (ii) a local-checkpoint load path, (iii) a frozen perplexity/eval
+definition shared across states, and (iv) probe-script branches for a rotation-disabled Qwen3.
+
+### 10.A Model tags and loading paths
+
+Three new loadable states + one reference. `load_model`/`MODEL_IDS` is HF-id-keyed with no
+local-checkpoint path today — that must be added.
+
+| tag | source | rotation | notes |
+|---|---|---|---|
+| `qwen3` (existing) | `Qwen/Qwen3-0.6B` | on | State 1 (RoPE baseline). Unchanged. |
+| `qwen3-dropped` | same weights as `qwen3` | **disabled at runtime** | State 2. No new weights; a load flag reusing the `qwen3` checkpoint with rotary forced to identity (§10.B). |
+| `qwen3-droped` | **local dir** (fine-tuned) | disabled (baked into recipe) | State 3. Requires local-path loading — new. |
+| `nope-gpt-400m` | `andrewdalpino/NoPE-GPT-400M-Base` | native NoPE | State 4 reference, M1.5 only. **[MUST verify]** the `_capture_nope_k` hook on `qkv_proj` matches the 400M arch (20L, GQA 20Q/5KV, head-dim 64) before trusting the profile — the Small model's hook is *assumed* to transfer, not confirmed. |
+
+- **[MUST]** Add a local-checkpoint branch to `load_model` (tag→filesystem path, or a `--model-path`
+  override) so State 3 loads. Pin the exact directory in the run manifest.
+- **[MUST]** Pin HF revisions (commit SHA) for `qwen3` and `nope-gpt-400m`, as already done for
+  `nope-gpt-small` in the M1.6 manifests.
+
+### 10.B Rotary-disable mechanism (states 2 & 3) + G-RS1.1
+
+- **[D]** Disable rotation by **forcing `cos=1, sin=0` at the position-embedding source** (the
+  `position_embeddings` tuple Qwen3Attention consumes), rather than monkeypatching
+  `apply_rotary_pos_emb` in `transformers`. Rationale: least invasive, survives library updates,
+  identical at train and inference time. `m16_discriminator._apply_rotary_pos_emb` is a
+  *patching-stage* reimplementation — reuse its *math* for verification, not as the forward hook.
+- **[MUST]** State 3 must train with this exact mechanism active, so the trained weights match the
+  probed forward. Any train-time/probe-time rotary mismatch voids the before/after.
+- **[MUST] G-RS1.1, perturbable:** assert `cos≡1 ∧ sin≡0` (or `k_post==k_pre` elementwise) at every
+  layer in a dropped/DroPE'd forward; then flip one layer back to true RoPE and confirm the
+  assertion *fails*. Run this inside a training-config forward too, not only inference.
+
+### 10.C Training recipe (RS1b, State 3) — full block
+
+Written from scratch (no training loop exists). Full-parameter recalibration:
+
+| field | **[D]** default | note |
+|---|---|---|
+| framework | raw PyTorch loop (or HF `Trainer`) | small model; a raw loop is auditable and avoids Trainer rotary/config surprises |
+| precision | bf16 mixed | §8 budget assumes it |
+| optimizer | AdamW, β=(0.9, 0.95), eps=1e-8, wd=0.1 | standard LM recalibration |
+| peak LR | **3e-5** *(decided)* | recalibration, not pretraining — kept low. This is the #1 recipe risk (P.RS1.a null-masquerade). |
+| schedule | cosine → 10% of peak; warmup 2% of steps | |
+| grad clip | 1.0 | |
+| **train context** | **2048** *(decided; supersedes §2.2 "original context length")* | bounds memory, keeps the run cheap, and makes P.RS1.e's ~2× test (→4096) meaningful. |
+| global batch | ~0.5M tokens (seq 2048 × grad-accum) | ⇒ ~2–4k steps for 1–2B tokens |
+| token budget | 1–2B (record exact) | as §2.2 |
+| seed | 0 (record) | single seed per §7 |
+| checkpointing | every ~250 steps + final; keep final + best-eval | enables the Vast interruptible resume §8 assumes |
+
+- **[MUST]** Emit a training-loss + periodic held-out-perplexity curve to the run artifacts —
+  needed to distinguish "DroPE didn't replicate" (real result) from "recipe under-tuned" (bug), the
+  §7 threat and the P.RS1.a falsifier.
+
+### 10.D Data pipeline
+
+- **[MUST]** Corpus `HuggingFaceFW/fineweb-edu`, `sample-10BT`, streamed. Tokenizer Qwen3's.
+- **[D]** Pre-tokenize once to a single mmap'd **uint32** shard (vocab ~152k > 2¹⁶). Packing:
+  concatenate documents with EOS between, split into contiguous `train_context`-length blocks (no
+  cross-doc masking — standard for recalibration).
+- **[MUST] Held-out determinism:** carve the disjoint ~5–10M-token eval slice by a **fixed rule
+  recorded in the run manifest** (e.g. "first N tokens are eval, training reads from offset N," or a
+  fixed-seed document split). The *rule*, not just the size, must be pinned — every gate is a
+  cross-state delta on this exact slice.
+
+### 10.E Perplexity / eval definition — frozen across all states **[MUST]**
+
+- Reuse the sliding-window `perplexity()` in `experiments/dead-keys/deadkeys/scripts/phase1_5.py`
+  as the *pattern*. **[MUST] wrinkle:** it reads `model.config.n_positions` (a GPT-2 field); Qwen3
+  uses `max_position_embeddings`. Parameterize the window explicitly instead of reading either; set
+  it to `eval_context`.
+- **[MUST]** One definition, identical for States 1/2/3: token-weighted mean CE → exp;
+  `eval_context = 2048`; stride **[D]** = `eval_context` (non-overlapping) *or* 512 (overlapping,
+  lower-variance) — pick one and freeze it. Dropped/DroPE'd states run through the *same*
+  rotation-disabled forward as their probes.
+- This single number feeds **G-RS1.2** and **P.RS1.a**; drift between states voids both.
+
+### 10.F C2 subspace analysis (secondary — may ship after C1)
+
+- **[D]** Per layer, define the "positional subspace" as the top-`k` PCA directions of the
+  position-decodable component (project keys onto the M1.5 ridge-position prediction, take principal
+  directions), `k` = enough to reach the M1.5 PCA-to-90% variance already reported. Compare RoPE
+  `k_post` vs DroPE'd emergent via **principal angles / CCA**.
+- **[MUST for validity]** baseline = mean alignment under random rotations of one subspace; report
+  overlap *above* baseline, not raw.
+- **Design-on-implementation, not reuse:** unlike M1.5/M1.6 there is no existing code. C2 is the
+  *secondary* claim — it may ship after C1.
+
+### 10.G Probe-script changes (correcting §3's "reuse unchanged")
+
+- **[MUST]** `position_content.py` and `m16_discriminator.py` both branch on `lm.tag == "qwen3"` and
+  *always* apply rotary. Add branches for `qwen3-dropped`/`qwen3-droped` where `k_pre == k_post`
+  (no rotation) and M1.6 patches the single K directly (§3 states the intent; the code does not do
+  it yet).
+- **[D]** Simplest: treat these tags as "qwen3 arch, rotation off" — reuse `_capture_qwen_k`, assert
+  `pre==post`, use `pre` as the single K.
+
+### 10.H Staged acceptance (what "done" means per stage)
+
+1. **Plumbing smoke (near-zero compute):** load `qwen3-dropped`; G-RS1.1 passes *and is shown
+   falsifiable*; perplexity(dropped) computes on the eval slice.
+2. **RS1a gate:** States 1+2 M1.5/M1.6 run; **G-RS1.2 half-1** holds (ppl(dropped) ≫ ppl(RoPE)).
+   *Only then* commit to training. This stage exercises §§10.B/D-partial/E/G at zero training
+   cost — it is the forcing function that proves the machinery before any GPU spend.
+3. **RS1b:** train State 3; **G-RS1.2 half-2** (ppl(DroPE'd) ≪ ppl(dropped)); re-probe; publish the
+   checkpoint (~1.2 GB bf16) + outputs as a GitHub Release with checksums, per `AGENTS.md`.
