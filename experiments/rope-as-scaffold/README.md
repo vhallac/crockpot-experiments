@@ -1,9 +1,8 @@
 # RoPE-as-Scaffold
 
-**Status:** program charter (2026-07-23). This directory defines a *directed* research
-program with a falsifiable claim set. It is not yet a pre-registered experiment; per-experiment
-`spec.md` files and runs follow the repo's `reproducible-research` lifecycle once claims are
-scoped.
+**Status:** RS1.a zero-training validation completed (2026-07-24); broader program charter
+started 2026-07-23. This directory defines a *directed* research program with a falsifiable
+claim set; per-experiment specs and runs follow the repo's `reproducible-research` lifecycle.
 
 ## What this program tests
 
@@ -116,6 +115,8 @@ PYTHONPATH=experiments/dead-keys ./scripts/cuda-python experiments/rope-as-scaff
 ```
 
 This command fixes `eval_context=2048`, `stride=2048`, FineWeb-Edu `sample-10BT`, and the held-out eval-slice rule in the run manifest. It writes `rs1_perplexity.csv` and `rs1_eval_manifest.json`.
+
+Latest RS1.a results are summarized in [`NOTEBOOK.md`](NOTEBOOK.md) and [`artifacts/RS1a-run-20260724.md`](artifacts/RS1a-run-20260724.md); raw outputs were published at <https://github.com/vhallac/crockpot-experiments/releases/tag/run/rope-as-scaffold-rs1a/20260724>.
 
 Stage-6 validation materials are in [`NOTEBOOK.md`](NOTEBOOK.md) and the disposable checklist `temp/repro-checklists/20260724-RS1a.md`. The RunPod gate sequence is:
 
