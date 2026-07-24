@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 import torch
 
-from deadkeys.common.loading import MODEL_IDS, load_model
+from deadkeys.common.loading import MODEL_IDS, load_model, uses_dropped_rope
 from kaddress.scripts.address_purity import _environment_summary
 
 
@@ -350,9 +350,9 @@ def _extract_logits(output: Any) -> torch.Tensor:
 def _layer_modules(lm: Any) -> list[torch.nn.Module]:
     if lm.tag == "nope-gpt-small":
         return list(lm.model.model.body)
-    if lm.tag == "qwen3":
+    if lm.tag in {"qwen3", "qwen3-dropped"}:
         return list(lm.model.model.layers)
-    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small and --model qwen3")
+    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped")
 
 
 def _plain_probs(lm: Any, input_ids: torch.Tensor, readout_pos: int) -> torch.Tensor:
@@ -429,6 +429,17 @@ def _apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, s
     return (q * cos) + (_rotate_half(q) * sin), (k * cos) + (_rotate_half(k) * sin)
 
 
+def _assert_identity_position_embeddings(position_embeddings: tuple[torch.Tensor, torch.Tensor], *, atol: float = 0.0) -> None:
+    cos, sin = position_embeddings
+    cos_delta = float((cos - 1).abs().max().item())
+    sin_delta = float(sin.abs().max().item())
+    if cos_delta > atol or sin_delta > atol:
+        raise RuntimeError(
+            "dropped-RoPE Qwen expected identity position embeddings; "
+            f"max_abs(cos-1)={cos_delta:.3g} max_abs(sin)={sin_delta:.3g}"
+        )
+
+
 def _repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     if n_rep == 1:
         return x
@@ -490,10 +501,14 @@ def _run_qwen_with_attention_patch(
             v_norm = torch.linalg.vector_norm(v[:, head_idx, target_pos, :], dim=-1, keepdim=True).clamp_min(1e-12)
             k[:, head_idx, target_pos, :] = noise_k * (k_norm / torch.linalg.vector_norm(noise_k, dim=-1, keepdim=True).clamp_min(1e-12))
             v[:, head_idx, target_pos, :] = noise_v * (v_norm / torch.linalg.vector_norm(noise_v, dim=-1, keepdim=True).clamp_min(1e-12))
-        # Rotate after patching: each slot (including the patched target) is rotated by its own
-        # position, so the transplanted donor content is addressed to target_pos. RoPE preserves
-        # norm, so the norm-matched noise control above stays valid across the rotation.
-        q, k = _apply_rotary_pos_emb(q, k, *position_embeddings)
+        # Rotate after patching for RoPE states: each slot (including the patched target) is
+        # rotated by its own position, so the transplanted donor content is addressed to
+        # target_pos. Dropped-RoPE states have a single unrotated K; assert the model-level
+        # rotary source is identity and patch that K directly.
+        if uses_dropped_rope(lm.tag):
+            _assert_identity_position_embeddings(position_embeddings)
+        else:
+            q, k = _apply_rotary_pos_emb(q, k, *position_embeddings)
         scores = torch.matmul(q, k.transpose(2, 3)) * attn_mod.scaling
         if attention_mask is not None:
             mask = attention_mask[:, :, :, : k.shape[-2]]
@@ -524,9 +539,9 @@ def _run_qwen_with_attention_patch(
 def _run_with_attention_patch(lm: Any, input_ids: torch.Tensor, **kwargs: Any) -> ForwardReadout:
     if lm.tag == "nope-gpt-small":
         return _run_nope_with_attention_patch(lm, input_ids, **kwargs)
-    if lm.tag == "qwen3":
+    if lm.tag in {"qwen3", "qwen3-dropped"}:
         return _run_qwen_with_attention_patch(lm, input_ids, **kwargs)
-    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small and --model qwen3")
+    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped")
 
 
 def _marker_probs(probs: torch.Tensor, marker_token_ids: list[int]) -> list[float]:
@@ -742,8 +757,8 @@ def run(args: argparse.Namespace) -> None:
     if args.repetitions < 128 and not args.allow_low_repetitions:
         raise RuntimeError("M1.6 v1.1 requires --repetitions >= 128; use --allow-low-repetitions only for smoke tests")
     lm = load_model(args.model, device=device, revision=args.revision)
-    if lm.tag not in {"nope-gpt-small", "qwen3"}:
-        raise NotImplementedError("M1.6 v1.1 harness supports --model nope-gpt-small and --model qwen3")
+    if lm.tag not in {"nope-gpt-small", "qwen3", "qwen3-dropped"}:
+        raise NotImplementedError("M1.6 v1.1 harness supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped")
     stimuli, stimulus_gates = _select_g6_stimuli(
         lm,
         repetitions=args.repetitions,

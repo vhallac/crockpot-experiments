@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from deadkeys.common.loading import MODEL_IDS, load_model
+from deadkeys.common.loading import MODEL_IDS, load_model, uses_dropped_rope
 from kaddress.scripts.address_purity import (
     _capture_gpt2_k,
     _capture_nope_k,
@@ -316,8 +316,11 @@ def _capture_keys(lm: Any, input_ids: torch.Tensor, attention_mask: torch.Tensor
     if lm.tag.startswith("pythia"):
         pre, post = _capture_pythia_k(lm, input_ids, attention_mask)
         return [("pre", pre), ("post", post)]
-    if lm.tag == "qwen3":
+    if lm.tag in {"qwen3", "qwen3-dropped"}:
         _raw, pre, post = _capture_qwen_k(lm, input_ids, attention_mask)
+        if uses_dropped_rope(lm.tag) and not torch.allclose(pre, post, atol=1e-5, rtol=1e-5):
+            max_delta = float((pre - post).abs().max().item())
+            raise RuntimeError(f"dropped-RoPE Qwen expected k_pre == k_post; max_delta={max_delta:.3g}")
         return [("pre", pre), ("post", post)]
     if lm.tag == "nope-gpt-small":
         return [("pre", _capture_nope_k(lm, input_ids))]
@@ -833,7 +836,7 @@ def _d_head(lm: Any) -> int:
     heads = getattr(cfg, "num_attention_heads", None) or getattr(cfg, "n_head", None) or getattr(cfg, "num_heads", None)
     if hidden and heads:
         return int(hidden) // int(heads)
-    if lm.tag == "qwen3":
+    if lm.tag in {"qwen3", "qwen3-dropped"}:
         return 128
     return 64
 
@@ -870,6 +873,8 @@ def _is_architectural_zero_case(lm: Any, *, layer: int, variant: str) -> bool:
 
 
 def _is_architectural_one_case(lm: Any, *, layer: int, variant: str) -> bool:
+    if uses_dropped_rope(getattr(lm, "tag", "")):
+        return False
     config = _model_config(lm)
     return layer == 0 and ((_config_has_learned_absolute_positions(config) and variant == "pre") or (_config_uses_rope(config) and variant == "post"))
 
@@ -925,7 +930,7 @@ def run(args: argparse.Namespace) -> None:
         raise RuntimeError("--device cuda requested, but torch.cuda.is_available() is false")
 
     lm = load_model(args.model, device=device, revision=args.revision)
-    if lm.tag not in {"gpt2", "qwen3", "nope-gpt-small"} and not lm.tag.startswith("pythia"):
+    if lm.tag not in {"gpt2", "qwen3", "qwen3-dropped", "nope-gpt-small"} and not lm.tag.startswith("pythia"):
         raise NotImplementedError(f"M1.5 extraction not implemented for {lm.tag}")
 
     context = _trained_context(lm)

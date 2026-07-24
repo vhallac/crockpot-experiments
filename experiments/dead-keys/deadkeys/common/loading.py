@@ -18,8 +18,48 @@ MODEL_IDS = {
     "openllama7": "openlm-research/open_llama_7b",
     "qwen25": "Qwen/Qwen2.5-0.5B",
     "qwen3": "Qwen/Qwen3-0.6B",
+    "qwen3-dropped": "Qwen/Qwen3-0.6B",
     "nope-gpt-small": "andrewdalpino/NoPE-GPT-Small-Base",
 }
+
+QWEN_LIKE_TAGS = {"qwen25", "qwen3", "qwen3-dropped", "openllama7"}
+DROPPED_ROPE_TAGS = {"qwen3-dropped"}
+
+
+def uses_dropped_rope(tag: str) -> bool:
+    return tag in DROPPED_ROPE_TAGS
+
+
+def _qwen_rotary_module(model: torch.nn.Module) -> torch.nn.Module:
+    try:
+        return model.model.rotary_emb
+    except AttributeError as exc:
+        raise RuntimeError("Qwen dropped-RoPE patch expected model.model.rotary_emb") from exc
+
+
+def set_qwen_rotary_identity(model: torch.nn.Module, *, enabled: bool = True) -> None:
+    """Force Qwen shared rotary embeddings to identity cos/sin.
+
+    HuggingFace Qwen3 computes the rotary ``position_embeddings`` tuple once at
+    the model-level source and passes it into every attention layer.  Patching
+    that source keeps train/eval/probe forwards on the same mechanism while
+    leaving normal ``qwen3`` untouched.
+    """
+    rotary = _qwen_rotary_module(model)
+    original = getattr(rotary, "_rs1_original_forward", None)
+    if original is None:
+        original = rotary.forward
+        rotary._rs1_original_forward = original  # type: ignore[attr-defined]
+
+    if not enabled:
+        rotary.forward = original  # type: ignore[method-assign]
+        return
+
+    def identity_forward(*args, **kwargs):
+        cos, sin = original(*args, **kwargs)
+        return torch.ones_like(cos), torch.zeros_like(sin)
+
+    rotary.forward = identity_forward  # type: ignore[method-assign]
 
 
 @dataclass(frozen=True)
@@ -107,6 +147,8 @@ def load_model(tag: str, *, device: str | torch.device | None = None, revision: 
             low_cpu_mem_usage=True,
             **rev_kw,
         )
+    if uses_dropped_rope(tag):
+        set_qwen_rotary_identity(model, enabled=True)
     if device is not None:
         model.to(torch.device(device))
     model.eval()
@@ -161,7 +203,7 @@ def iter_heads(lm: LoadedModel, limit_layers: int | None = None, limit_heads: in
                 yield HeadSpec(li, h, h, Wq[s:e], Wk[s:e])
         return
 
-    if tag in {"qwen25", "qwen3", "openllama7"}:
+    if tag in QWEN_LIKE_TAGS:
         layers = lm.model.model.layers
         group = lm.n_heads // lm.n_kv_heads
         for li, layer in enumerate(layers[: limit_layers or len(layers)]):
@@ -249,7 +291,7 @@ def sanity_check(lm: LoadedModel, *, atol: float = 1e-4) -> dict[str, float]:
                 q = q + hs.q_bias
             if hs.k_bias is not None:
                 k = k + hs.k_bias
-            if lm.tag in {"qwen25", "qwen3", "openllama7"}:
+            if lm.tag in QWEN_LIKE_TAGS:
                 attn = lm.model.model.layers[0].self_attn
                 if hasattr(attn, "q_norm"):
                     q = attn.q_norm(q)

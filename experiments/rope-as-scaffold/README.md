@@ -104,6 +104,28 @@ without it, reconsider whether the note is worth writing. Full landscape in
 RS1 is the load-bearing one: it converts the DroPE connection from *citation* to *result*.
 Each experiment gets its own `spec.md` (pre-registration) before running.
 
+### RS1.a RunPod commands
+
+Frozen G-RS1.2 / P.RS1.a perplexity eval for states 1–2:
+
+```bash
+PYTHONPATH=experiments/dead-keys ./scripts/cuda-python experiments/rope-as-scaffold/scripts/eval_perplexity.py \
+  --models qwen3 qwen3-dropped \
+  --eval-tokens 5000000 \
+  --output-dir outputs/rope_as_scaffold_rs1a_eval_$(date -u +%Y%m%dT%H%M%SZ)
+```
+
+This command fixes `eval_context=2048`, `stride=2048`, FineWeb-Edu `sample-10BT`, and the held-out eval-slice rule in the run manifest. It writes `rs1_perplexity.csv` and `rs1_eval_manifest.json`.
+
+Stage-6 validation materials are in [`NOTEBOOK.md`](NOTEBOOK.md) and the disposable checklist `temp/repro-checklists/20260724-RS1a.md`. The RunPod gate sequence is:
+
+1. `verify_grs11.py` for falsifiable identity-RoPE removal.
+2. `eval_perplexity.py` for G-RS1.2 half-1 on states 1–2.
+3. `kaddress.scripts.position_content` for M1.5 on `qwen3` and `qwen3-dropped`.
+4. `kaddress.scripts.m16_discriminator` for M1.6 on `qwen3` and `qwen3-dropped`.
+
+Do not launch RS1b training until this RS1.a sequence passes on RunPod and the outputs have been reviewed.
+
 ### Candidate extensions (unscoped)
 
 - **RoPE as a training warmup for NoPE (proposed).** Instead of dropping RoPE from a fully
