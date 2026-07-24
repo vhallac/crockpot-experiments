@@ -108,15 +108,65 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space \
 - Frozen FineWeb-Edu perplexity over 5,000,000 eval tokens:
   - `qwen3`: CE `3.0818854172969434`, PPL `21.799464762112162`.
   - `qwen3-dropped`: CE `10.336862396656565`, PPL `30849.085845460013`.
+  - Context: dropped CE `10.34` nats sits just under uniform-random `ln(152k) ≈ 11.93` — runtime
+    RoPE removal renders the model **near-random**, not merely degraded. G-RS1.2 half-1 passes
+    emphatically (the drop is decisively non-vacuous).
 - M1.5 completed for `qwen3` and `qwen3-dropped`; G1 passed and G2 was not applicable.
+  Null-corrected ridge R² (`r2_minus_null_mean`, mean over heads/stimuli) by depth — the
+  informative State-2 probe:
+
+  | layer | RoPE `k_pre` | RoPE `k_post` | dropped `k_pre==k_post` |
+  |---|---|---|---|
+  | 0 | 0.000 | 1.043 | 0.000 |
+  | 1 | 0.894 | 1.037 | 0.171 |
+  | 2 | 0.949 | 1.044 | 0.520 |
+  | 3 | 0.990 | 1.037 | 0.763 |
+  | 4 | 0.985 | 1.050 | 0.979 |
+  | 6+ (plateau) | ~0.99 | ~1.04 | **~1.03** |
+
+  The dropped state retains near-full key-position decodability (plateau ~1.03, ≥ the RoPE model's
+  emergent `k_pre` ~0.99) with the native-NoPE depth shape (architectural zero at L0 → rises →
+  plateaus by L4–6) — **before any recalibration**. Early layers (L1–L3) lose position relative to
+  the RoPE model and converge by L4.
 - M1.6 completed:
   - `qwen3`: G6 pass, G7 pass count `39`, transitivity confirmed count `448`.
   - `qwen3-dropped`: G6 pass, G7 pass count `0`, transitivity confirmed count `0`.
 
 ### Analysis
 
-Runtime RoPE removal is a valid and falsifiable state, but it catastrophically degrades language-modeling quality. The M1.6 comparison is consistent with RoPE carrying or scaffolding transitive induction behavior in this setup: baseline Qwen3 has confirmed transitivity signals, while dropped-RoPE has none under the same discriminator protocol.
+Runtime RoPE removal is a valid, falsifiable state that catastrophically degrades language-modeling
+quality (near-random perplexity), yet the representations tell a sharply different story.
+
+**Headline — emergent position survives the drop almost intact.** Despite near-random perplexity,
+the dropped model's key-position decodability plateaus at ~1.03 (M1.5 table above), matching or
+exceeding the RoPE model's emergent `k_pre`, with the characteristic native-NoPE depth profile —
+and this is present *before* any recalibration. So the dropped state is a clean **dissociation:
+position is fully decodable from K even in a model that cannot use it for LM.** This directly
+foreshadows P.RS1.b (position "fills in"): there is little to fill in — it is already there. The
+implication for RS1b is that recalibration is testing whether training **reconnects the readout** to
+already-present position, not whether position must be rebuilt.
+
+**Mechanistic refinement of P1.5.c.** In the RoPE model, `k_pre` is already highly position-decodable
+at L1 (0.89) while the dropped model is only 0.17 there, converging by L4. Read: shallow-layer
+position in the RoPE model is **rotation-propagated** (mixed into the residual by early rotated
+attention, and lost when the rotation is removed), whereas deep-layer position is **emergently
+reconstructed and rotation-independent**. This separates the two sources of position that P1.5.c
+lumped together.
+
+**Caveat on M1.6 (correcting an earlier over-read).** The dropped state shows no G7 attention signal
+and no confirmed transitivity, but this is **not** clean evidence that RoPE specifically carries
+transitive induction: the dropped model is near-random, so it fails *every* behavioral probe
+trivially — the null is confounded by global model breakdown. The interpretable State-2 probe is
+M1.5 (representations), not M1.6 (behavior). The genuine addressing test (P.RS1.c) is State 1 (RoPE)
+vs State 3 (recalibrated, **functional**), which RS1b produces; State-2 M1.6 nulls are expected and
+near-uninformative and should not be read as a positive claim about RoPE's causal role.
 
 ### Conclusion / Next Step
 
-RS1.a passes as a zero-training validation. Proceeding to RS1b is justified only as a recalibration/retraining test: the runtime-dropped model is not usable as-is, but it is a valid baseline for asking whether training can recover function without RoPE.
+RS1.a passes as a zero-training validation and green-lights RS1b. It also sharpens RS1b's
+hypothesis: because emergent key-position is *already* near-ceiling in the dropped model (M1.5),
+RS1b tests whether light recalibration can reconnect the LM readout to that already-present position
+— predict P.RS1.a (perplexity recovers) with the M1.5 profile changing little, after which P.RS1.c
+(addressing) becomes measurable on a functional model. The runtime-dropped model is not usable
+as-is, but it is a valid baseline for that test. The `qwen3-dropped` plumbing (rotary-disable,
+frozen eval, probe branches) is proven; only the training loop (spec §10.C) is new for RS1b.
