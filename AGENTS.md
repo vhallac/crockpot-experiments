@@ -33,6 +33,14 @@ Per-run throw-away checklists and other disposable reports belong under `temp/`,
 
 When drafting or completing a reproducible-run entry in `experiments/<experiment-id>/NOTEBOOK.md`, also add or update a `mini_mem` note for the current experiment. Keep it short-lived and operational: experiment id, notebook path/heading, checklist path, current process step, output/publication target, and next required action. Delete the note once the experiment is complete and the final notebook update is committed.
 
+### Pin model and dataset revisions — MUST
+
+Every reproducible run **MUST** pin the exact upstream revision of every model and dataset it loads, and record it in the run manifest. Do **not** rely on a library default that resolves a moving `main`/`latest` reference: a manifest that records `revision: null` (or omits it) is a reproducibility defect, not merely a missing nicety, because the exact snapshot cannot be reconstructed from the committed artifacts alone.
+
+- Pass an explicit commit SHA (HuggingFace `revision=`, or the equivalent for the source) at load time. Prefer failing loudly over silently loading a moving reference — a run script that accepts an unset revision and records `null` MUST be treated as a bug to fix before the next run.
+- Resolve the SHA up front (e.g. `huggingface_hub.HfApi().model_info(repo_id).sha`) and write it into the manifest; do not let the loader default it.
+- **Recovering an already-run job that recorded `null`:** the upstream `main` HEAD **as of the recorded run date** is the best-effort snapshot. For slow-moving repos this recovers the actual revision with high accuracy, so it is a real but low-severity gap — record the resolved date-based SHA in the notebook with an explicit "best-effort, unverified for this run" caveat rather than fabricating certainty.
+
 ## Cross-experiment caching via network volume
 
 Python CUDA libraries (PyTorch, transformers, etc.) and model parameters are

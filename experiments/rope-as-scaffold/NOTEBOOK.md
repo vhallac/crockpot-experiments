@@ -95,12 +95,24 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space \
 - Start/end: `2026-07-24T05:58:54Z` → `2026-07-24T09:06:32Z`.
 - Local manifest: `experiments/rope-as-scaffold/artifacts/RS1a-run-20260724.md`.
 - Redo note: first M1.5 attempt OOMed because Qwen's config-derived context exceeded L4 memory; M1.5 was redone with `--max-length 1024` for both states.
+- **Model revision (reproducibility gap, low severity).** RS1a loaded `Qwen/Qwen3-0.6B` at the
+  library-default `main` reference; all manifests record `revision: null`. Per `AGENTS.md`
+  (§ Pin model and dataset revisions) this is a defect — the loader should have pinned an explicit
+  SHA. Best-effort recovery: the snapshot is `Qwen/Qwen3-0.6B` `main` HEAD **as of 2026-07-24**;
+  Qwen3-0.6B is slow-moving, so this recovers the actual revision with high accuracy but is
+  unverified for this run. RS1b **MUST** pin an explicit SHA at load time (spec §10.A).
 
 ### Published Outputs
 
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/rope-as-scaffold-rs1a/20260724>
 - Bundle: `rope_as_scaffold_rs1a_20260724T0559Z.tar.gz`
 - SHA256: `224765f0042b8c185a8bbd74a28914a18729b98ebd580b254b316f2f54b122e2`
+
+### Final Provenance
+
+- Run-record commit: `b023eaf` (this notebook's Results, first recorded).
+- Analysis-correction commit: `45122f6` (M1.5 emergent-position result added, M1.6 over-read fixed).
+- Reproducibility follow-ups commit: this commit (revision caveat, final provenance, RS1b length pin).
 
 ### Results
 

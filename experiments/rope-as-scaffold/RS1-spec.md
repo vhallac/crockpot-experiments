@@ -345,6 +345,21 @@ Written from scratch (no training loop exists). Full-parameter recalibration:
   rotation-disabled forward as their probes.
 - This single number feeds **G-RS1.2** and **P.RS1.a**; drift between states voids both.
 
+**[MUST] Three length knobs — pin each independently; do not conflate.** RS1 now has three distinct
+lengths, and a comparison is only valid if the *same* value is used across all states for a given
+knob:
+
+| knob | value | scope |
+|---|---|---|
+| training context | 2048 | RS1b recalibration (§10.C) |
+| perplexity `eval_context` | 2048 | frozen eval, all states (§10.E) |
+| **M1.5 position-probe `--max-length`** | **1024** | M1.5 across all states |
+
+The M1.5 probe length is **1024, not 2048**: RS1a ran States 1–2 at `--max-length 1024` (an L4-OOM
+redo, recorded in `NOTEBOOK.md`), so **RS1b M1.5 on State 3 MUST also use 1024** — or States 1–2 must
+be re-run at the newly chosen length. Otherwise the before/after M1.5 profiles (P.RS1.b/b′) are not
+apples-to-apples. This is a probe-stimulus length and is independent of the two 2048 contexts above.
+
 ### 10.F C2 subspace analysis (secondary — may ship after C1)
 
 - **[D]** Per layer, define the "positional subspace" as the top-`k` PCA directions of the
