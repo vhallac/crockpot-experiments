@@ -127,6 +127,15 @@ Stage-6 validation materials are in [`NOTEBOOK.md`](NOTEBOOK.md) and the disposa
 
 Do not launch RS1b training until this RS1.a sequence passes on RunPod and the outputs have been reviewed.
 
+### RS1b training
+
+RS1b's training step (generating the `qwen3-droped` checkpoint) is implemented off the
+`NOTEBOOK.md` reproducible-run flow — it's artifact generation, not a hypothesis test. See
+[`qwen3-nope-training.md`](qwen3-nope-training.md) for the recipe pins, rotary-disable mechanism,
+data/eval pipeline, storage plan, and cost guardrails an implementer needs before starting. The
+probing phase that consumes the resulting checkpoint (M1.5/M1.6/perplexity/C2) is a normal
+`NOTEBOOK.md`-tracked run.
+
 ### Candidate extensions (unscoped)
 
 - **RoPE as a training warmup for NoPE (proposed).** Instead of dropping RoPE from a fully
