@@ -153,11 +153,53 @@ Use smoke-test limits before full-model runs:
 - `--limit-heads 1`
 - small samples/doc limits appropriate to the experiment
 
-Before a CUDA full run, review the code path that the command will execute and record the preflight finding in the checklist/notebook. The dominant computation must actually stay on GPU, not merely model loading or extraction. Audit hot loops for GPU-to-CPU escapes such as `.cpu()`, `.numpy()`, `.tolist()`, `.item()`, `float(tensor)`, `int(tensor)`, `bool(tensor)`, Pandas/DataFrame work, `np.linalg`/`np.fft`/`sklearn`/`scipy`, or Python loops immediately after CUDA tensor extraction. If such escapes are in the dominant path, either move that work to batched `torch` on the CUDA tensor, justify why it is not dominant, or do not start the paid CUDA run. The M1.5 Pythia aborted run on 2026-07-22 is the cautionary example: keys were captured on GPU, then every slot/head/layer matrix was converted with `.cpu().numpy()` and analysed by NumPy linear algebra/permutation loops, making the run CPU-bound.
+### Experiment code progress and CUDA hot-path safety
 
-CUDA tripwire for paid/reproducible runs: after the static audit, run a bounded CUDA smoke whose command shape matches the full run closely enough to exercise the real hot path. Record progress rate, GPU utilization, CPU utilization, and an extrapolated full-run wall-clock estimate in the checklist/notebook. If extrapolated runtime exceeds the planned budget, if one CPU core is pegged while GPU utilization is low or bursty, or if progress is dominated by many tiny GPU kernels and scalar synchronizations, stop and fix/vectorize before launching the full run. Static `.item()`/`.cpu()` calls are allowed only when they are outside the hot path, after coarse batched work, or solely for final reporting/projector serialization.
+Trigger: when writing or modifying Python code that may run as an experiment, smoke test, training job, evaluation, or RunPod command.
 
-Long or reproducible runs must publish progress while running. Prefer stdout progress lines with completed units, current stimulus/model slice, rate, and ETA/budget comparison. If stdout is reserved for machine-readable data, write the same information to a log file and record the log path in the notebook/checklist. Do not start an opaque long run where stopping at 10% and 99% would look the same to the operator.
+Actions:
+
+- MUST add progress reporting for every potentially long phase, including aggregation/finalization. Progress may go to stdout or to a documented log file, and should include completed units, total units when known, elapsed time/rate, and enough context to identify the current model/stimulus/layer/head/aggregate slice.
+- MUST NOT introduce unintended CUDA-to-CPU fallback in hot paths. CPU transfers are allowed only for final reporting/serialization or explicitly justified non-dominant work.
+- If `.cpu()`, `.numpy()`, `.tolist()`, `.item()`, `float(tensor)`, `int(tensor)`, `bool(tensor)`, NumPy/pandas/sklearn/scipy, or scalar tensor conversions are used near CUDA tensors, add a nearby comment explaining why that use is outside the hot path.
+
+Code review summaries for affected code should state:
+
+- `progress coverage: complete | partial | missing`
+- `CUDA hot-path CPU fallback: none | intentional | problematic`
+
+### RunPod GPU readiness report — required before experiment/training code
+
+Trigger: before executing any experiment, probe, training, evaluation, or long smoke command on a RunPod GPU pod. Skip only for read-only diagnostics, file transfer, pod setup, or CPU-only work.
+
+Actions:
+
+1. Create a standalone GPU readiness report under `temp/gpu-readiness/<YYYYMMDDTHHMMSSZ>-<run-slug>.md`. Do not use the lab notebook as the primary GPU-readiness record; reproducible scientific runs may reference the report from the notebook/checklist.
+2. Review the exact command's code path, including helper functions called after model forward/extraction. The dominant computation must actually stay on GPU, not merely model loading or extraction.
+3. Scan for CPU fallback hazards: `.cpu()`, `.numpy()`, `.tolist()`, `.item()`, `float(tensor)`, `int(tensor)`, `bool(tensor)`, Pandas/DataFrame work, `np.linalg`, `np.fft`, sklearn/scipy, and Python loops immediately after CUDA tensor extraction.
+4. Assess vectorization: identify whether inner loops operate per layer/head/slot/permutation with tiny kernels or scalar synchronizations.
+5. Verify progress reporting covers every potentially long phase, including aggregation/finalization.
+6. Run a bounded CUDA tripwire matching the full command shape closely enough to exercise the real hot path, and record GPU utilization, CPU utilization, rate, and ETA/budget comparison in the report.
+
+Hard gates:
+
+- Do not start the full paid run if the dominant path falls back to CPU without written justification.
+- Do not start the full paid run if any long phase lacks progress reporting.
+- Do not start the full paid run if tripwire evidence shows low/bursty GPU utilization with high CPU utilization, unless the run is explicitly justified as CPU-side despite requiring a GPU pod.
+- Do not start the full paid run if extrapolated wall-clock exceeds the planned budget.
+
+The readiness report output must include:
+
+- command reviewed
+- files/functions reviewed
+- static hazard findings
+- vectorization assessment
+- progress-reporting assessment
+- tripwire command
+- GPU utilization, CPU utilization, rate, and ETA/budget comparison
+- final decision: `GO`, `FIX_FIRST`, or `USE_CPU_POD`
+
+The M1.5 Pythia aborted run on 2026-07-22 is the cautionary example: keys were captured on GPU, then every slot/head/layer matrix was converted with `.cpu().numpy()` and analysed by NumPy linear algebra/permutation loops, making the run CPU-bound.
 
 Verify outputs externally before reporting success, for example:
 
