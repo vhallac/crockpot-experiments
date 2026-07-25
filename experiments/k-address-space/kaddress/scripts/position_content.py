@@ -742,7 +742,7 @@ class AggregateState:
                     self.sample_token[j] = int(tok)
 
 
-def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float) -> tuple[dict[str, Any], np.ndarray]:
+def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float, device: torch.device | None = None) -> tuple[dict[str, Any], np.ndarray]:
     assert state.cov is not None and state.sample_x is not None and state.sample_y is not None and state.sample_token is not None
     raw = state.raw_abs_sum / max(1, state.value_count)
     resid_scale = state.resid_abs_sum / max(1, state.value_count)
@@ -764,6 +764,13 @@ def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float)
     x = np.stack(state.sample_x)
     y = np.asarray(state.sample_y, dtype=float)
     token_ids = np.asarray(state.sample_token, dtype=np.int64)
+    torch_device = device if device is not None and device.type == "cuda" else None
+    if torch_device is not None:
+        x_t = torch.as_tensor(x, dtype=torch.float32, device=torch_device)
+        y_t = torch.as_tensor(y, dtype=torch.float32, device=torch_device)
+        token_ids_t = torch.as_tensor(token_ids, dtype=torch.long, device=torch_device)
+    else:
+        x_t = y_t = token_ids_t = None
     degenerate = frac < variance_floor
     if degenerate:
         r2 = 0.0
@@ -776,26 +783,52 @@ def _aggregate_stats(state: AggregateState, *, seed: int, variance_floor: float)
         frac_var = 0.0
         basis = eigvecs[:0]
     else:
-        alphas = np.logspace(-2, 4, 13)
-        r2 = _ridge_cv_r2(x, y, folds=5, seed=seed, alphas=alphas)
-        shuffled_r2, shuffled_r2_p99, null_max = _null_stats(x, y, seed=seed, alphas=alphas, permutations=5)
+        if torch_device is not None:
+            assert x_t is not None and y_t is not None and token_ids_t is not None
+            alphas_t = torch.logspace(-2, 4, 13, dtype=x_t.dtype, device=torch_device)
+            r2 = _ridge_cv_r2_torch(x_t, y_t, folds=5, seed=seed, alphas=alphas_t)
+            shuffled_r2, shuffled_r2_p99, null_max = _null_stats_torch(x_t, y_t, seed=seed, alphas=alphas_t, permutations=5)
+            if len(basis):
+                basis_t = torch.as_tensor(basis, dtype=x_t.dtype, device=torch_device)
+                mean_t = x_t.mean(dim=0, keepdim=True)
+                resid_t = x_t - mean_t
+                x_proj_t = mean_t + resid_t - (resid_t @ basis_t.T) @ basis_t
+            else:
+                x_proj_t = x_t
+            r2_after = _ridge_cv_r2_torch(x_proj_t, y_t, folds=5, seed=seed + 2, alphas=alphas_t)
+        else:
+            alphas = np.logspace(-2, 4, 13)
+            r2 = _ridge_cv_r2(x, y, folds=5, seed=seed, alphas=alphas)
+            shuffled_r2, shuffled_r2_p99, null_max = _null_stats(x, y, seed=seed, alphas=alphas, permutations=5)
+            if len(basis):
+                mean = x.mean(axis=0, keepdims=True)
+                resid = x - mean
+                x_proj = mean + resid - (resid @ basis.T) @ basis
+            else:
+                x_proj = x
+            r2_after = _ridge_cv_r2(x_proj, y, folds=5, seed=seed + 2, alphas=alphas)
         r2_minus_null_mean = r2 - shuffled_r2
         permutation_p_value = (1.0 + float(null_max >= r2)) / 6.0
+    if torch_device is not None:
+        assert x_t is not None and token_ids_t is not None
+        token_acc_before = _nearest_centroid_cv_accuracy_torch(x_t, token_ids_t, folds=5, seed=seed + 3)
+        if len(basis):
+            basis_t = torch.as_tensor(basis, dtype=x_t.dtype, device=torch_device)
+            mean_t = x_t.mean(dim=0, keepdim=True)
+            resid_t = x_t - mean_t
+            x_proj_t = mean_t + resid_t - (resid_t @ basis_t.T) @ basis_t
+        else:
+            x_proj_t = x_t
+        token_acc_after = _nearest_centroid_cv_accuracy_torch(x_proj_t, token_ids_t, folds=5, seed=seed + 4)
+    else:
+        token_acc_before = _nearest_centroid_cv_accuracy(x, token_ids, folds=5, seed=seed + 3)
         if len(basis):
             mean = x.mean(axis=0, keepdims=True)
             resid = x - mean
             x_proj = mean + resid - (resid @ basis.T) @ basis
         else:
             x_proj = x
-        r2_after = _ridge_cv_r2(x_proj, y, folds=5, seed=seed + 2, alphas=alphas)
-    token_acc_before = _nearest_centroid_cv_accuracy(x, token_ids, folds=5, seed=seed + 3)
-    if len(basis):
-        mean = x.mean(axis=0, keepdims=True)
-        resid = x - mean
-        x_proj = mean + resid - (resid @ basis.T) @ basis
-    else:
-        x_proj = x
-    token_acc_after = _nearest_centroid_cv_accuracy(x_proj, token_ids, folds=5, seed=seed + 4)
+        token_acc_after = _nearest_centroid_cv_accuracy(x_proj, token_ids, folds=5, seed=seed + 4)
     return {
         "raw_mean_abs": raw,
         "resid_mean_abs": resid_scale,
@@ -1086,8 +1119,16 @@ def run(args: argparse.Namespace) -> None:
         print(f"processed {stim.stimulus_id} family={stim.family} seq={len(stim.input_ids)} slots={len(stim.slots)} units={progress_done}", flush=True)
 
     print(f"building aggregate rows count={len(aggregates)}", flush=True)
+    aggregate_start = time.monotonic()
     for agg_i, state in enumerate(aggregates.values()):
-        stats, basis = _aggregate_stats(state, seed=args.seed + 900_000 + agg_i, variance_floor=args.variance_floor)
+        stats, basis = _aggregate_stats(state, seed=args.seed + 900_000 + agg_i, variance_floor=args.variance_floor, device=device)
+        if (agg_i + 1) % max(1, args.progress_every) == 0 or agg_i + 1 == len(aggregates):
+            elapsed = max(time.monotonic() - aggregate_start, 1e-9)
+            print(
+                f"aggregate progress rows={agg_i + 1}/{len(aggregates)} rate={(agg_i + 1) / elapsed:.2f}/s "
+                f"family={state.family} variant={state.variant} layer={state.layer} head={state.head}",
+                flush=True,
+            )
         rows.append(
             {
                 "model": args.model,
