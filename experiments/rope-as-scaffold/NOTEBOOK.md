@@ -2,6 +2,64 @@
 
 Newest entries first.
 
+## 2026-07-25 — RS1b DroPE-trained M1.5/M1.6 probes (pre-run)
+
+### Question / Hypothesis
+
+After RS1b recalibration of Qwen3-0.6B with identity RoPE (`qwen3-droped`), do the M1.5 and M1.6 probes show that emergent key-position fills in while query-readable addressing remains absent? This run proceeds despite the training hiccup that held-out perplexity recovered only to about 35 rather than the original Qwen3 baseline.
+
+### Experiment Design Summary
+
+- State 3: `qwen3-droped`, loaded from the trained checkpoint at `/workspace/rs1b-artifacts/qwen3-droped-20260724` via `QWEN3_DROPED_PATH`.
+- M1.5: `kaddress.scripts.position_content` on CUDA, full Qwen3 layer/head scope, `--max-length 1024` matching the prior RS1.a L4-safe/Qwen probe adjustment.
+- M1.6: `kaddress.scripts.m16_discriminator` on CUDA, full Qwen3 layer/head scope, default v1.1 repetitions/stimuli/gates.
+- Static GPU audit: both scripts load through `deadkeys.common.loading.load_model`; `qwen3-droped` points at the trained checkpoint and applies identity rotary embeddings; both scripts print progress. M1.5 uses batched torch GPU extraction/ridge paths with small final CPU serialization/statistics; M1.6 does per-head GPU forwards with scalar readouts, matching prior accepted CUDA runs.
+
+### Planned Procedure
+
+Run on the existing A100 SXM pod from `/workspace/crockpot-experiments` after syncing this pre-run commit:
+
+```bash
+cd /workspace/crockpot-experiments
+. ~/.crockpot-experiments-runpod-env
+export DEAD_KEYS_CUDA_VENV=/workspace/venv
+export DEAD_KEYS_CUDA_SKIP_INSTALL=1
+export QWEN3_DROPED_PATH=/workspace/rs1b-artifacts/qwen3-droped-20260724
+RUN_ID=rope_as_scaffold_rs1b_probes_$(date -u +%Y%m%dT%H%M%SZ)
+mkdir -p logs
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-python -m kaddress.scripts.position_content \
+  --model qwen3-droped --device cuda --max-length 1024 \
+  --output-dir outputs/${RUN_ID}_m15_qwen3_droped 2>&1 | tee logs/${RUN_ID}_m15.log
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-python -m kaddress.scripts.m16_discriminator \
+  --model qwen3-droped --device cuda \
+  --output-dir outputs/${RUN_ID}_m16_qwen3_droped 2>&1 | tee logs/${RUN_ID}_m16.log
+```
+
+### Expected Signal / Interpretation Plan
+
+- P.RS1.b: M1.5 should find present/depth-rising emergent key-position in the trained DroPE'd model, ideally at least as strong as the RoPE model's `k_pre` baseline.
+- P.RS1.c: M1.6 should remain null for query-readable addressing; appearance of robust output addressing would falsify the scaffold/non-addressability story.
+- The suboptimal LR / PPL≈35 training result is treated as a limitation and possible under-recovery confound, not as a reason to skip the mechanistic probes.
+
+### Pre-run Provenance
+
+- Spec: `experiments/rope-as-scaffold/RS1-spec.md` §§2–5, §10.
+- Code branch: `main`.
+- Pre-run commit: _pending commit_.
+- Planned output location: RunPod `outputs/rope_as_scaffold_rs1b_probes_*`; to be packaged and published as a GitHub Release asset.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-24 — RS1.a RunPod validation preparation
 
 ### Question / Hypothesis
