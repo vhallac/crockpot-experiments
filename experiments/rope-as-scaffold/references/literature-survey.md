@@ -8,9 +8,21 @@
 - **DroPE** — *Extending the Context of Pretrained LLMs by Dropping their Positional
   Embeddings* (Sakana AI, Dec 2025, [arXiv 2512.12167](https://arxiv.org/abs/2512.12167) ·
   [blog](https://sakana.ai/drope/)). This is the method behind this program's motivation:
-  pretrain with RoPE → **remove positional embeddings from all layers → short recalibration**
-  (reported: RoPE checkpoint ~14B tokens, drop, recalibrate ~2B tokens; **< 1% of the
-  pretraining budget**). Reported results: **matches full-RoPE in-context perplexity**, **beats
+  pretrain with RoPE → **remove positional embeddings from all layers → short recalibration**.
+  **Two distinct reported experiments, previously conflated in this note — corrected:**
+  - **Small-scale mechanistic ablation** (500M-param transformer, 16B tokens total; Figure 2 +
+    Appendix Table 6): varies *when* PEs are dropped during a fixed 16K-step run. Exact final
+    validation perplexity: **NoPE-from-step-0 23.77, drop@8K 22.42, drop@14K 21.73, full RoPE
+    (drop@16K, i.e. never) 21.72**. Dropping late (14K, i.e. recalibrating for the final ~12.5%
+    of the run) nearly closes the gap to full RoPE (21.73 vs 21.72, ~0.05% relative); dropping
+    earlier leaves a monotonically larger gap. This is the experiment that demonstrates the
+    *concept* and the *timing* claim, not the efficiency claim below.
+  - **Large-scale real-checkpoint validation** (§5.1, "Scaling to billion-parameter models"):
+    recalibrating on a **fixed 20B tokens** regardless of original pretraining size — **2% of
+    the pretraining budget for SmolLM-1.7B** (20B vs. 1T pretrain tokens), **0.5% for Llama2-7B**
+    (20B vs. 4T pretrain tokens). This is the actual source of the "<1%"-scale efficiency claim;
+    it does not use the 14B/2B token counts above, which belong to the separate small ablation.
+  Reported results overall: **matches full-RoPE in-context perplexity**, **beats
   NoPE-from-scratch**, and gives **zero-shot context extension** outperforming RoPE-scaling and
   specialized long-context architectures on LongBench / RULER. Framing: *positional encoding is
   a training scaffold, not a permanent necessity* — RoPE gives training stability (NoPE-from-
