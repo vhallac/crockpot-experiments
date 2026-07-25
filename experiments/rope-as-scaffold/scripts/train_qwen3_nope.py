@@ -366,6 +366,10 @@ def main() -> None:
 
     rows: list[dict] = []
     metrics_path = args.output_dir / "training_metrics.csv"
+    if _exit_requested:
+        print("SIGHUP received before training loop — no checkpoint to save, exiting", flush=True)
+        return
+
     start_time = monotonic() - resumed_elapsed_s
     fieldnames = ["step", "tokens", "train_loss", "eval_ce", "eval_ppl", "lr", "elapsed_s", "tokens_per_s"]
     csv_mode = "a" if start_step > 0 else "w"
