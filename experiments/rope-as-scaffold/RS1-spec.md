@@ -315,7 +315,7 @@ Written from scratch (no training loop exists). Full-parameter recalibration:
 | framework | raw PyTorch loop (or HF `Trainer`) | small model; a raw loop is auditable and avoids Trainer rotary/config surprises |
 | precision | bf16 mixed | §8 budget assumes it |
 | optimizer | AdamW, β=(0.9, 0.95), eps=1e-8, wd=0.1 | standard LM recalibration |
-| peak LR | **3e-5** *(decided)* | recalibration, not pretraining — kept low. This is the #1 recipe risk (P.RS1.a null-masquerade). |
+| peak LR | **1e-3** *(revised 2026-07-25, was 3e-5)* | The original 3e-5 plateaued at PPL≈35 vs. the ~21.8 RoPE-baseline target (RS1b v1, `qwen3-droped-20260724`) and left M1.6's transitivity-collapse finding confounded with an under-training explanation. DroPE's own paper (arXiv 2512.12167, Appendix D.3 Table 11) ablates exactly this LR on a comparable-scale model (SmolLM-360M) and finds 3e-5 measurably worse (final loss 2.7–3.1) than their defaults; 1e-3 + QK-norm was their *best* setting (2.496) — Qwen3 already has native QK-norm, so we take on none of the instability their ablation needed QK-norm to solve. **[D]:** fall back to 3e-4 (their broadly-validated "default," still a 10x increase over the original) if 1e-3 destabilizes. See `rs1b-lr-retuning-note.md` for the full reasoning. Everything else in this table is unchanged — one variable at a time, for a clean rerun comparison. |
 | schedule | cosine → 10% of peak; warmup 2% of steps | |
 | grad clip | 1.0 | |
 | **train context** | **2048** *(decided; supersedes §2.2 "original context length")* | bounds memory, keeps the run cheap, and makes P.RS1.e's ~2× test (→4096) meaningful. |

@@ -32,7 +32,7 @@ final weights only.
 | field | value |
 |---|---|
 | optimizer | AdamW, β=(0.9, 0.95), eps=1e-8, wd=0.1 |
-| peak LR | 3e-5 |
+| peak LR | **1e-3** (revised 2026-07-25, was 3e-5 — see `rs1b-lr-retuning-note.md` and `RS1-spec.md` §10.C; fall back to 3e-4 if unstable) |
 | schedule | cosine → 10% of peak; warmup 2% of steps |
 | grad clip | 1.0 |
 | precision | bf16 mixed |

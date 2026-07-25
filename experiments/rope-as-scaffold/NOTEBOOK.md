@@ -2,6 +2,73 @@
 
 Newest entries first.
 
+## 2026-07-25 — RS1b LR-corrected rerun (pre-run)
+
+### Question / Hypothesis
+
+RS1b v1 (`qwen3-droped-20260724`, peak LR 3e-5) plateaued at held-out PPL≈35 against the ~21.8
+RoPE-baseline target, and its M1.6 probe showed `transitivity_confirmed` collapsing from 448/448
+(RoPE) to 0/448 — but this is confounded: is the collapse a genuine consequence of removing RoPE,
+or an artifact of under-training at too low an LR? DroPE's own paper (arXiv 2512.12167, Appendix
+D.3 Table 11) ablates this exact LR on a comparable-scale model (SmolLM-360M) and shows 3e-5 is
+measurably worse (final loss 2.7–3.1) than their defaults (3e-4: 2.53–2.56; 1e-3+QK-norm: 2.496,
+their best). Qwen3 already has native QK-norm, so 1e-3 should be safe without the instability their
+ablation needed QK-norm to solve. This run tests whether a corrected LR (1e-3) achieves full
+perplexity recovery, and if so, whether the M1.5/M1.6 mechanistic picture changes once the
+training-budget confound is removed.
+
+### Experiment Design Summary
+
+- Identical to RS1b v1 (`RS1-spec.md` §10.C) except **peak LR: 1e-3 (was 3e-5)**. Token budget
+  (1B tokens), train context (2048), schedule shape (cosine → 10% of peak, 2% warmup), optimizer,
+  seed (0), and all data/eval definitions are unchanged — one variable changed, for a clean
+  comparison against v1.
+- Fallback: if 1e-3 destabilizes (loss spikes despite QK-norm), drop to 3e-4 and record the
+  substitution.
+- Output artifact: a new checkpoint directory (distinct from `qwen3-droped-20260724`), followed by
+  the same M1.5/M1.6 probe sequence used on v1.
+
+### Planned Procedure
+
+Same training script (`experiments/rope-as-scaffold/scripts/train_qwen3_nope.py`) and probe
+commands as the v1 run and the 2026-07-25 M1.5/M1.6 probes entry below, with `--lr 1e-3` (or `3e-4`
+on fallback) and a new `--output-dir`/run-id timestamp. Full command bundle to follow the same
+smoke-test-first guardrail from `qwen3-nope-training.md` before committing to the full run.
+
+### Expected Signal / Interpretation Plan
+
+- **If PPL recovers close to ~21.8 and M1.6 transitivity/output_above_noise stay near zero:**
+  strong evidence the addressing collapse is a genuine consequence of RoPE removal, not a training
+  artifact — sharpens C1/P.RS1.c substantially and motivates the RS3/C3 behavioral follow-up
+  discussed for this finding.
+- **If PPL recovers and transitivity/output_above_noise recover substantially too:** the v1
+  collapse was primarily an under-training artifact; P.RS1.c would need re-adjudication in the
+  program's favor, and RS1b-ctrl's recipe (§11) should be updated to match this LR.
+- Either outcome is reportable; this run exists specifically to remove the LR confound from the
+  v1 interpretation, not to presuppose a direction.
+
+### Pre-run Provenance
+
+- Spec: `experiments/rope-as-scaffold/RS1-spec.md` §10.C (LR revision recorded there).
+- Related: `experiments/rope-as-scaffold/rs1b-lr-retuning-note.md` (full reasoning for the LR
+  change, options considered, and the RS1b-ctrl consequence).
+- Code branch: `main`.
+- Pre-run commit: _(backfilled after commit)_.
+- Prior run for comparison: `qwen3-droped-20260724` (RS1b v1), see the 2026-07-24 training report
+  and the 2026-07-25 M1.5/M1.6 probes entry below.
+
+### Results
+
+_Pending run._
+
+### Analysis
+
+_Pending output analysis._
+
+### Conclusion / Next Step
+
+_Pending._
+
 ## 2026-07-25 — RS1b DroPE-trained M1.5/M1.6 probes (pre-run)
 
 ### Question / Hypothesis
