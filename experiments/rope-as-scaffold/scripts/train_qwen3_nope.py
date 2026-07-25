@@ -196,8 +196,8 @@ def save_checkpoint(model, optimizer, scheduler, step, block_cursor, total_steps
         "scheduler_state_dict": scheduler.state_dict(),
         "rng_python": random.getstate(),
         "rng_numpy": np.random.get_state(),
-        "rng_torch": torch.get_rng_state(),
-        "rng_torch_cuda": torch.cuda.get_rng_state() if device.type == "cuda" else None,
+        "rng_torch": torch.get_rng_state().cpu(),
+        "rng_torch_cuda": torch.cuda.get_rng_state().cpu() if device.type == "cuda" else None,
     }
     path = ckpt_dir / "ckpt.pt"
     tmp_path = ckpt_dir / "ckpt.pt.tmp"
@@ -222,9 +222,9 @@ def load_checkpoint(ckpt_dir: Path, model, optimizer, scheduler, device: torch.d
     scheduler.load_state_dict(ckpt["scheduler_state_dict"])
     random.setstate(ckpt["rng_python"])
     np.random.set_state(ckpt["rng_numpy"])
-    torch.set_rng_state(ckpt["rng_torch"])
+    torch.set_rng_state(ckpt["rng_torch"].cpu())
     if device.type == "cuda" and ckpt.get("rng_torch_cuda") is not None:
-        torch.cuda.set_rng_state(ckpt["rng_torch_cuda"], device=device)
+        torch.cuda.set_rng_state(ckpt["rng_torch_cuda"].cpu(), device=device)
     return ckpt
 
 
