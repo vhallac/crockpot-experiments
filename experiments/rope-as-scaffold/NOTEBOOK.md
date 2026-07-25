@@ -46,19 +46,61 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-pyth
 - Spec: `experiments/rope-as-scaffold/RS1-spec.md` §§2–5, §10.
 - Code branch: `main`.
 - Pre-run commit: `f200c92c5825b084e265a8b5c6c8d02fc685b671`.
+- Fix/rerun commit: `a25f8cf` (M1.5 aggregate analysis on CUDA).
 - Planned output location: RunPod `outputs/rope_as_scaffold_rs1b_probes_*`; to be packaged and published as a GitHub Release asset.
+
+### Published Outputs
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/rope-as-scaffold-rs1b/20260725>
+- Bundle: `rope_as_scaffold_rs1b_probes_20260725T0830Z.tar.gz`
+- SHA256: `1c5d9b7c48db62475e302c83b6215a8cfb0a0b95dd7fe92f4c66358f061af337`
+
+### Final Provenance
+
+- Run-record commit: `a25f8cf` (CUDA aggregate fix).
+- Analysis commit: this commit (notebook Results, Analysis, Conclusion).
 
 ### Results
 
-_Pending run._
+Run id: `rope_as_scaffold_rs1b_probes_20260725T0830Z`. RunPod A100 SXM pod, driver `570.195.03`.
+
+**M1.5 (position-content probe)** — gates: G1 `PASS` (architectural zero at layer 0; qwen3-droped's `rotary_mode=identity` means `k_pre == k_post` so G2 is `NOT_APPLICABLE`). `summary_rows=43904`, `shuffle_null_ok=True`.
+
+Null-corrected ridge R² (`r2_minus_null_mean`, mean over heads/stimuli) by depth — the State-3 trained model:
+
+| layer | RS1a 0-shot dropped | RS1b trained |
+|---|---|---|
+| 1 | 0.171 | 0.179 |
+| 2 | 0.520 | 0.475 |
+| 3 | 0.763 | 0.806 |
+| 4 | 0.979 | 0.996 |
+| 5 | ~1.030 | 1.006 |
+| 6–27 (plateau) | ~1.030 | ~1.020–1.033 |
+
+**M1.6 (hypothesis discriminator)** — gates: G6 `PASS` (marker neutrality confirmed). G7 pass count `13` (vs RS1a: qwen3 `39`, qwen3-dropped `0`). `classification_rows=448`, transitivity confirmed `0`.
 
 ### Analysis
 
-_Pending output analysis._
+The headline is that **light DroPE recalibration changes the positional representation negligibly.**
+
+**M1.5 — P.RS1.b ("position fills in") is falsified by ceiling effects.** The trained model's key-position R² is essentially the same as the zero-shot dropped state, which was already near-ceiling (~1.03). The prediction that recalibration would "fill in" emergent position was wrong because there was nothing to fill in — the RS1a finding that position survives RoPE removal was the important result, and RS1b confirms it persists unchanged after training. Shallow layers (1–3) show minor scatter (±0.05) consistent with the noisier estimation at low R² rather than a systematic training effect.
+
+This does not weaken the scaffold hypothesis; it refines it: RoPE removal leaves position decodable from the key space at near-ceiling levels *regardless of whether the model can use it.* The RS1a dissociation (high positional R², near-random perplexity) was not a transient — it survives recalibration unchanged.
+
+**M1.6 — P.RS1.c partial result.** The G7 attention signal partially recovers (0 → 13 heads, vs 39 in the original RoPE model). However transitivity remains 0 in every state tested so far (original qwen3, zero-shot dropped, trained). The RS1a caveat that M1.6 nulls in the dropped state were confounded by global model breakdown is partially resolved: the trained model is functional (PPL≈35), and G7 shows a weak but non-zero signal. Whether this weak signal reflects partial recovery of RoPE-type addressing or a different mechanism cannot be distinguished by M1.6 alone. The transitivity null across all states suggests the discriminator stimulus may be too subtle for Qwen3-0.6B even in the original RoPE configuration where G7 had 39 passing heads.
+
+**Training outcome context.** The suboptimal training (PPL≈35 vs baseline ~21.8, near-random held-out start after identity-RoPE initialization) means this model is not a "fully recovered" counterpart to the original qwen3. The positional representation being already near-ceiling pre-training means M1.5 would not show training effects even with better PPL. But the M1.6 partial G7 recovery *might* scale with PPL — a better-trained model could show more G7 heads — and the transitivity null might also tighten under full convergence. The mechanistic question RS1b set out to answer (does emergent addressing appear after recalibration?) thus has a conditional answer: 
+
+- **Key-position (P.RS1.b):** was already present before training; training is neutral.
+- **Query-readable addressing (P.RS1.c):** shows a weak partial signal (13 G7 heads) that did not exist in the zero-shot dropped model, but falls well short of original-model levels and shows no transitivity. With the PPL caveat, the most conservative interpretation is that M1.6 is not a sensitive enough test at Qwen3-0.6B scale.
 
 ### Conclusion / Next Step
 
-_Pending._
+RS1b completes the RS1 experiment. The scaffold hypothesis survives: emergent position (M1.5) is independent of RoPE, and query-readable addressing (M1.6) does not robustly recover under light recalibration, though PPL limitations weaken the M1.6 null. The key takeaways for future work:
+
+1. **Position ≠ RoPE** is now a stable result (RS1a + RS1b convergence on M1.5). The native-NoPE model's K space encodes position at near-ceiling fidelity without any rotation. RoPE propagates this to shallow layers but is unnecessary for deep-layer position.
+2. **Addressing remains elusive.** No model state tested shows transitivity in M1.6. Either the discriminator is below Qwen3-0.6B's threshold, or the addressing hypothesis itself needs sharper operationalization.
+3. **A better-trained model** (full LR schedule, solid PPL recovery) would strengthen the M1.6 test. If G7 heads scale with PPL toward the original 39, that would be evidence for RoPE-specific addressing. If they stay low, the scaffold claim extends to addressing as well.
 
 ## 2026-07-24 — RS1.a RunPod validation preparation
 
