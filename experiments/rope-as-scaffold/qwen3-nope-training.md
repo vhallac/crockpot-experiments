@@ -6,23 +6,28 @@ note is the provenance record for the training step instead. The *probing* phase
 `NOTEBOOK.md` — training just produces the checkpoint that run consumes.
 
 **Deliverable:** final bf16 weights of the recalibrated Qwen3-0.6B (spec tag `qwen3-droped`, local
-directory), persisted on the RunPod store. No optimizer state, no periodic/resumable checkpoints —
-final weights only.
+directory), persisted on the RunPod store, plus a resumable training checkpoint saved periodically
+and on signal (see "Checkpointing and resumability" below).
 
 ## Storage budget (~10–15GB persistent store)
 
 - Token budget (1–2B) is a **single pass** over `sample-10BT` (~10B tokens available), plus a small
   disjoint eval slice — no token is trained on more than once. Caching therefore does not introduce
-  repeated exposure; it exists purely for **restart resilience** (see "No-checkpoint tradeoff"
-  below): without a cache, a crash mid-run means re-streaming *and* re-tokenizing 1–2B tokens from
-  the Hub from scratch.
+  repeated exposure; it exists purely for **restart resilience** (see "Checkpointing and
+  resumability" below): without a cache, a crash mid-run means re-streaming *and* re-tokenizing
+  1–2B tokens from the Hub from scratch.
 - **Stream once, write a local tokenized cache as you go.** Tokenize FineWeb-Edu on the fly from the
   streaming source (as `eval_perplexity.py` already does) and persist the resulting token-id shard
   to a local mmap'd **uint32** file (vocab ~152k > 2¹⁶) at the same time training consumes it. A
   restart reads the local cache instead of re-streaming + re-tokenizing.
 - Budget: train-token cache 1–2B × 4 bytes = **4–8GB**; eval-slice cache (5–10M tokens) ≈
-  20–40MB, trivial; final weights ≈ 1.2GB. Total ≈ **5.5–9.5GB** — fits comfortably within the
-  10–15GB allowance.
+  20–40MB, trivial; final weights ≈ 1.2GB; resumable training checkpoint (bf16 model + bf16 AdamW
+  `exp_avg`/`exp_avg_sq` state — no fp32 master copies anywhere in this script) ≈ **3.6GB
+  steady-state, ~7.2GB transient peak** during a checkpoint overwrite (old + new coexist briefly
+  before the atomic rename). Total steady-state ≈ **8.8–12.8GB**; peak during a mid-run checkpoint
+  write ≈ **12.4–16.4GB** — verified against a live pod at 14GB already used / 15GB avail on a 28GB
+  volume, with several GB of margin at the worst moment. Recompute against the actual `df` reading
+  before launching if the volume's fill level has changed.
 - Confirm whether this store is the *same* volume as the project's existing RunPod network volume
   (`AGENTS.md` → `$HF_HOME`, CUDA venv, etc.) or a separate one. If separate, keep the base-model
   download cache and CUDA venv on the larger existing volume, not this one.
@@ -96,26 +101,44 @@ real, reportable P.RS1.a falsifier) from "recipe under-tuned" (a bug) after the 
 
 ## Cost / smoke-test guardrail
 
-First paid GPU spend in this program (~$6–16, single GPU, few hours). Before committing to the
-full run: do a bounded smoke (a few dozen steps) confirming (a) loss actually drops, (b) the
-rotary-identity forward holds under the training config, (c) a saved checkpoint reloads through
-the same forward and reproduces the same loss. Only then launch the full run.
+First paid GPU spend in this program (~$6–16 at the original LR; more at the corrected LR's higher
+step-for-step cost is not expected since token budget/step count are unchanged — single GPU, few
+hours). Before committing to the full run: do a bounded smoke (a few dozen steps, with
+`--checkpoint-every` set low enough to trigger at least once) confirming (a) loss actually drops,
+(b) the rotary-identity forward holds under the training config, (c) `--resume-from` on the smoke
+checkpoint reloads and continues training (loss/eval trajectory picks up consistently, not a
+discontinuity), and (d) a `SIGHUP`/`SIGUSR1` sent mid-smoke checkpoints and exits/continues as
+expected. Only then launch the full run.
 
-## No-checkpoint tradeoff
+## Checkpointing and resumability
 
-Only final weights will be saved (no periodic/resumable *model* checkpoints). The token cache
-(above) makes a restart cheap on the **data** side — no re-streaming/re-tokenizing — but does
-**not** give the training run itself a resume point: if the pod dies mid-run, all optimizer/model
-progress is still lost and training restarts from step 0 (reading from the now-local cache).
-Acceptable given the low cost, but worth confirming the pod type before launching a multi-hour job
-with zero training-progress resumability.
+Implemented in `train_qwen3_nope.py` (added after the RS1b v1 run, per the SIGHUP/snapshot lesson
+below — this is the "next training script" that lesson pointed at):
 
-**Lesson from the actual RS1b run (retrospective):** the no-periodic-checkpoint policy above is
-still fine, but the script should have trapped **SIGHUP/SIGTERM to save an on-demand snapshot**
-before exit. That's a cheap, small addition, distinct from periodic checkpointing — it doesn't add
-the complexity/cost of resuming mid-run, it just means a deliberate stop (pod teardown, hardware
-switch, maintenance window) doesn't have to lose all progress. Add this to the next training
-script written for this program.
+- **Periodic:** every `--checkpoint-every` steps (default 500), overwriting a single
+  `training_checkpoint/ckpt.pt` — not one file per step, to keep steady-state disk cost bounded
+  (see storage budget above).
+- **Signal-triggered:** `SIGHUP` → checkpoint then exit; `SIGUSR1` → checkpoint then continue.
+  Both are handled as flags checked right after `optimizer.step()`/`scheduler.step()`, never
+  mid-gradient-accumulation, so a signal can't land on a torn/inconsistent state.
+- **Atomic writes:** each save goes to `ckpt.pt.tmp` then `Path.replace()`s onto `ckpt.pt` — a
+  crash mid-`torch.save` (disk full, OOM, network hiccup on the NFS-mounted volume) leaves the
+  prior good checkpoint intact instead of corrupting the only copy.
+- **Checkpoint payload, for bit-faithful resumption:** model/optimizer/scheduler state dicts, RNG
+  state (python/numpy/torch/cuda — without this a resumed run silently diverges from what a
+  continuous run would have produced), plus `step`/`block_cursor`/`elapsed_s` so the resumed run's
+  data position and `training_metrics.csv` timeline are both continuous across the resume
+  boundary, not reset to zero.
+- **`--resume-from <dir>`:** restores everything above and asserts `total_steps` matches the
+  current config. It does **not** validate that `--lr`/`--micro-batch-size`/etc. match the
+  original launch — resuming with different CLI args than the original run will silently produce
+  an inconsistent trajectory. Treat "identical CLI args to the original launch" as a hard
+  assumption when resuming, not something the script enforces.
+- `training_metrics.csv` is opened in append mode (not truncated) when `start_step > 0`, so a
+  resumed run's loss/eval history stays complete across the resume boundary.
+
+This replaces the earlier no-checkpoint policy entirely — the tradeoff described in that policy
+(cheap but zero resumability) no longer applies to this script.
 
 ## If this checkpoint gets published later
 

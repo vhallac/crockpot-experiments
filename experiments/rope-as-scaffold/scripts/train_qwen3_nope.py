@@ -6,6 +6,7 @@ import json
 import math
 import os
 import random
+import signal
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -180,6 +181,53 @@ def write_training_report(out_dir: Path, manifest: dict, rows: list[dict]) -> No
     (out_dir / "training_report.md").write_text("\n".join(lines) + "\n")
 
 
+def save_checkpoint(model, optimizer, scheduler, step, block_cursor, total_steps,
+                    out_dir: Path, device: torch.device, elapsed_s: float, label: str = "") -> None:
+    """Save a resumable checkpoint, overwriting the previous one."""
+    ckpt_dir = out_dir / "training_checkpoint"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt = {
+        "step": step,
+        "block_cursor": block_cursor,
+        "total_steps": total_steps,
+        "elapsed_s": elapsed_s,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+        "rng_python": random.getstate(),
+        "rng_numpy": np.random.get_state(),
+        "rng_torch": torch.get_rng_state(),
+        "rng_torch_cuda": torch.cuda.get_rng_state() if device.type == "cuda" else None,
+    }
+    path = ckpt_dir / "ckpt.pt"
+    tmp_path = ckpt_dir / "ckpt.pt.tmp"
+    torch.save(ckpt, tmp_path)
+    tmp_path.replace(path)
+    tag = f" label={label}" if label else ""
+    print(f"checkpoint saved step={step} block_cursor={block_cursor}{tag} path={path}", flush=True)
+
+
+def load_checkpoint(ckpt_dir: Path, model, optimizer, scheduler, device: torch.device) -> dict:
+    """Load a resumable checkpoint and restore model/optimizer/scheduler/RNG state.
+    Returns the checkpoint dict so the caller can read step, block_cursor, etc."""
+    if ckpt_dir.is_dir():
+        ckpt_path = ckpt_dir / "ckpt.pt"
+    else:
+        ckpt_path = ckpt_dir
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"checkpoint not found at {ckpt_path}")
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model_state_dict"])
+    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+    random.setstate(ckpt["rng_python"])
+    np.random.set_state(ckpt["rng_numpy"])
+    torch.set_rng_state(ckpt["rng_torch"])
+    if device.type == "cuda" and ckpt.get("rng_torch_cuda") is not None:
+        torch.cuda.set_rng_state(ckpt["rng_torch_cuda"], device=device)
+    return ckpt
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train Qwen3-0.6B through identity RoPE for RS1b qwen3-droped")
     parser.add_argument("--base-model", default="Qwen/Qwen3-0.6B")
@@ -191,7 +239,7 @@ def main() -> None:
     parser.add_argument("--train-context", type=int, default=2048)
     parser.add_argument("--global-batch-tokens", type=int, default=524288)
     parser.add_argument("--micro-batch-size", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=3e-5)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--warmup-fraction", type=float, default=0.02)
     parser.add_argument("--min-lr-fraction", type=float, default=0.10)
     parser.add_argument("--weight-decay", type=float, default=0.1)
@@ -199,6 +247,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval-every-steps", type=int, default=100)
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--checkpoint-every", type=int, default=500)
+    parser.add_argument("--resume-from", type=Path, default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
@@ -240,6 +290,41 @@ def main() -> None:
         return args.min_lr_fraction + (1.0 - args.min_lr_fraction) * cosine
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # --- checkpoint resume ---
+    start_step = 0
+    block_cursor = 0
+    resumed_elapsed_s = 0.0
+    if args.resume_from:
+        ckpt = load_checkpoint(args.resume_from, model, optimizer, scheduler, device)
+        start_step = ckpt["step"]
+        block_cursor = ckpt["block_cursor"]
+        resumed_elapsed_s = ckpt.get("elapsed_s", 0.0)
+        assert ckpt["total_steps"] == total_steps, (
+            f"total_steps mismatch: checkpoint {ckpt['total_steps']} vs config {total_steps}"
+        )
+        print(f"resumed from checkpoint step={start_step} block_cursor={block_cursor} "
+              f"elapsed_s={resumed_elapsed_s:.1f}", flush=True)
+
+    # --- signal handlers ---
+    _checkpoint_requested = False
+    _exit_requested = False
+
+    def _on_sighup(signum, frame):
+        nonlocal _checkpoint_requested, _exit_requested
+        _checkpoint_requested = True
+        _exit_requested = True
+        print("received SIGHUP — will checkpoint and exit", flush=True)
+
+    def _on_sigusr1(signum, frame):
+        nonlocal _checkpoint_requested
+        _checkpoint_requested = True
+        print("received SIGUSR1 — will checkpoint and continue", flush=True)
+
+    signal.signal(signal.SIGHUP, _on_sighup)
+    signal.signal(signal.SIGUSR1, _on_sigusr1)
+    # ---
+
     train_mm = np.memmap(train_path, mode="r", dtype=np.uint32, shape=(args.train_tokens,))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -281,13 +366,14 @@ def main() -> None:
 
     rows: list[dict] = []
     metrics_path = args.output_dir / "training_metrics.csv"
-    start_time = monotonic()
-    block_cursor = 0
+    start_time = monotonic() - resumed_elapsed_s
     fieldnames = ["step", "tokens", "train_loss", "eval_ce", "eval_ppl", "lr", "elapsed_s", "tokens_per_s"]
-    with metrics_path.open("w", newline="") as f:
+    csv_mode = "a" if start_step > 0 else "w"
+    with metrics_path.open(csv_mode, newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for step in range(1, total_steps + 1):
+        if start_step == 0:
+            writer.writeheader()
+        for step in range(start_step + 1, total_steps + 1):
             optimizer.zero_grad(set_to_none=True)
             loss_sum = 0.0
             for _ in range(grad_accum):
@@ -301,6 +387,31 @@ def main() -> None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
             scheduler.step()
+
+            # --- checkpoint ---
+            do_checkpoint = False
+            checkpoint_label = ""
+            if args.checkpoint_every > 0 and step % args.checkpoint_every == 0:
+                do_checkpoint = True
+                checkpoint_label = f"auto-step{step}"
+            if _checkpoint_requested:
+                do_checkpoint = True
+                if not checkpoint_label:
+                    checkpoint_label = "signal"
+                _checkpoint_requested = False
+            if step == total_steps:
+                do_checkpoint = True
+                if not checkpoint_label:
+                    checkpoint_label = f"final-step{step}"
+            if do_checkpoint:
+                save_checkpoint(model, optimizer, scheduler, step, block_cursor,
+                                total_steps, args.output_dir, device,
+                                elapsed_s=monotonic() - start_time, label=checkpoint_label)
+            if _exit_requested:
+                _exit_requested = False
+                print("exiting after signal-triggered checkpoint", flush=True)
+                break
+            # ---
 
             do_eval = step == 1 or step == total_steps or (args.eval_every_steps and step % args.eval_every_steps == 0)
             eval_ce = eval_ppl = float("nan")
