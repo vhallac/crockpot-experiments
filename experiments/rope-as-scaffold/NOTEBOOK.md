@@ -81,26 +81,93 @@ Null-corrected ridge R² (`r2_minus_null_mean`, mean over heads/stimuli) by dept
 
 ### Analysis
 
-The headline is that **light DroPE recalibration changes the positional representation negligibly.**
+The headline is that **light DroPE recalibration changes the positional representation
+negligibly, and the addressing-confirmation signal — not just the training loss — did not
+recover.**
 
-**M1.5 — P.RS1.b ("position fills in") is falsified by ceiling effects.** The trained model's key-position R² is essentially the same as the zero-shot dropped state, which was already near-ceiling (~1.03). The prediction that recalibration would "fill in" emergent position was wrong because there was nothing to fill in — the RS1a finding that position survives RoPE removal was the important result, and RS1b confirms it persists unchanged after training. Shallow layers (1–3) show minor scatter (±0.05) consistent with the noisier estimation at low R² rather than a systematic training effect.
+**M1.5 — P.RS1.b holds by the spec's literal criterion, but is uninformative beyond RS1a.**
+The trained model's key-position R² (present, plateau ~1.02–1.03) satisfies the pre-registered
+condition ("present and ≥ the RoPE model's k_pre emergent position," RoPE plateau ~0.99) — the
+falsifier ("absent, yet perplexity recovers") did not trigger. So P.RS1.b **holds**, not
+"falsified": position is present and at least as decodable as the RoPE baseline. The reason this
+doesn't feel like a positive result is that RS1a already found this same near-ceiling level in the
+*zero-shot, untrained* dropped state — RS1b's recalibration left it essentially unchanged rather
+than causing it to "fill in." Read correctly: **RS1b confirms RS1a's finding survives training,
+it does not add a new increment of evidence for the fill-in dynamic itself.** Shallow layers
+(1–3) show minor scatter (±0.05) consistent with noisier estimation at low R², not a systematic
+training effect.
 
-This does not weaken the scaffold hypothesis; it refines it: RoPE removal leaves position decodable from the key space at near-ceiling levels *regardless of whether the model can use it.* The RS1a dissociation (high positional R², near-random perplexity) was not a transient — it survives recalibration unchanged.
+**M1.6 — the pre-registered addressing criterion, not G7, is the number that matters, and it
+argues against P.RS1.c holding cleanly.** G7 (noise-controlled attention) is a gate on the causal
+patching test's validity, not the addressing verdict. The actual pre-registered criteria are
+`output_above_noise` and `transitivity_confirmed`:
 
-**M1.6 — P.RS1.c partial result.** The G7 attention signal partially recovers (0 → 13 heads, vs 39 in the original RoPE model). However transitivity remains 0 in every state tested so far (original qwen3, zero-shot dropped, trained). The RS1a caveat that M1.6 nulls in the dropped state were confounded by global model breakdown is partially resolved: the trained model is functional (PPL≈35), and G7 shows a weak but non-zero signal. Whether this weak signal reflects partial recovery of RoPE-type addressing or a different mechanism cannot be distinguished by M1.6 alone. The transitivity null across all states suggests the discriminator stimulus may be too subtle for Qwen3-0.6B even in the original RoPE configuration where G7 had 39 passing heads.
+| state | g7_pass | output_above_noise | transitivity_confirmed |
+|---|---|---|---|
+| qwen3 (RoPE baseline) | 39/448 | 4/448 | **448/448 (100%)** |
+| qwen3-dropped (RS1a, untrained) | 0/448 | 0/448 | 0/448 |
+| qwen3-droped (RS1b, trained, PPL≈35) | 13/448 | 0/448 | **0/448** |
 
-**Training outcome context.** The suboptimal training (PPL≈35 vs baseline ~21.8, near-random held-out start after identity-RoPE initialization) means this model is not a "fully recovered" counterpart to the original qwen3. The positional representation being already near-ceiling pre-training means M1.5 would not show training effects even with better PPL. But the M1.6 partial G7 recovery *might* scale with PPL — a better-trained model could show more G7 heads — and the transitivity null might also tighten under full convergence. The mechanistic question RS1b set out to answer (does emergent addressing appear after recalibration?) thus has a conditional answer: 
+RS1a's own notebook already flagged that the untrained state's null is confounded ("the dropped
+model is near-random... the null is confounded by global model breakdown... the genuine
+addressing test is State 1 vs State 3"). State 3 is now functional (PPL 35, not near-random), so
+this confound no longer applies — and the comparison it unblocks shows transitivity collapsing
+from **100% of heads to 0%**. Per the spec's own falsifier language ("addressing appears or
+disappears across the transition"), this reads as **addressing disappearing**, not "unchanged."
+That is the spec's own "most surprising outcome" branch ("reopens the address question at the
+training level"), not a clean pass for P.RS1.c.
 
-- **Key-position (P.RS1.b):** was already present before training; training is neutral.
-- **Query-readable addressing (P.RS1.c):** shows a weak partial signal (13 G7 heads) that did not exist in the zero-shot dropped model, but falls well short of original-model levels and shows no transitivity. With the PPL caveat, the most conservative interpretation is that M1.6 is not a sensitive enough test at Qwen3-0.6B scale.
+G7's partial movement (0→13) shows *some* attention-steerability returned with training, while the
+addressing-confirmation metrics stayed pinned at exactly zero — a dissociation between
+steerability and addressing that echoes the RoPE model's own pattern (G7=39 but
+output_above_noise only 4/448: steerable considerably more often than genuinely addressable even
+at baseline). So the shape of the gap is consistent with the program's running theme; what's new
+here is that in the trained DroPE'd model the addressing side of that gap didn't just stay small,
+it went to zero.
+
+**Open question this run cannot resolve: is the collapse a RoPE-removal effect, or an
+under-training artifact?** The training plateaued at PPL≈35 (vs. ~21.8 target) at a peak LR
+(3e-5) that DroPE's own paper's ablation shows is measurably under-tuned relative to their
+default (3e-4) — see `rs1b-lr-retuning-note.md`. Two considerations cut in opposite directions:
+
+- *Against under-training as the full explanation:* the collapse is complete (0/448), not
+  graded. Under-training typically produces partial, proportional degradation, not a hard
+  binary cutoff — and G7 *did* show partial, graded recovery, so the model wasn't uniformly
+  undertrained across every mechanistic marker.
+- *For under-training as a live explanation:* induction/transitivity-style circuits are known
+  in the broader literature to require substantial training to emerge or reassemble, and our
+  recalibration budget (1B tokens, ~2000 steps) is tiny next to that. It's plausible the same
+  under-tuned LR that capped perplexity recovery starved a fragile, higher-order circuit
+  (transitivity) far more severely than a simpler, linearly-decodable one (M1.5's raw
+  key-position signal) — simple linear structure typically stabilizes faster during training
+  than multi-hop induction-style mechanisms do.
+
+This is not adjudicated by the current data. It is directly resolvable by the pending
+LR-corrected rerun: if a properly-tuned recalibration (full perplexity recovery to near-RoPE
+levels) still shows `output_above_noise`/`transitivity_confirmed` near zero, that is much
+stronger evidence for a genuine, structural loss of addressing on RoPE removal. If it recovers
+substantially, the current collapse was primarily a training-budget artifact.
 
 ### Conclusion / Next Step
 
-RS1b completes the RS1 experiment. The scaffold hypothesis survives: emergent position (M1.5) is independent of RoPE, and query-readable addressing (M1.6) does not robustly recover under light recalibration, though PPL limitations weaken the M1.6 null. The key takeaways for future work:
+RS1b's mechanistic probes are complete, but the result is more ambiguous than "the scaffold
+hypothesis survives cleanly" — one prediction holds informatively-thinly (P.RS1.b, but adding no
+new evidence beyond RS1a), and one is trending toward the spec's *most surprising* branch rather
+than confirming C1 (P.RS1.c: addressing collapsed from 100% to 0% transitivity in a now-functional
+model, not merely "stayed null").
 
-1. **Position ≠ RoPE** is now a stable result (RS1a + RS1b convergence on M1.5). The native-NoPE model's K space encodes position at near-ceiling fidelity without any rotation. RoPE propagates this to shallow layers but is unnecessary for deep-layer position.
-2. **Addressing remains elusive.** No model state tested shows transitivity in M1.6. Either the discriminator is below Qwen3-0.6B's threshold, or the addressing hypothesis itself needs sharper operationalization.
-3. **A better-trained model** (full LR schedule, solid PPL recovery) would strengthen the M1.6 test. If G7 heads scale with PPL toward the original 39, that would be evidence for RoPE-specific addressing. If they stay low, the scaffold claim extends to addressing as well.
+1. **Position ≠ RoPE remains a stable, confirmed result** (RS1a + RS1b agree): key-position is
+   decodable at near-ceiling fidelity with or without RoPE, with or without recalibration.
+2. **Addressing did not recover, and by the unconfounded functional-model comparison, it may have
+   actively been lost.** This is the more consequential, less comfortable reading of this run and
+   should not be undersold as "M1.6 isn't sensitive enough" without first ruling out the LR
+   confound.
+3. **Next step is not optional now, it's load-bearing for interpretation:** rerun RS1b at a
+   corrected LR (`rs1b-lr-retuning-note.md`, option A) and re-probe M1.6 on that checkpoint. The
+   two possible outcomes cleanly discriminate between "addressing loss is a training artifact"
+   and "addressing loss is a real consequence of removing RoPE" — which is a substantially
+   different conclusion for the program's central C1 claim than what a partial-recovery framing
+   would suggest.
 
 ## 2026-07-24 — RS1.a RunPod validation preparation
 
