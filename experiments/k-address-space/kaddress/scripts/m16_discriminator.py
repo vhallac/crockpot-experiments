@@ -350,9 +350,9 @@ def _extract_logits(output: Any) -> torch.Tensor:
 def _layer_modules(lm: Any) -> list[torch.nn.Module]:
     if lm.tag == "nope-gpt-small":
         return list(lm.model.model.body)
-    if lm.tag in {"qwen3", "qwen3-dropped"}:
+    if lm.tag in {"qwen3", "qwen3-dropped", "qwen3-droped"}:
         return list(lm.model.model.layers)
-    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped")
+    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped, and --model qwen3-droped")
 
 
 def _plain_probs(lm: Any, input_ids: torch.Tensor, readout_pos: int) -> torch.Tensor:
@@ -539,9 +539,9 @@ def _run_qwen_with_attention_patch(
 def _run_with_attention_patch(lm: Any, input_ids: torch.Tensor, **kwargs: Any) -> ForwardReadout:
     if lm.tag == "nope-gpt-small":
         return _run_nope_with_attention_patch(lm, input_ids, **kwargs)
-    if lm.tag in {"qwen3", "qwen3-dropped"}:
+    if lm.tag in {"qwen3", "qwen3-dropped", "qwen3-droped"}:
         return _run_qwen_with_attention_patch(lm, input_ids, **kwargs)
-    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped")
+    raise NotImplementedError("M1.6 causal patching currently supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped, and --model qwen3-droped")
 
 
 def _marker_probs(probs: torch.Tensor, marker_token_ids: list[int]) -> list[float]:
@@ -757,8 +757,8 @@ def run(args: argparse.Namespace) -> None:
     if args.repetitions < 128 and not args.allow_low_repetitions:
         raise RuntimeError("M1.6 v1.1 requires --repetitions >= 128; use --allow-low-repetitions only for smoke tests")
     lm = load_model(args.model, device=device, revision=args.revision)
-    if lm.tag not in {"nope-gpt-small", "qwen3", "qwen3-dropped"}:
-        raise NotImplementedError("M1.6 v1.1 harness supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped")
+    if lm.tag not in {"nope-gpt-small", "qwen3", "qwen3-dropped", "qwen3-droped"}:
+        raise NotImplementedError("M1.6 v1.1 harness supports --model nope-gpt-small, --model qwen3, and --model qwen3-dropped, and --model qwen3-droped")
     stimuli, stimulus_gates = _select_g6_stimuli(
         lm,
         repetitions=args.repetitions,
