@@ -45,7 +45,7 @@ PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-pyth
 
 - Spec: `experiments/rope-as-scaffold/RS1-spec.md` §§2–5, §10.
 - Code branch: `main`.
-- Pre-run commit: _pending commit_.
+- Pre-run commit: `f200c92c5825b084e265a8b5c6c8d02fc685b671`.
 - Planned output location: RunPod `outputs/rope_as_scaffold_rs1b_probes_*`; to be packaged and published as a GitHub Release asset.
 
 ### Results
