@@ -53,7 +53,7 @@ smoke-test-first guardrail from `qwen3-nope-training.md` before committing to th
 - Related: `experiments/rope-as-scaffold/rs1b-lr-retuning-note.md` (full reasoning for the LR
   change, options considered, and the RS1b-ctrl consequence).
 - Code branch: `main`.
-- Pre-run commit: _(backfilled after commit)_.
+- Pre-run commit: `50a4e5a`.
 - Prior run for comparison: `qwen3-droped-20260724` (RS1b v1), see the 2026-07-24 training report
   and the 2026-07-25 M1.5/M1.6 probes entry below.
 
