@@ -256,7 +256,8 @@ checkpoints).
 
 RS1b's LR-corrected rerun showed that the DroPE'd model is mechanistically close to the RoPE
 baseline: emergent key-position persists (P.RS1.b holds), and the addressing profile is
-statistically indistinguishable from RoPE (P.RS1.c re-adjudicated in the program's favor). RS2
+unchanged within measurement noise — raw head-count comparison (34/39, 3/2, 6/4), no
+significance test (P.RS1.c re-adjudicated in the program's favor). RS2
 now tests the secondary C2 claim: does the DroPE'd model's emergent positional subspace
 **reconstruct the same subspace RoPE supplied**, or is it a different positional code?
 
@@ -373,7 +374,12 @@ cd /home/vedat/work/personal/crockpot-experiments
 | Transition | 13–17 | +0.068 ± 0.135 | 0.384–0.609 | 65.0% | 40 |
 | Late | 18–27 | −0.074 ± 0.106 | 0.292–0.435 | 17.5% | 80 |
 
-(Alignment column = range of per-layer mean alignment within the phase.)
+(Alignment column = range of per-layer mean alignment within the phase. Layers sum to
+208 of 216 heads — **layer 1 (8 heads) is excluded from all three phases**, not folded into
+"Early-mid." Its own excess is +0.066 (per RS2.1 V5c), well below L2–12's +0.244, so this
+is not a neutral omission: including it would pull the early-mid mean down to +0.229. No
+rationale for excluding L1 from the phase grouping was recorded at analysis time; it is
+called out here rather than left silently absent.)
 
 Layer 2 shows the strongest reconstruction (excess +0.437, alignment 0.863) — the
 DroPE'd model's emergent key-position almost perfectly recovers RoPE's code in the
@@ -678,7 +684,7 @@ In detail:
 - C1 ("emergent key-position fills in") is **not falsified** — position was already
   present untrained (RS1a), and training didn't change it. The fill-in dynamic itself
   remains unobserved; what we have is persistence.
-- C2 ("the addressing profile stays unchanged") is **not the cleanest reading** —
+- P.RS1.c ("the addressing profile stays unchanged") is **not the cleanest reading** —
   addressing increased slightly (2→3 heads, 4→6 output-above-noise), and the
   addressing heads are mostly different from the RoPE set. But the absolute effect
   is so small and fragile in both states (single-stimulus addressing passes on
