@@ -2,6 +2,96 @@
 
 Newest entries first.
 
+## 2026-07-26 — RS2.1 subspace reconstruction vs. initialization inheritance (pre-run)
+
+### Question / Hypothesis
+
+RS2 concluded C2 "substantiated" but did not control for initialization inheritance: the
+DroPE'd model started from RoPE's own weights, so its overlap with RoPE's `k_post` could
+reflect the base model's geometry rather than training-time reconstruction. RS2.1 re-tests
+C2 with three controls:
+
+- **V1:** Depth-resolved reference comparison (tabulation of RS2's existing CSV) — is primary
+  excess (trained vs `k_post`) ≤ Ref2 excess (RoPE `k_pre` vs `k_post`)? If the internal
+  rotation channel alone suffices to explain the result, no reconstruction was measured.
+- **V2:** Zero-shot inheritance control — run the identical overlap computation against the
+  **untrained** dropped model's projectors. Δ = trained_excess − untrained_excess.
+- **V3:** `k_pre`-partialled residual test — orthogonalize both `k_post` and DroPE'd bases
+  against `k_pre`, then measure overlap of the rotation-specific residuals.
+- **V4:** Projector semantics — cross-reference position_fraction at each layer to ensure
+  the measured alignment reflects positional geometry, not content.
+- **V5:** Statistical robustness — layer-clustered SEs, rank-sensitivity check, L1 inclusion.
+
+**Falsifier:** V2 Δ ≈ 0 and V3 residual excess ≈ 0 in layers 2–12 → RS2's overlap is
+attributable to initialization inheritance, not reconstruction; C2 should be re-adjudicated.
+
+### Experiment Design Summary
+
+- **Inputs:** Four pre-existing artifacts — RoPE M1.5 projectors (RS1a), untrained-dropped
+  M1.5 projectors (RS1a), trained DroPE'd M1.5 projectors (RS1b LR=1e-3), RS2 per-head CSV.
+- **Method:** V1/V2 reuse `c2_subspace_overlap.py` unmodified (V2 points `--droped-projectors`
+  at the untrained-dropped NPZ). V3 uses new `--residual-against-pre` flag for
+  orthogonalization + residual principal-angle overlap. V4/V5 are CSV/JSON post-processing.
+- **CPU-only, analysis-only.** No GPU, no training, no pod needed. All NPZ files are under
+  300MB; computation is O(heads × d_head³) ≈ minutes.
+
+### Planned Procedure
+
+```bash
+# V2: untrained-dropped zero-shot inheritance control
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run \
+  experiments/rope-as-scaffold/scripts/c2_subspace_overlap.py \
+  --rope-projectors outputs/rope_as_scaffold_rs1a_20260724T0559Z/m15_qwen3/kaddress_m15_projectors_qwen3.npz \
+  --droped-projectors outputs/rope_as_scaffold_rs1a_20260724T0559Z/m15_qwen3_dropped/kaddress_m15_projectors_qwen3-dropped.npz \
+  --output-dir outputs/rs2.1_v2_untrained_<timestamp> \
+  --baseline-trials 100 --families A --seed 0
+
+# V3: trained DroPE'd with residual-against-pre
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/nix-cpu-run \
+  experiments/rope-as-scaffold/scripts/c2_subspace_overlap.py \
+  --rope-projectors outputs/rope_as_scaffold_rs1a_20260724T0559Z/m15_qwen3/kaddress_m15_projectors_qwen3.npz \
+  --droped-projectors outputs/rs1b_probes_lr1e3_qwen3_droped_20260726/outputs/rs1b_probes_lr1e3_20260726T042955Z_m15_qwen3_droped/kaddress_m15_projectors_qwen3-droped.npz \
+  --output-dir outputs/rs2.1_v3_residual_<timestamp> \
+  --baseline-trials 100 --families A --seed 0 \
+  --residual-against-pre
+```
+
+V1 (tabulation from RS2's CSV), V4 (position_fraction cross-reference), and V5 (statistical
+post-processing) use the committed data; they do not require separate script runs.
+
+### Expected Signal / Interpretation Plan
+
+See RS2.1-spec.md §4–5 for the full decision matrix. In brief:
+
+- **(P.RS2.1.a) Reconstruction survives inheritance control in layers 3–12.** V2 Δ > 0 with
+  layer-clustered CI excluding zero, and V3 residual excess > 0.
+- **(P.RS2.1.b) Layer 2 is not representative.** Its Δ is small relative to its untrained
+  baseline — the notebook's illustrative example is inheritance-dominated regardless of the
+  aggregate verdict.
+- **(P.RS2.1.c) Late-layer divergence is not a rank artifact.** Per V5b, excess does not
+  correlate with PCA-rank differences.
+
+### Pre-run Provenance
+
+- Spec: `experiments/rope-as-scaffold/RS2.1-spec.md` (pre-registered at 1860a46).
+- Code: `experiments/rope-as-scaffold/scripts/c2_subspace_overlap.py` (extended with
+  `--residual-against-pre` flag + `orthogonalize_against` function).
+- Motivating critique: `temp/rs2-critiqe.md` (external review input).
+- Code branch: `main`.
+- Pre-run commit: <backfill after commit>
+- Planned output location: `outputs/rs2.1_v2_untrained_<timestamp>/` and
+  `outputs/rs2.1_v3_residual_<timestamp>/`; to be packaged and published as a
+  GitHub Release asset.
+
+### Results
+_Pending run._
+
+### Analysis
+_Pending output analysis._
+
+### Conclusion / Next Step
+_Pending._
+
 ## 2026-07-26 — RS2 C2 subspace overlap (completed)
 
 ### Question / Hypothesis

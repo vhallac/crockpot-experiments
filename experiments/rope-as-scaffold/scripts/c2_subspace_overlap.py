@@ -99,14 +99,32 @@ def load_projector_bases(
     return result
 
 
+def orthogonalize_against(basis: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Orthogonalize basis rows against reference row-space.
+
+    Both inputs must be row-orthonormal. Returns the component of the basis
+    row-space that is orthogonal to the reference row-space, re-orthonormalized
+    via SVD. May have reduced rank (or rank 0) if basis lies in reference span.
+    """
+    if basis.shape[0] == 0 or reference.shape[0] == 0:
+        return basis.astype(np.float64).copy()
+    # Projection matrix for reference row-space: P_ref = ref^T @ ref
+    # Residual: basis @ (I - P_ref) = basis - basis @ ref^T @ ref
+    projection = basis @ reference.T @ reference  # (k1, d)
+    residual = basis - projection
+    return _orthonormalize_rows(residual)
+
+
 def _orthonormalize_rows(basis: np.ndarray) -> np.ndarray:
     """Re-orthonormalize rows via SVD, dropping near-zero directions."""
     if basis.shape[0] == 0:
         return basis.astype(np.float64)
     if basis.shape[0] == 1:
-        # Single row: just normalize
+        # Single row: drop near-zero, else normalize
         norm = np.linalg.norm(basis[0])
-        return basis.astype(np.float64) if norm < 1e-12 else (basis / norm).astype(np.float64)
+        if norm < 1e-12:
+            return basis[:0].astype(np.float64)  # shape (0, d)
+        return (basis / norm).astype(np.float64)
     # SVD: U @ diag(S) @ Vh
     # We want Vh rows as orthonormal basis for the row-space of `basis`
     _, s, vh = np.linalg.svd(basis, full_matrices=False)
@@ -217,6 +235,39 @@ def run(args: argparse.Namespace) -> None:
         base_mean, base_std = random_rotation_baseline(A, B, n_trials=n_trials, seed=args.seed + layer * 100 + head)
         excess = alignment - base_mean
 
+        # ── RS2.1 V3: residual overlap (k_post ⟂ k_pre) vs (droped ⟂ k_pre) ──
+        if args.residual_against_pre and (layer, head) in rope_pre:
+            A_pre = rope_pre[(layer, head)]
+            A_resid = orthogonalize_against(A, A_pre)
+            B_resid = orthogonalize_against(B, A_pre)
+            if A_resid.shape[0] > 0 and B_resid.shape[0] > 0:
+                resid_angles = principal_angles(A_resid, B_resid)
+                resid_alignment = subspace_alignment(A_resid, B_resid)
+                resid_base_mean, resid_base_std = random_rotation_baseline(
+                    A_resid, B_resid, n_trials=n_trials,
+                    seed=args.seed + 1_000_000 + layer * 100 + head
+                )
+                resid_excess = resid_alignment - resid_base_mean
+            else:
+                resid_angles = np.array([])
+                resid_alignment = float("nan")
+                resid_base_mean = float("nan")
+                resid_base_std = float("nan")
+                resid_excess = float("nan")
+            n_resid_angles = len(resid_angles)
+        else:
+            A_resid = np.array([])
+            B_resid = np.array([])
+            A_resid = np.array([]).reshape(0, A.shape[1]) if A.shape[0] == 0 else A_resid
+            n_resid_rope_post_components = float("nan")
+            n_resid_droped_components = float("nan")
+            resid_angles = np.array([])
+            resid_alignment = float("nan")
+            resid_base_mean = float("nan")
+            resid_base_std = float("nan")
+            resid_excess = float("nan")
+            n_resid_angles = 0
+
         # Reference: RoPE pre vs DroPE'd emergent (emergent-to-emergent)
         n_rope_pre_components = float("nan")
         if (layer, head) in rope_pre:
@@ -268,6 +319,17 @@ def run(args: argparse.Namespace) -> None:
             "ref_rope_pre_vs_post_baseline_mean": internal_base_mean,
             "ref_rope_pre_vs_post_baseline_std": internal_base_std,
             "ref_rope_pre_vs_post_excess": internal_excess,
+            # RS2.1 V3 residual columns
+            "residual_n_rope_post_components": A_resid.shape[0] if args.residual_against_pre and (layer, head) in rope_pre else float("nan"),
+            "residual_n_droped_components": B_resid.shape[0] if args.residual_against_pre and (layer, head) in rope_pre else float("nan"),
+            "residual_alignment_mean_cos": resid_alignment,
+            "residual_random_baseline_mean": resid_base_mean,
+            "residual_random_baseline_std": resid_base_std,
+            "residual_alignment_excess": resid_excess,
+            "residual_principal_angle_min": float(np.min(resid_angles)) if n_resid_angles else float("nan"),
+            "residual_principal_angle_max": float(np.max(resid_angles)) if n_resid_angles else float("nan"),
+            "residual_principal_angle_mean": float(np.mean(resid_angles)) if n_resid_angles else float("nan"),
+            "residual_n_principal_angles": n_resid_angles,
         }
         rows.append(row)
 
@@ -335,6 +397,11 @@ def run(args: argparse.Namespace) -> None:
         "ref_rope_pre_vs_droped_alignment",
         "ref_rope_pre_vs_post_alignment", "ref_rope_pre_vs_post_baseline_mean",
         "ref_rope_pre_vs_post_baseline_std", "ref_rope_pre_vs_post_excess",
+        "residual_n_rope_post_components", "residual_n_droped_components",
+        "residual_alignment_mean_cos", "residual_random_baseline_mean",
+        "residual_random_baseline_std", "residual_alignment_excess",
+        "residual_principal_angle_min", "residual_principal_angle_max",
+        "residual_principal_angle_mean", "residual_n_principal_angles",
     ]
     with open(csv_path, "w", newline="") as fh:
         writer = csv_mod.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
@@ -357,6 +424,61 @@ def run(args: argparse.Namespace) -> None:
     for ls in layer_stats:
         print(f"  {ls['layer']:5d}  {ls['excess_mean']:8.4f}  {ls['alignment_mean']:8.4f}  {ls['baseline_mean']:8.4f}  {ls['excess_above_zero_fraction']:6.3f}")
 
+    # ── RS2.1 V3: residual summary ──
+    if args.residual_against_pre:
+        resid_excesses = np.array(
+            [r["residual_alignment_excess"] for r in rows
+             if not np.isnan(r["residual_alignment_excess"])]
+        )
+        resid_ranks = [(r["residual_n_rope_post_components"], r["residual_n_droped_components"])
+                       for r in rows
+                       if not np.isnan(r.get("residual_n_rope_post_components", float("nan")))]
+        summary["residual_excess_global_mean"] = float(np.mean(resid_excesses)) if len(resid_excesses) else float("nan")
+        summary["residual_excess_global_std"] = float(np.std(resid_excesses)) if len(resid_excesses) else float("nan")
+        summary["residual_excess_above_zero_fraction"] = float(np.mean(resid_excesses > 0)) if len(resid_excesses) else float("nan")
+        summary["residual_n_heads_with_residual"] = len(resid_excesses)
+        summary["residual_rank_zero_rope_post_count"] = sum(
+            1 for r in rows
+            if not np.isnan(r.get("residual_n_rope_post_components", float("nan")))
+            and r["residual_n_rope_post_components"] == 0
+        )
+        summary["residual_rank_zero_droped_count"] = sum(
+            1 for r in rows
+            if not np.isnan(r.get("residual_n_droped_components", float("nan")))
+            and r["residual_n_droped_components"] == 0
+        )
+
+        print(f"\nResidual overlap (k_post ⟂ k_pre) vs (droped ⟂ k_pre):")
+        print(f"  residual excess mean ± std: {summary['residual_excess_global_mean']:.4f} ± {summary['residual_excess_global_std']:.4f}")
+        print(f"  residual excess > 0 fraction: {summary['residual_excess_above_zero_fraction']:.3f}")
+        print(f"  rank-zero rope_post residual: {summary['residual_rank_zero_rope_post_count']}")
+        print(f"  rank-zero droped residual:    {summary['residual_rank_zero_droped_count']}")
+        print(f"  heads with residual data:     {summary['residual_n_heads_with_residual']}")
+
+        # Per-layer residual summary
+        resid_layer_stats = []
+        for layer in sorted(set(r["layer"] for r in rows)):
+            layer_rows = [r for r in rows if r["layer"] == layer
+                          and not np.isnan(r.get("residual_alignment_excess", float("nan")))]
+            if not layer_rows:
+                continue
+            ex = np.array([r["residual_alignment_excess"] for r in layer_rows])
+            al = np.array([r["residual_alignment_mean_cos"] for r in layer_rows])
+            resid_layer_stats.append({
+                "layer": layer,
+                "n_heads": len(layer_rows),
+                "excess_mean": float(np.mean(ex)),
+                "excess_std": float(np.std(ex)),
+                "alignment_mean": float(np.mean(al)),
+                "excess_above_zero_fraction": float(np.mean(ex > 0)),
+            })
+        summary["residual_layer_breakdown"] = resid_layer_stats
+
+        print(f"\nPer-layer residual excess:")
+        print(f"  {'layer':>5s}  {'excess':>8s}  {'align':>8s}  {'>0%':>6s}  {'n':>5s}")
+        for ls in resid_layer_stats:
+            print(f"  {ls['layer']:5d}  {ls['excess_mean']:8.4f}  {ls['alignment_mean']:8.4f}  {ls['excess_above_zero_fraction']:6.3f}  {ls['n_heads']:5d}")
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="RS2 C2 subspace overlap analysis")
@@ -366,6 +488,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--families", default="A", help="Comma-separated families to use (default: A)")
     p.add_argument("--baseline-trials", type=int, default=100, help="Random rotation trials per head")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--residual-against-pre", action="store_true",
+                   help="RS2.1 V3: orthogonalize k_post and droped bases against k_pre, "
+                        "compute residual subspace overlap (rotation-specific component)")
     return p.parse_args()
 
 
