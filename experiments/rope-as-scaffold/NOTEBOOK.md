@@ -59,15 +59,202 @@ smoke-test-first guardrail from `qwen3-nope-training.md` before committing to th
 
 ### Results
 
-_Pending run._
+Training completed on RunPod NVIDIA H100 SXM (80GB) from pre-run commit `50a4e5a` (plus
+checkpoint/RNG fixes `6daf67d`, `28e71ac`, `8f78c47` — SIGHUP handling and RNG state
+serialization; no recipe changes). Full recipe: LR=1e-3, 1B tokens, train context 2048,
+cosine → 10% of peak, 2% warmup, AdamW β=(0.9,0.95) wd=0.1, seed 0. Output checkpoint
+directory: `/workspace/qwen3-droped`. Token cache reused from v1 training at
+`/workspace/rs1b-token-cache/`; eval slice is the same 5M-token held-out prefix used
+for the v1 PPL measurement.
+
+**Training loss curve (last recorded):**
+[training metrics to be extracted from training_metrics.csv — see `training_manifest.json`
+for recipe pins; primary probes below do not depend on this beyond confirming the model
+is not near-random.]
+
+**M1.5 and M1.6 probes** run on RunPod NVIDIA GeForce RTX 4090 (24GB VRAM), commit `8f78c47`:
+
+```bash
+# M1.5
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-python -m kaddress.scripts.position_content \
+  --model qwen3-droped --device cuda --max-length 1024 \
+  --output-dir outputs/rs1b_probes_lr1e3_20260726T042955Z_m15_qwen3_droped
+
+# M1.6 (--max-marker-sets 4096 needed for G6 on this better-trained model)
+PYTHONPATH=experiments/dead-keys:experiments/k-address-space ./scripts/cuda-python -m kaddress.scripts.m16_discriminator \
+  --model qwen3-droped --device cuda --max-marker-sets 4096 \
+  --repetitions 128 \
+  --output-dir outputs/rs1b_probes_lr1e3_20260726T045616Z_m16_qwen3_droped
+```
+
+**M1.5 (position-content probe):**
+
+Gates: G1 `PASS` (architectural zero at layer 0; identity RoPE means `pre==post`),
+G2 `NOT_APPLICABLE`. `summary_rows=43904`, `shuffle_null_ok=True`, 19 stimuli across
+families A/B/C, segment lengths [4,7].
+
+Pre==post confirmed (delta < 1e-12 in ridge R² between variants).
+
+Family A slot-level depth profile (pre variant):
+
+| layer | position_fraction | ridge_r2 |
+|---:|---:|---:|
+| 0 | 0.0000 | 0.0000 |
+| 1 | 0.0019 | 0.0462 |
+| 2 | 0.0075 | 0.3432 |
+| 6 | 0.4006 | 0.9960 |
+| 12 | 0.3288 | 0.9898 |
+| 18 | 0.5676 | 0.9861 |
+| 23 | 0.4924 | 0.9856 |
+| 27 | 0.1962 | 0.9937 |
+
+Aggregate (all-family) position fraction means: Family A 0.351, Family B 0.358,
+Family C 0.469. Ridge R² means: 0.886, 0.910, 0.932.
+
+**M1.6 (hypothesis discriminator):**
+
+Gates: G6 `PASS` (all four stimuli after expanded marker search up to 1133 sets).
+G7 pass count: `34/448` (cf. qwen3 RoPE: 39; RS1b v1: 13).
+`transitivity_confirmed_count=448` (cf. qwen3 RoPE: 448; RS1b v1: 0).
+
+G6 per-stimulus marker search:
+
+| stimulus | max/min ratio | searched sets | selected markers |
+|---|---:|---:|---|
+| M16_00 | 2.919 | 1133 | `always,constant,high,loose` |
+| M16_01 | 1.329 | 169 | `here,blank,true,cold` |
+| M16_02 | 1.589 | 250 | `locally,outside,far,dull` |
+| M16_03 | 2.856 | 360 | `clearly,once,certainly,neutral` |
+
+Per-head classification counts (448 total):
+
+| classification | heads |
+|---|---:|
+| mixed | 120 |
+| inert | 83 |
+| confounded_noise_sensitive | 80 |
+| transitive_induction | 72 |
+| anti_collision_or_content_driven | 59 |
+| anti_collision_or_inert_attention_only | 31 |
+| **addressing** | **3** |
+
+Addressing heads (all late-layer, all `output_above_noise=True`):
+
+| layer | head | patch_both donor-prob delta | noise donor-prob delta |
+|---:|---:|---:|---:|
+| 21 | 8 | +2.01e-4 | −2.39e-5 |
+| 24 | 14 | +1.47e-4 | −1.46e-7 |
+| 25 | 14 | +1.89e-4 | −5.88e-6 |
+
+Total `output_above_noise`: 6/448 (cf. qwen3 RoPE: 4; RS1b v1: 0).
+
+Published artifacts:
+
+- Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/rope-as-scaffold-rs1b-lr1e3/20260726>
+- Bundle: `rs1b_probes_lr1e3_qwen3_droped_20260726.tar.gz`
+- SHA256: `2a032ea3b0fc794912c725905172b914190e88c5f6ad1b6a03d7c916747ad9cd`
+- Checksum asset: `SHA256SUMS_rs1b_probes_lr1e3_qwen3_droped_20260726`
 
 ### Analysis
 
-_Pending output analysis._
+The headline is that **the v1 transitivity/addressing collapse was an under-training
+artifact — the LR-corrected model recovers transitivity fully and shows slightly more
+addressing evidence than the original RoPE baseline.**
+
+**Cross-run comparison — the numbers that adjudicate P.RS1.b/c:**
+
+| Metric | qwen3 (RoPE) | v1 (LR=3e-5) | LR=1e-3 (this run) |
+|---|---|---|---|
+| M1.6 G7 pass | 39/448 | 13/448 | **34/448** |
+| M1.6 transitivity | 448/448 | 0/448 | **448/448** |
+| M1.6 addressing | 2/448 | 0/448 | **3/448** |
+| M1.6 output_above_noise | 4/448 | 0/448 | **6/448** |
+
+**P.RS1.b (emergent key-position — M1.5).** The LR=1e-3 DroPE'd model's key-position
+profile remains substantively the same as the v1 profile and the RoPE baseline's `k_pre`:
+architectural zero at L0, ridge R² rises rapidly to near-ceiling (~0.99) by L6, position
+fraction peaks mid-stack (~0.57 at L18) and falls in late layers. This is the "holds by
+literal criterion but uninformative beyond RS1a" pattern, repeated: RS1a found the same
+near-ceiling emergent position in the *untrained* dropped state, so recalibration at
+proper LR didn't "fill in" a gap — it confirmed the gap was never there. P.RS1.b **holds**
+(the falsifier "absent yet perplexity recovers" did not trigger), but carries no new
+increment of evidence for the fill-in dynamic.
+
+**P.RS1.c (addressing unchanged — M1.6).** Per the pre-registration's expected-signal
+language, this outcome matches the **second branch**: "PPL recovers and
+transitivity/output_above_noise recover substantially too — the v1 collapse was primarily
+an under-training artifact; P.RS1.c would need re-adjudication in the program's favor."
+
+In detail:
+
+1. **Transitivity recovers fully.** The 0→448 transitivity collapse in v1 was entirely
+   a training artifact — properly trained, the DroPE'd model's transitivity profile is
+   indistinguishable from RoPE (448/448 in both). Whether transitivity is a meaningful
+   head-level discriminator or a model-level readout artifact (as the qwen3 M1.6
+   notebook entry noted) is unchanged; but the *absence* of transitivity in v1 was
+   spurious.
+
+2. **Addressing does not disappear — it slightly exceeds the RoPE baseline.** The
+   RoPE model had 2 addressing heads; the DroPE'd model has 3 (L21H8, L24H14, L25H14).
+   Output-above-noise moves from 4→6. These shifts are small in absolute terms (~1.5–2e-4
+   in donor-marker probability over ~5e-4 baseline), and the heads are not the same set
+   as the RoPE addressing heads (RoPE: L24H15, L25H14; this run: L21H8, L24H14, L25H14 —
+   only L25H14 overlaps). Per the spec's own falsifier language, this does **not** read
+   as "addressing disappears across the transition" — it reads as "addressing is present
+   at comparable weak levels before and after."
+
+3. **G7 attention steerability is close to baseline.** 34/448 vs 39/448 — RoPE-level
+   steerability, confirming the attention pathway is functional after proper training.
+
+**Implications for the program:**
+
+- C1 ("emergent key-position fills in") is **not falsified** — position was already
+  present untrained (RS1a), and training didn't change it. The fill-in dynamic itself
+  remains unobserved; what we have is persistence.
+- C2 ("the addressing profile stays unchanged") is **not the cleanest reading** —
+  addressing increased slightly (2→3 heads, 4→6 output-above-noise), and the
+  addressing heads are mostly different from the RoPE set. But the absolute effect
+  is so small and fragile in both states (single-stimulus addressing passes on
+  different stimuli in different heads) that "unchanged at the noise floor" is the
+  more defensible interpretation than "addressing increased."
+- The **primary finding** is negative but important: **proper LR training (1e-3)
+  restores all v1 mechanistic metrics to near-baseline levels**, confirming that the
+  v1 LR was the confound, not RoPE removal. The DroPE'd model is mechanistically
+  similar to the original RoPE model — it develops emergent position, has weak/no
+  query-readable addressing, and shows the same transitivity readout.
+- This result **strengthens C1 overall**: if the DroPE'd model is mechanistically
+  RoPE-like without RoPE, the scaffold interpretation (RoPE supplies what the model
+  can generate anyway) gains support, not weakness.
+
+**Caveats:**
+
+- The absolute addressing signal remains weak in both RoPE and DroPE'd states (2–3
+  heads out of 448, single-stimulus passes). The instrument is measuring at the noise
+  floor — small count differences (2 vs 3) should not be over-interpreted.
+- The six `output_above_noise` heads (3 addressing + 3 from other buckets) represent
+  ~1.3% of heads — not a robust signal.
+- Transitivity=448 in both runs is a model-level readout that does not vary across
+  heads (see qwen3 M1.6 notebook analysis); it is not independent evidence per head.
+- G6 required `--max-marker-sets 4096` because the better-trained model has more
+  peaked next-token distributions (harder to find neutral markers). This is a
+  calibration issue, not a validity issue — all four stimuli passed G6.
 
 ### Conclusion / Next Step
 
-_Pending._
+The RS1b LR-corrected rerun **removes the v1 under-training confound** and shows that
+the DroPE'd model at proper LR is mechanistically close to the RoPE baseline: emergent
+position persists, transitivity recovers to baseline, and weak/no query-readable
+addressing is unchanged within measurement noise. The v1 collapse (transitivity 0,
+addressing 0) was an LR artifact.
+
+**P.RS1.b holds** (emergent position present, unchanged from untrained).
+**P.RS1.c is re-adjudicated in the program's favor** — addressing does not disappear
+across the RoPE→NoPE transition; both states show the same weak, fragile signal.
+
+Next step: update the RS1-spec with this LR finding, particularly RS1b-ctrl's recipe
+(§11), then either (a) proceed to RS1b-ctrl if the original Ctrl recipe's LR needs the
+same correction, or (b) close RS1b and move to RS2 (length generalization) with the
+now-validated mechanistic picture.
 
 ## 2026-07-25 — RS1b DroPE-trained M1.5/M1.6 probes (pre-run)
 
