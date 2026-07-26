@@ -56,7 +56,7 @@ RoPE is a droppable scaffold," and the reason for this program.
   **before vs after**. *Predict:* emergent `k_pre` position fills in to match the pre-drop
   decodability, and the (non)addressing profile is unchanged. *Falsifier:* removal loses a
   retrieval/addressing capability that emergent position does not recover.
-- **C2 — subspace equivalence.** The dropped model's emergent position reconstructs the *same*
+- **C2 — subspace equivalence.** The DroPE'd model's emergent position reconstructs the *same*
   positional information/subspace RoPE supplied (measure overlap/alignment). *Falsifier:*
   disjoint subspaces — emergent position ≠ RoPE-supplied position.
 - **C3 — functional locus of RoPE.** What actually degrades on removal is **local-order /
@@ -97,7 +97,7 @@ without it, reconsider whether the note is worth writing. Full landscape in
 |---|---|---|---|
 | **RS1** ([spec](RS1-spec.md) · [impl contract §10](RS1-spec.md#10-implementation-contract-execution-brief)) | C1 (+C2) | DroPE recipe on Qwen3-0.6B + before/after M1.5/M1.6 probes (the "M1.7" increment) | needs light training — step up from k-address-space's inference-only runs |
 | RS2 | C2 | emergent-vs-RoPE positional subspace overlap on the RS1 checkpoints | analysis-only |
-| RS3 | C3 | task/perplexity ablations along a local-order axis vs a retrieval axis, RoPE vs dropped | eval harness |
+| RS3 | C3 | task/perplexity ablations along a local-order axis vs a retrieval axis, RoPE vs DroPE'd | eval harness |
 | RS4 | C4 | E1/E2 spot-check on one >0.6B model | GPU |
 
 RS1 is the load-bearing one: it converts the DroPE connection from *citation* to *result*.
