@@ -2,7 +2,7 @@
 
 Newest entries first.
 
-## 2026-07-26 — RS2.1 subspace reconstruction vs. initialization inheritance (pre-run)
+## 2026-07-26 — RS2.1 subspace reconstruction vs. initialization inheritance (completed)
 
 ### Question / Hypothesis
 
@@ -74,23 +74,116 @@ See RS2.1-spec.md §4–5 for the full decision matrix. In brief:
 ### Pre-run Provenance
 
 - Spec: `experiments/rope-as-scaffold/RS2.1-spec.md` (pre-registered at 1860a46).
+- Pre-run commit: `e8f84b9` (RS2.1 prepare: V3 flag, orthogonalize_against, notebook entry).
 - Code: `experiments/rope-as-scaffold/scripts/c2_subspace_overlap.py` (extended with
   `--residual-against-pre` flag + `orthogonalize_against` function).
-- Motivating critique: `temp/rs2-critiqe.md` (external review input).
-- Code branch: `main`.
-- Pre-run commit: <backfill after commit>
-- Planned output location: `outputs/rs2.1_v2_untrained_<timestamp>/` and
-  `outputs/rs2.1_v3_residual_<timestamp>/`; to be packaged and published as a
-  GitHub Release asset.
+- Motivating critique: `temp/rs2-critiqe.md`.
+- Execution: local CPU, NixOS, `./scripts/nix-cpu-run`.
+
+### Run Evidence
+
+- V2 output: `outputs/rs2.1_v2_untrained_20260726T072252Z/` (216 heads × 100 baseline trials, <60s)
+- V3 output: `outputs/rs2.1_v3_residual_20260726T072814Z/` (216 heads × 100 baseline trials, ~4min)
+- Published: `run/rs2.1/20260726` at https://github.com/vhallac/crockpot-experiments/releases/tag/run/rs2.1/20260726
+- SHA256: `37a600294b9f8305014775cb9dbfa72be546ab423d06d74b36c2fe4dc1ea1ffd`
 
 ### Results
-_Pending run._
+
+#### V1: RS2 primary (trained DroPE'd vs RoPE k_post, tabulated)
+
+| Layer group | n heads | excess_mean | >0 fraction |
+|---|---|---|---|
+| L2 only | 8 | 0.437 | 100% |
+| L3–L7 | 40 | 0.269 ± 0.025 | 100% |
+| L8–L12 | 40 | 0.180 ± 0.021 | 92.5% |
+| L13–L17 | 40 | 0.068 ± 0.016 | 55% |
+| L18–L27 | 80 | −0.074 ± 0.009 | 20% |
+| **All L1–L27** | 216 | 0.087 ± 0.013 | 60.6% |
+
+#### V2: inheritance control (untrained-dropped vs RoPE k_post)
+
+| Layer group | n heads | excess_mean | >0 fraction |
+|---|---|---|---|
+| L2 only | 8 | 0.350 | 100% |
+| L3–L7 | 40 | 0.071 ± 0.018 | 78% |
+| L8–L12 | 40 | −0.023 ± 0.013 | 33% |
+| L13–L17 | 40 | 0.020 ± 0.016 | 50% |
+| L18–L27 | 80 | −0.079 ± 0.008 | 15% |
+| **All L1–L27** | 216 | **−0.003** ± 0.009 | 40.7% |
+
+#### V3: residual after orthogonalizing against k_pre
+
+| Layer group | n heads | residual_excess | >0 fraction | res_rank (RoPE) | res_rank (DroPE'd) |
+|---|---|---|---|---|---|
+| L2 only | 8 | 0.290 ± 0.037 | 100% | 23.6 | 1.8 |
+| L3–L7 | 40 | 0.041 ± 0.018 | 65% | 27.4 | 2.1 |
+| L8–L12 | 40 | 0.069 ± 0.016 | 75% | 28.6 | 4.6 |
+| L3–L12 | 80 | **0.055 ± 0.012** | 70% | 28.0 | 3.3 |
+| L13–L17 | 40 | 0.019 ± 0.017 | 50% | 23.0 | 5.4 |
+| L18–L27 | 80 | −0.112 ± 0.010 | 14% | 28.1 | 10.0 |
+| All L1–L27 | 216 | −0.006 ± 0.009 | 46% | 26.9 | 5.6 |
+
+#### V4: position_fraction cross-reference (L3–L12)
+
+- RoPE k_post mean position_fraction: 0.244
+- DroPE'd mean position_fraction: 0.294
+- Both well above chance → the measured alignment reflects **positional** geometry, not
+  content classification.
+
+#### V5: statistical robustness
+
+- **Layer-clustered Δ (RS2 − V2, L3–L12):** Δ = 0.201 ± 0.015, **t = 13.3**, n = 80 heads,
+  97.5% of heads positive. Null hypothesis (Δ ≤ 0) rejected at p ≪ 0.001.
+- **V3 residual t-test (L3–L12 vs its own random baseline):** t = 4.56, 70% of heads > 0.
+- **Rank sensitivity (V5b):** Pearson r(rank_diff, excess) = 0.19 in L3–L12 — weak
+  correlation. Excess is not an artifact of PCA-rank differences.
+- **L1 inclusion (V5c):** Including L1 drops global mean excess to 0.074 (from 0.224 in
+  L3–L12), consistent with the depth-structured interpretation.
 
 ### Analysis
-_Pending output analysis._
+
+**Adjudication per RS2.1-spec.md §5 decision matrix:**
+
+1. **P.RS2.1.a (reconstruction survives inheritance control) — STRONGLY SUPPORTED.**
+   Δ = 0.201 ± 0.015, t = 13.3, 97.5% of L3–L12 heads show trained excess > untrained
+   excess. This cannot be an initialization artifact. The DroPE'd model's overlap with
+   RoPE's k_post subspace reflects training-time reconstruction, not mere weight inheritance.
+
+2. **P.RS2.1.b (L2 is not representative) — CONFIRMED.**
+   L2's untrained excess (0.350) accounts for ~80% of its trained excess (0.437), making
+   L2 an inheritance-dominated outlier. RS2's notebook illustration using L2 was misleading
+   about the mechanism's generality.
+
+3. **P.RS2.1.c (depth-structured profile) — CONFIRMED.**
+   Excess is strong in L3–L12 (0.224), declines through L13–L17 (0.068), and goes negative
+   in L18–L27 (−0.074). This matches the RS1-predicted early/middle-layer concentration.
+
+4. **V3 residual interpretation — QUALIFIED SUPPORT for rotation-specific reconstruction.**
+   The residual excess (after partialling out k_pre) is positive and significant (0.055,
+   t = 4.56), but is only ~24% of the primary excess magnitude (0.224). Most of the
+   reconstructed subspace is in the shared k_pre/k_post span, not in uniquely k_post
+   directions. The DroPE'd model's residual rank (3.3) is far lower than RoPE's (28.0),
+   consistent with a model that learned to encode position without reproducing the full
+   k_post-specific rotational machinery.
+
+5. **C2 re-adjudication: SUBSTANTIATED.**
+   The inheritance control strengthens rather than weakens the C2 verdict. The trained
+   model's overlap (0.224) far exceeds the untrained baseline (0.024), eliminating
+   initialization inheritance as the explanation. The DroPE'd model genuinely reconstructs
+   key directions aligned with what RoPE supplied.
 
 ### Conclusion / Next Step
-_Pending._
+
+RS2.1 closes the inheritance loophole in RS2's C2 adjudication. The DroPE'd model
+reconstructs positional key directions that overlap with RoPE's k_post subspace, and this
+reconstruction is a training effect, not a weight-inheritance artifact. The internal
+reference arm (Ref2: RoPE k_pre vs k_post, excess ~0.42) remains larger than the trained
+overlap — the reconstruction is partial, not perfect — but it is unequivocally present.
+
+**RS2 is substantiated.** The scaffolding hypothesis survives its first post-training test.
+
+Next: RS3 (k_post ablation/retraining to test necessity) or RS4 (emergence timeline
+during training checkpoints).
 
 ## 2026-07-26 — RS2 C2 subspace overlap (completed)
 
