@@ -97,6 +97,7 @@ without it, reconsider whether the note is worth writing. Full landscape in
 |---|---|---|---|
 | **RS1** ([spec](RS1-spec.md) · [impl contract §10](RS1-spec.md#10-implementation-contract-execution-brief)) | C1 (+C2) | DroPE recipe on Qwen3-0.6B + before/after M1.5/M1.6 probes (the "M1.7" increment) | needs light training — step up from k-address-space's inference-only runs |
 | RS2 | C2 | emergent-vs-RoPE positional subspace overlap on the RS1 checkpoints | analysis-only |
+| RS2.1 ([spec](RS2.1-spec.md)) | C2 (correction) | external review (`temp/rs2-critiqe.md`) found RS2 didn't control for initialization inheritance — the DroPE'd model started from RoPE's own weights, so subspace overlap could reflect that rather than reconstruction. Re-tests with an untrained-dropped zero-shot control and a `k_pre`-residual test | analysis-only |
 | RS3 | C3 | task/perplexity ablations along a local-order axis vs a retrieval axis, RoPE vs DroPE'd | eval harness |
 | RS4 | C4 | E1/E2 spot-check on one >0.6B model | GPU |
 
