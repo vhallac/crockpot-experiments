@@ -2,7 +2,7 @@
 
 Newest entries first.
 
-## 2026-07-26 — RS2 C2 subspace overlap (pre-run)
+## 2026-07-26 — RS2 C2 subspace overlap (completed)
 
 ### Question / Hypothesis
 
@@ -121,18 +121,22 @@ cd /home/vedat/work/personal/crockpot-experiments
 
 | Phase | Layers | Excess | Alignment | >0% | n |
 |-------|--------|--------|-----------|-----|---|
-| Early-mid | 2–12 | +0.244 ± 0.151 | 0.680–0.863 | 96.6% | 88 |
+| Early-mid | 2–12 | +0.244 ± 0.151 | 0.513–0.863 | 96.6% | 88 |
 | Transition | 13–17 | +0.068 ± 0.135 | 0.384–0.609 | 65.0% | 40 |
 | Late | 18–27 | −0.074 ± 0.106 | 0.292–0.435 | 17.5% | 80 |
 
+(Alignment column = range of per-layer mean alignment within the phase.)
+
 Layer 2 shows the strongest reconstruction (excess +0.437, alignment 0.863) — the
 DroPE'd model's emergent key-position almost perfectly recovers RoPE's code in the
-earliest layers. Excess falls monotonically through mid-depth, crosses zero around
-layer 13–17, and becomes consistently negative in late layers (18+), where every
-layer has mean excess ≤ 0 and no layer exceeds 50% of heads above baseline. This
-triphasic profile precisely mirrors RS1a's finding that early-layer position is
-rotation-propagated (RoPE-dependent) while late-layer position is emergent and
-rotation-independent.
+earliest layers. Excess falls through mid-depth, crosses zero around layer 13–17, and
+trends negative in late layers (18+): 8 of the 10 late layers have mean excess < 0
+(L18–23, L26, L27 all in −0.03…−0.14), with L24 (+0.039) and L25 (≈0.000) sitting at
+the noise floor at exactly 50% of heads above baseline — no late layer *exceeds* 50%.
+As an aggregate the late phase is robustly below the random baseline (−0.074 over 80
+heads, ~6 standard errors below zero). This triphasic profile precisely mirrors RS1a's
+finding that early-layer position is rotation-propagated (RoPE-dependent) while
+late-layer position is emergent and rotation-independent.
 
 ### Analysis
 
