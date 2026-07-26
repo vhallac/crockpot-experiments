@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/runpod-rebuild-volume-in-dc <target-datacenter-id>
+
+Create a temporary RunPod network volume in the target datacenter, attach CPU
+pods to the source and target volumes, then rsync generated project state
+directly from source pod to target pod. The local machine only orchestrates;
+data flows source pod -> target pod.
+
+Defaults are project-specific:
+  source datacenter: US-CA-2
+  source volume id:  et0mntsj6x
+  mount path:        /workspace
+
+Environment overrides:
+  SOURCE_DC                     Source datacenter. Default: US-CA-2
+  SOURCE_VOLUME_ID              Source network volume id. Default: et0mntsj6x
+  TARGET_VOLUME_SIZE_GB         New target volume size. Default: 200
+  TARGET_VOLUME_NAME            New target volume name. Default includes target DC/date
+  RUNPOD_CPU_IMAGE              CPU pod image. Default: ubuntu:22.04
+  RUNPOD_VOLUME_MOUNT_PATH      Volume mount path. Default: /workspace
+  RUNPOD_COPY_TIMEOUT           SSH readiness timeout per pod in seconds. Default: 180
+  RUNPOD_COPY_KEEP_PODS         If 1, leave CPU pods running instead of stopping. Default: 0
+  RUNPOD_COPY_INCLUDE_VENV      If 1, include /workspace/venv in rsync. Default: 0
+  RUNPOD_COPY_DELETE_DELAY      If 1, pass --delete-delay to rsync mirrors. Default: 0
+  RUNPOD_COPY_DRY_RUN           If 1, pass --dry-run to rsync. Pods/volume are still created. Default: 0
+
+Copied paths, when present:
+  /workspace/crockpot-experiments/outputs/
+  /workspace/crockpot-experiments/logs/
+  /workspace/crockpot-experiments/temp/release/
+  /workspace/crockpot-experiments/temp/release-download/
+  /workspace/rs1b-artifacts/
+  /workspace/crockpot-experiments-cache/huggingface/
+  /workspace/crockpot-experiments-cache/torch/
+  /workspace/crockpot-experiments-cache/triton/
+  /workspace/venv/ only with RUNPOD_COPY_INCLUDE_VENV=1
+
+The script stops CPU pods after verification. It never deletes network volumes.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+if [[ $# -ne 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+target_dc=$1
+source_dc=${SOURCE_DC:-US-CA-2}
+source_volume_id=${SOURCE_VOLUME_ID:-et0mntsj6x}
+target_volume_size_gb=${TARGET_VOLUME_SIZE_GB:-200}
+mount_path=${RUNPOD_VOLUME_MOUNT_PATH:-/workspace}
+cpu_image=${RUNPOD_CPU_IMAGE:-ubuntu:22.04}
+timeout_seconds=${RUNPOD_COPY_TIMEOUT:-180}
+utc_stamp=$(date -u +%Y%m%dT%H%M%SZ)
+target_volume_name=${TARGET_VOLUME_NAME:-crockpot-temp-${target_dc}-${utc_stamp}}
+source_pod_name="crockpot-copy-source-${utc_stamp}"
+target_pod_name="crockpot-copy-target-${target_dc}-${utc_stamp}"
+keep_pods=${RUNPOD_COPY_KEEP_PODS:-0}
+include_venv=${RUNPOD_COPY_INCLUDE_VENV:-0}
+delete_delay=${RUNPOD_COPY_DELETE_DELAY:-0}
+dry_run=${RUNPOD_COPY_DRY_RUN:-0}
+
+if ! [[ $target_volume_size_gb =~ ^[0-9]+$ ]] || [[ $target_volume_size_gb -le 0 ]]; then
+  echo "ERROR: TARGET_VOLUME_SIZE_GB must be a positive integer" >&2
+  exit 2
+fi
+if ! [[ $timeout_seconds =~ ^[0-9]+$ ]] || [[ $timeout_seconds -le 0 ]]; then
+  echo "ERROR: RUNPOD_COPY_TIMEOUT must be a positive integer" >&2
+  exit 2
+fi
+for bin in runpodctl jq ssh; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "ERROR: required command not found: $bin" >&2
+    exit 2
+  fi
+done
+
+source_pod_id=""
+target_pod_id=""
+target_volume_id=""
+
+stop_pod_if_needed() {
+  local pod_id=$1
+  local label=$2
+  [[ -z "$pod_id" ]] && return 0
+  if [[ "$keep_pods" == "1" ]]; then
+    echo "Leaving $label pod running because RUNPOD_COPY_KEEP_PODS=1: $pod_id" >&2
+    return 0
+  fi
+  echo "Stopping $label pod: $pod_id" >&2
+  runpodctl pod stop "$pod_id" >/dev/null || true
+}
+
+cleanup() {
+  local status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "ERROR: migration failed; stopping any created CPU pods" >&2
+  fi
+  stop_pod_if_needed "$source_pod_id" source
+  stop_pod_if_needed "$target_pod_id" target
+  exit "$status"
+}
+trap cleanup EXIT
+
+pod_ssh_json() {
+  local pod_id=$1
+  runpodctl pod get "$pod_id" | jq -e '.ssh | select(.ip != null and .port != null)'
+}
+
+wait_for_ssh() {
+  local pod_id=$1
+  local label=$2
+  local deadline=$((SECONDS + timeout_seconds))
+  local ssh_json host port key
+  echo "Waiting for SSH on $label pod $pod_id..." >&2
+  while (( SECONDS < deadline )); do
+    if ssh_json=$(pod_ssh_json "$pod_id" 2>/dev/null); then
+      host=$(jq -r '.ip' <<<"$ssh_json")
+      port=$(jq -r '.port' <<<"$ssh_json")
+      key=$(jq -r '.ssh_key.path // empty' <<<"$ssh_json")
+      if [[ -n "$host" && -n "$port" && -n "$key" && -r "$key" ]]; then
+        if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -i "$key" -p "$port" "root@$host" true 2>/dev/null; then
+          jq -n --arg host "$host" --argjson port "$port" --arg key "$key" '{host:$host, port:$port, key:$key}'
+          return 0
+        fi
+      fi
+    fi
+    sleep 5
+  done
+  echo "ERROR: timed out waiting for SSH on $label pod $pod_id" >&2
+  return 124
+}
+
+remote() {
+  local conn_json=$1
+  shift
+  local host port key
+  host=$(jq -r '.host' <<<"$conn_json")
+  port=$(jq -r '.port' <<<"$conn_json")
+  key=$(jq -r '.key' <<<"$conn_json")
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "$key" -p "$port" "root@$host" "$@"
+}
+
+remote_stdin() {
+  local conn_json=$1
+  shift
+  local host port key
+  host=$(jq -r '.host' <<<"$conn_json")
+  port=$(jq -r '.port' <<<"$conn_json")
+  key=$(jq -r '.key' <<<"$conn_json")
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "$key" -p "$port" "root@$host" "$@"
+}
+
+create_cpu_pod() {
+  local name=$1
+  local dc=$2
+  local volume_id=$3
+  runpodctl pod create \
+    --compute-type cpu \
+    --image "$cpu_image" \
+    --name "$name" \
+    --data-center-ids "$dc" \
+    --network-volume-id "$volume_id" \
+    --volume-mount-path "$mount_path" \
+    --container-disk-in-gb 20 \
+    --ports '22/tcp' | jq -r '.id'
+}
+
+echo "Creating target network volume '$target_volume_name' in $target_dc (${target_volume_size_gb}GB)..." >&2
+target_volume_id=$(runpodctl network-volume create \
+  --name "$target_volume_name" \
+  --size "$target_volume_size_gb" \
+  --data-center-id "$target_dc" | jq -r '.id')
+if [[ -z "$target_volume_id" || "$target_volume_id" == "null" ]]; then
+  echo "ERROR: failed to create target network volume" >&2
+  exit 1
+fi
+echo "Created target volume: $target_volume_id" >&2
+
+echo "Creating source CPU pod in $source_dc attached to $source_volume_id..." >&2
+source_pod_id=$(create_cpu_pod "$source_pod_name" "$source_dc" "$source_volume_id")
+echo "Source pod: $source_pod_id" >&2
+
+echo "Creating target CPU pod in $target_dc attached to $target_volume_id..." >&2
+target_pod_id=$(create_cpu_pod "$target_pod_name" "$target_dc" "$target_volume_id")
+echo "Target pod: $target_pod_id" >&2
+
+source_conn=$(wait_for_ssh "$source_pod_id" source)
+target_conn=$(wait_for_ssh "$target_pod_id" target)
+target_host=$(jq -r '.host' <<<"$target_conn")
+target_port=$(jq -r '.port' <<<"$target_conn")
+
+echo "Installing rsync/ssh tooling on both pods..." >&2
+remote "$source_conn" 'apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync openssh-client jq >/dev/null'
+remote "$target_conn" 'apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y rsync openssh-server jq >/dev/null'
+
+remote "$source_conn" "test -d '$mount_path' && test -w '$mount_path'"
+remote "$target_conn" "test -d '$mount_path' && test -w '$mount_path'"
+
+# Create a temporary SSH key on the source pod and authorize it on the target pod.
+echo "Authorizing temporary source->target SSH key..." >&2
+remote "$source_conn" 'rm -f /tmp/crockpot-volume-copy-key /tmp/crockpot-volume-copy-key.pub && ssh-keygen -q -t ed25519 -N "" -f /tmp/crockpot-volume-copy-key'
+source_pub=$(remote "$source_conn" 'cat /tmp/crockpot-volume-copy-key.pub')
+remote_stdin "$target_conn" 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' <<<"$source_pub"
+remote "$source_conn" "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i /tmp/crockpot-volume-copy-key -p '$target_port' root@'$target_host' true"
+
+rsync_flags=(-aH --numeric-ids --human-readable --info=progress2 --partial --append-verify)
+if [[ "$delete_delay" == "1" ]]; then
+  rsync_flags+=(--delete-delay)
+fi
+if [[ "$dry_run" == "1" ]]; then
+  rsync_flags+=(--dry-run)
+fi
+printf -v rsync_flags_q '%q ' "${rsync_flags[@]}"
+
+copy_paths=(
+  "$mount_path/crockpot-experiments/outputs/"
+  "$mount_path/crockpot-experiments/logs/"
+  "$mount_path/crockpot-experiments/temp/release/"
+  "$mount_path/crockpot-experiments/temp/release-download/"
+  "$mount_path/rs1b-artifacts/"
+  "$mount_path/crockpot-experiments-cache/huggingface/"
+  "$mount_path/crockpot-experiments-cache/torch/"
+  "$mount_path/crockpot-experiments-cache/triton/"
+)
+if [[ "$include_venv" == "1" ]]; then
+  copy_paths+=("$mount_path/venv/")
+fi
+
+echo "Starting pod-to-pod rsync from source volume to target volume..." >&2
+copied_paths=0
+for src in "${copy_paths[@]}"; do
+  rel=${src#"$mount_path"/}
+  dst="$mount_path/$rel"
+  if ! remote "$source_conn" "test -e '$src'"; then
+    echo "Skipping absent source path: $src" >&2
+    continue
+  fi
+  echo "Copying $src -> target:$dst" >&2
+  remote "$target_conn" "mkdir -p '$dst'"
+  remote "$source_conn" "rsync $rsync_flags_q -e 'ssh -i /tmp/crockpot-volume-copy-key -o StrictHostKeyChecking=accept-new -p $target_port' '$src' root@'$target_host':'$dst'"
+  copied_paths=$((copied_paths + 1))
+done
+if [[ $copied_paths -eq 0 ]]; then
+  echo "ERROR: none of the configured source paths existed; refusing to call this migration successful" >&2
+  exit 1
+fi
+
+echo "Writing target volume rebuild manifest..." >&2
+manifest=$(jq -n \
+  --arg created_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg source_dc "$source_dc" \
+  --arg source_volume_id "$source_volume_id" \
+  --arg source_pod_id "$source_pod_id" \
+  --arg target_dc "$target_dc" \
+  --arg target_volume_id "$target_volume_id" \
+  --arg target_volume_name "$target_volume_name" \
+  --arg target_pod_id "$target_pod_id" \
+  --arg mount_path "$mount_path" \
+  --arg include_venv "$include_venv" \
+  '{created_at_utc:$created_at_utc, source_dc:$source_dc, source_volume_id:$source_volume_id, source_pod_id:$source_pod_id, target_dc:$target_dc, target_volume_id:$target_volume_id, target_volume_name:$target_volume_name, target_pod_id:$target_pod_id, mount_path:$mount_path, include_venv:($include_venv == "1")}')
+remote_stdin "$target_conn" "cat > '$mount_path/VOLUME_REBUILD_MANIFEST.json'" <<<"$manifest"
+
+echo "Verifying target volume contents..." >&2
+remote "$target_conn" "test -f '$mount_path/VOLUME_REBUILD_MANIFEST.json' && { test -d '$mount_path/crockpot-experiments/outputs' || test -d '$mount_path/rs1b-artifacts' || test -d '$mount_path/crockpot-experiments-cache/huggingface'; }"
+remote "$target_conn" "du -sh '$mount_path/crockpot-experiments/outputs' '$mount_path/rs1b-artifacts' '$mount_path/crockpot-experiments-cache/huggingface' 2>/dev/null || true"
+
+cat <<EOF
+{
+  "status": "ok",
+  "target_datacenter": "$target_dc",
+  "target_volume_id": "$target_volume_id",
+  "target_volume_name": "$target_volume_name",
+  "source_pod_id": "$source_pod_id",
+  "target_pod_id": "$target_pod_id",
+  "manifest": "$mount_path/VOLUME_REBUILD_MANIFEST.json",
+  "pods_will_be_stopped": $([[ "$keep_pods" == "1" ]] && echo false || echo true)
+}
+EOF
