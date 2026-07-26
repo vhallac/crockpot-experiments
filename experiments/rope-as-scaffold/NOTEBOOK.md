@@ -116,12 +116,24 @@ See RS2.1-spec.md §4–5 for the full decision matrix. In brief:
 | Layer group | n heads | residual_excess | >0 fraction | res_rank (RoPE) | res_rank (DroPE'd) |
 |---|---|---|---|---|---|
 | L2 only | 8 | 0.290 ± 0.037 | 100% | 23.6 | 1.8 |
-| L3–L7 | 40 | 0.041 ± 0.018 | 65% | 27.4 | 2.1 |
-| L8–L12 | 40 | 0.069 ± 0.016 | 75% | 28.6 | 4.6 |
+| L3–L7 | 40 | 0.041 ± 0.018 | 65% | 27.7 | 2.1 |
+| L8–L12 | 40 | 0.069 ± 0.016 | 75% | 28.4 | 4.5 |
 | L3–L12 | 80 | **0.055 ± 0.012** | 70% | 28.0 | 3.3 |
-| L13–L17 | 40 | 0.019 ± 0.017 | 50% | 23.0 | 5.4 |
-| L18–L27 | 80 | −0.112 ± 0.010 | 14% | 28.1 | 10.0 |
-| All L1–L27 | 216 | −0.006 ± 0.009 | 46% | 26.9 | 5.6 |
+| L13–L17 | 40 | 0.019 ± 0.017 | 50% | 22.1 | 5.4 |
+| L18–L27 | 80 | −0.112 ± 0.010 | 14% | 27.1 | 11.8 |
+| All L1–L27 | 216 | −0.006 ± 0.009 | 46% | 26.5 | 6.8 |
+
+(Rank columns re-tabulated 2026-07-26 after external review: five cells were off — L3–L7 RoPE
+27.4→27.7, L8–L12 28.6→28.4 / 4.6→4.5, L13–L17 RoPE 23.0→22.1, L18–L27 27.1 / DroPE'd 10.0→11.8,
+ALL 26.9→26.5 / 5.6→6.8. The `residual_excess` and `>0 fraction` columns were verified exact and
+are unchanged — this was tabulation slippage confined to the rank columns.)
+
+**Provenance note (V3 artifact):** the residual run's `rs2_subspace_summary.json` records neither
+the `--residual-against-pre` flag nor any residual-column summary — it is numerically identical
+to a primary-run summary, because the script's summary block only aggregates the primary metrics.
+The per-head CSV's `residual_*` columns are the evidence the flag took effect. A future
+`c2_subspace_overlap.py` revision should echo the flag and summarize residual stats in the JSON
+so the artifact is self-describing.
 
 #### V4: position_fraction cross-reference (L3–L12)
 
@@ -139,28 +151,51 @@ See RS2.1-spec.md §4–5 for the full decision matrix. In brief:
 
 #### V5: statistical robustness
 
-- **Layer-clustered Δ (RS2 − V2, L3–L12):** Δ = 0.201, **t = 9.80** (df = 9; corrected
-  2026-07-26 — originally reported as t = 13.3, which is the *unclustered* per-head statistic
-  (80 heads treated as independent draws; that computation reproduces 13.3 exactly). Properly
-  clustering by layer — collapsing to the 10 per-layer mean deltas and computing SE across
-  those — gives t = 9.80. 97.5% of the 80 individual heads are still positive. Null hypothesis
-  (Δ ≤ 0) is still rejected at p ≪ 0.001 either way; the qualitative conclusion is unchanged,
-  only the reported statistic and its "layer-clustered" label were wrong.)
+- **Layer-clustered Δ (RS2 − V2, L3–L12):** Δ = 0.201, **t = 9.30** (df = 9; twice-corrected —
+  originally reported as t = 13.3, which is the *unclustered* per-head statistic (80 heads
+  treated as independent draws; that computation reproduces 13.3 exactly). The first correction
+  clustered by layer but used the population SD, giving 9.80; a df = 9 t-test implies the sample
+  SD (ddof = 1), which gives **9.30** (= 9.80 × √(9/10)) — external-review catch, 2026-07-26.
+  97.5% of the 80 individual heads are still positive. Null hypothesis (Δ ≤ 0) is rejected at
+  p ≪ 0.001 under every variant; only the statistic's value and labels needed correcting.)
 - **V3 residual t-test (L3–L12 vs its own random baseline):** t = 4.56, 70% of heads > 0.
 - **Rank sensitivity (V5b):** Pearson r(rank_diff, excess) = 0.19 in L3–L12 — weak
   correlation. Excess is not an artifact of PCA-rank differences.
-- **L1 inclusion (V5c):** Including L1 drops global mean excess to 0.074 (from 0.224 in
-  L3–L12), consistent with the depth-structured interpretation.
+- **L1 (V5c, restated after external review):** the original sentence claimed "including L1
+  drops global mean excess to 0.074 (from 0.224 in L3–L12)" — the 0.074 figure does not
+  reconcile with any recomputation (L1-only excess = 0.066; all-layers = 0.087; L1–12 = 0.229),
+  and the comparison mixed mismatched scopes. Corrected statement: **L1's own excess is +0.066**
+  (weak, between the L2 peak and the transition zone), consistent with the depth-structured
+  interpretation; it was previously omitted from RS2's phase table and is now accounted for.
 
 ### Analysis
 
 **Adjudication per RS2.1-spec.md §5 decision matrix:**
 
 1. **P.RS2.1.a (reconstruction survives inheritance control) — STRONGLY SUPPORTED.**
-   Δ = 0.201, properly layer-clustered t = 9.80 (df=9; see V5 correction), 97.5% of L3–L12
+   Δ = 0.201, properly layer-clustered t = 9.30 (df=9; see V5 correction), 97.5% of L3–L12
    heads show trained excess > untrained excess. This cannot be an initialization artifact.
    The DroPE'd model's overlap with RoPE's k_post subspace reflects training-time
    reconstruction, not mere weight inheritance.
+
+   **Depth-resolved reference arms (completing V1's specified tabulation; added after external
+   review):**
+
+   | Layer group | Primary (trained vs k_post) | Ref2 (k_pre vs k_post) | Ref1 alignment (trained vs k_pre) |
+   |---|---|---|---|
+   | L2 | +0.437 | +0.485 | — |
+   | L3–L7 | +0.269 | +0.200 | — |
+   | L8–L12 | +0.180 | +0.067 | — |
+   | **L3–L12** | **+0.224** | **+0.134** | 0.778 |
+   | Global | +0.087 | +0.111 | 0.697 |
+
+   In the reconstruction layers (L3–L12), primary excess **exceeds** Ref2 — the DroPE'd
+   emergent subspace is *more* k_post-aligned there than RoPE's own k_pre is. This closes the
+   last version of the transitive-channel objection: a k_pre-mediated inheritance channel
+   cannot even in principle explain overlap that is larger than that channel's own strength.
+   Combined with Ref1 (trained vs k_pre alignment 0.778 in L3–L12), the geometry is coherent:
+   training took the inherited code and moved it partway toward the rotated (k_post) geometry —
+   still nearer to k_pre in absolute terms, but more k_post-aligned than k_pre itself is.
 
 2. **P.RS2.1.b (L2 is not representative) — CONFIRMED.**
    L2's untrained excess (0.350) accounts for ~80% of its trained excess (0.437), making
@@ -189,14 +224,31 @@ See RS2.1-spec.md §4–5 for the full decision matrix. In brief:
 
 RS2.1 closes the inheritance loophole in RS2's C2 adjudication. The DroPE'd model
 reconstructs positional key directions that overlap with RoPE's k_post subspace, and this
-reconstruction is a training effect, not a weight-inheritance artifact. The internal
-reference arm (Ref2: RoPE k_pre vs k_post, excess ~0.42) remains larger than the trained
-overlap — the reconstruction is partial, not perfect — but it is unequivocally present.
+reconstruction is a training effect, not a weight-inheritance artifact.
 
-**RS2 is substantiated.** The scaffolding hypothesis survives its first post-training test.
+*(Corrected after external review — the original sentence here read "the internal reference
+arm (Ref2: RoPE k_pre vs k_post, excess ~0.42) remains larger than the trained overlap." That
+was wrong twice: ~0.42 is not the Ref2 arm value — global Ref2 excess is +0.111, and 0.42
+matches the CSV's first row (L1H0, 0.4205), an eyeballed-first-row slip; and the direction is
+backwards where it matters — in L3–L12, primary excess (+0.224) exceeds Ref2 (+0.134). See the
+depth-resolved reference-arm table in Analysis §1. The error understated the result.)*
 
-Next: RS3 (k_post ablation/retraining to test necessity) or RS4 (emergence timeline
-during training checkpoints).
+**RS2 is substantiated — depth-qualified.** Reconstruction is an L3–L12 phenomenon: late
+layers (18–27) sit below the random baseline and the residual test pushes them further
+negative (−0.112), so the late-layer emergent code remains a genuinely different code. The
+rotation-specific residual support is real but thin (+0.055, ~24% of the primary magnitude;
+DroPE'd residual rank ~3 vs RoPE's ~28) — "qualified support," per Analysis §4, is the right
+weight, and the top-line verdict should not be read as rounding it up.
+
+**Remaining caveat (not addressed by RS2.1's controls):** V2 rules out initialization
+inheritance, but cannot distinguish "reconstructs RoPE's *specific* code" from "any functional
+NoPE training at this scale converges to similar positional geometry." Discriminating those
+needs an independently-initialized control (a from-scratch or differently-seeded NoPE model
+probed the same way) — a natural RS3 arm.
+
+Next: RS3 (k_post ablation/retraining to test necessity; now also the natural home for the
+independent-initialization control above) or RS4 (emergence timeline during training
+checkpoints).
 
 ## 2026-07-26 — RS2 C2 subspace overlap (completed)
 
