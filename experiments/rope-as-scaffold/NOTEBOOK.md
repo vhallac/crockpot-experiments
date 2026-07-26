@@ -410,7 +410,9 @@ C2 is **substantiated**: the DroPE'd emergent positional subspace reconstructs t
 same code RoPE supplied, with a depth profile that maps exactly onto RS1a's
 rotation-dependence gradient.
 
-- **C1 (position fills in):** Confirmed by RS1b.
+- **C1 (position fills in):** Position-persistence confirmed by RS1b — position survives
+  RoPE removal and retraining. The fill-in dynamic itself was never observed: position
+  was already at ceiling pre-training (RS1a), so RS1b shows persistence, not emergence.
 - **C2 (same code reconstructed):** Confirmed by RS2, depth-qualified.
 - **Next:** The primary C1/C2 claims are now both supported. RS3 (model-scale generalisation,
   different architectures) and RS4 (causal intervention — freezing early-layer heads
