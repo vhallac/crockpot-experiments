@@ -125,15 +125,27 @@ See RS2.1-spec.md §4–5 for the full decision matrix. In brief:
 
 #### V4: position_fraction cross-reference (L3–L12)
 
-- RoPE k_post mean position_fraction: 0.244
+- **RoPE k_post mean position_fraction: 0.393** (corrected 2026-07-26 — originally reported as
+  0.244, which was `pre`+`post` variant rows pooled together for RoPE rather than `post` alone.
+  Confirmed by direct recomputation: pooling `pre` (0.092) and `post` (0.393) gives 0.2426,
+  matching the original figure almost exactly. DroPE'd's own number was unaffected by the same
+  bug because its `pre` and `post` rows are numerically identical there — per G-RS1.1's
+  `k_pre == k_post` invariant under the identity-rotation patch — so pooling changes nothing on
+  that side, which is why only the RoPE figure was wrong.)
 - DroPE'd mean position_fraction: 0.294
-- Both well above chance → the measured alignment reflects **positional** geometry, not
-  content classification.
+- Both well above chance → the measured alignment reflects **positional** geometry, not content
+  classification. The correction *strengthens* this conclusion (0.393 is even further from
+  chance than 0.244 was), it does not weaken it.
 
 #### V5: statistical robustness
 
-- **Layer-clustered Δ (RS2 − V2, L3–L12):** Δ = 0.201 ± 0.015, **t = 13.3**, n = 80 heads,
-  97.5% of heads positive. Null hypothesis (Δ ≤ 0) rejected at p ≪ 0.001.
+- **Layer-clustered Δ (RS2 − V2, L3–L12):** Δ = 0.201, **t = 9.80** (df = 9; corrected
+  2026-07-26 — originally reported as t = 13.3, which is the *unclustered* per-head statistic
+  (80 heads treated as independent draws; that computation reproduces 13.3 exactly). Properly
+  clustering by layer — collapsing to the 10 per-layer mean deltas and computing SE across
+  those — gives t = 9.80. 97.5% of the 80 individual heads are still positive. Null hypothesis
+  (Δ ≤ 0) is still rejected at p ≪ 0.001 either way; the qualitative conclusion is unchanged,
+  only the reported statistic and its "layer-clustered" label were wrong.)
 - **V3 residual t-test (L3–L12 vs its own random baseline):** t = 4.56, 70% of heads > 0.
 - **Rank sensitivity (V5b):** Pearson r(rank_diff, excess) = 0.19 in L3–L12 — weak
   correlation. Excess is not an artifact of PCA-rank differences.
@@ -145,9 +157,10 @@ See RS2.1-spec.md §4–5 for the full decision matrix. In brief:
 **Adjudication per RS2.1-spec.md §5 decision matrix:**
 
 1. **P.RS2.1.a (reconstruction survives inheritance control) — STRONGLY SUPPORTED.**
-   Δ = 0.201 ± 0.015, t = 13.3, 97.5% of L3–L12 heads show trained excess > untrained
-   excess. This cannot be an initialization artifact. The DroPE'd model's overlap with
-   RoPE's k_post subspace reflects training-time reconstruction, not mere weight inheritance.
+   Δ = 0.201, properly layer-clustered t = 9.80 (df=9; see V5 correction), 97.5% of L3–L12
+   heads show trained excess > untrained excess. This cannot be an initialization artifact.
+   The DroPE'd model's overlap with RoPE's k_post subspace reflects training-time
+   reconstruction, not mere weight inheritance.
 
 2. **P.RS2.1.b (L2 is not representative) — CONFIRMED.**
    L2's untrained excess (0.350) accounts for ~80% of its trained excess (0.437), making
