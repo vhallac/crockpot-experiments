@@ -93,7 +93,13 @@ Gates: G1 `PASS` (architectural zero at layer 0; identity RoPE means `pre==post`
 G2 `NOT_APPLICABLE`. `summary_rows=43904`, `shuffle_null_ok=True`, 19 stimuli across
 families A/B/C, segment lengths [4,7].
 
-Pre==post confirmed (delta < 1e-12 in ridge R² between variants).
+Pre==post confirmed exactly (0.0 delta, all 21,280 per-stimulus/per-slot rows) — consistent
+with G-RS1.1's `k_pre == k_post` invariant. The 1,344 derived `AGGREGATE` summary rows (~3% of
+`summary_rows`) show real but small pre/post differences, up to 0.21 in `ridge_r2`, concentrated
+in the low-R² early layers (1–3); this is almost certainly unseeded CV-fold randomness in the
+aggregate-level regression, not a true pre/post divergence in the underlying keys, but it means
+"pre==post" should be read as a per-slot-measurement fact, not a blanket property of every row in
+this file.
 
 Family A slot-level depth profile (pre variant):
 
@@ -195,12 +201,18 @@ In detail:
    spurious.
 
 2. **Addressing does not disappear — it slightly exceeds the RoPE baseline.** The
-   RoPE model had 2 addressing heads; the DroPE'd model has 3 (L21H8, L24H14, L25H14).
-   Output-above-noise moves from 4→6. These shifts are small in absolute terms (~1.5–2e-4
-   in donor-marker probability over ~5e-4 baseline), and the heads are not the same set
-   as the RoPE addressing heads (RoPE: L24H15, L25H14; this run: L21H8, L24H14, L25H14 —
-   only L25H14 overlaps). Per the spec's own falsifier language, this does **not** read
-   as "addressing disappears across the transition" — it reads as "addressing is present
+   RoPE model had 2 `addressing`-classified heads; the DroPE'd model has 3 (L21H8, L24H14,
+   L25H14). Output-above-noise moves from 4→6. These shifts are small in absolute terms
+   (~1.5–2e-4 in donor-marker probability over ~5e-4 baseline), and the `addressing`-labeled
+   sets are mostly not the same heads (RoPE: L24H15, L25H14; this run: L21H8, L24H14, L25H14 —
+   only L25H14 overlaps at the label level). At the broader, actually-pre-registered
+   `output_above_noise` criterion (independent of which sub-classification a head lands in),
+   the overlap is stronger than the label-level comparison suggests: L21H8 is
+   `output_above_noise=True` in **both** runs — it's just classified `confounded_noise_sensitive`
+   in RoPE and `addressing` here — so 2 of RoPE's 4 `output_above_noise` heads (L21H8, L25H14)
+   persist as `output_above_noise` in the DroPE'd model too. Per the spec's own falsifier
+   language, this does **not** read as "addressing disappears across the transition" — it reads
+   as "addressing is present
    at comparable weak levels before and after."
 
 3. **G7 attention steerability is close to baseline.** 34/448 vs 39/448 — RoPE-level
