@@ -2,6 +2,88 @@
 
 Newest entries first.
 
+## 2026-07-26 — RS2 C2 subspace overlap (pre-run)
+
+### Question / Hypothesis
+
+RS1b's LR-corrected rerun showed that the DroPE'd model is mechanistically close to the RoPE
+baseline: emergent key-position persists (P.RS1.b holds), and the addressing profile is
+statistically indistinguishable from RoPE (P.RS1.c re-adjudicated in the program's favor). RS2
+now tests the secondary C2 claim: does the DroPE'd model's emergent positional subspace
+**reconstruct the same subspace RoPE supplied**, or is it a different positional code?
+
+P.RS1.d predicts substantial overlap between the RoPE `k_post` positional subspace and the
+DroPE'd emergent key-position subspace, measured via principal angles / CCA and compared
+against a random-rotation baseline (per RS1-spec §10.F).
+
+**Falsifier:** disjoint subspaces (alignment at or below random baseline) → emergent position
+is a *different* code, not a reconstruction of what RoPE supplied.
+
+### Experiment Design Summary
+
+- **Inputs:** M1.5 projector bases from two pre-existing runs:
+  - RoPE `k_post`: `outputs/rope_as_scaffold_rs1a_20260724T0559Z/m15_qwen3/kaddress_m15_projectors_qwen3.npz`
+  - DroPE'd emergent: `outputs/rs1b_probes_lr1e3_qwen3_droped_20260726/outputs/rs1b_probes_lr1e3_20260726T042955Z_m15_qwen3_droped/kaddress_m15_projectors_qwen3-droped.npz`
+- **Method:** For each (layer, head) present in both, extract Family A aggregate PCA basis,
+  compute principal angles via SVD of A^T B, and compute a random-rotation baseline
+  (100 trials) per §10.F. Primary metric: `alignment_excess` = mean_cos(observed) −
+  mean_cos(random baseline).
+- **Reference comparisons:** RoPE `k_pre` vs DroPE'd emergent (emergent-to-emergent) and
+  RoPE `k_pre` vs RoPE `k_post` (internal RoPE rotation shift).
+- **Analysis-only — no GPU needed.** The projector NPZ files are small (59–203 MB) and the
+  computation is O(heads × d_head³) ≈ seconds on CPU.
+
+### Planned Procedure
+
+```bash
+cd /home/vedat/work/personal/crockpot-experiments
+./scripts/nix-cpu-run experiments/rope-as-scaffold/scripts/c2_subspace_overlap.py \
+  --rope-projectors outputs/rope_as_scaffold_rs1a_20260724T0559Z/m15_qwen3/kaddress_m15_projectors_qwen3.npz \
+  --droped-projectors outputs/rs1b_probes_lr1e3_qwen3_droped_20260726/outputs/rs1b_probes_lr1e3_20260726T042955Z_m15_qwen3_droped/kaddress_m15_projectors_qwen3-droped.npz \
+  --output-dir outputs/rs2_subspace_$(date -u +%Y%m%dT%H%M%SZ) \
+  --baseline-trials 100 \
+  --families A \
+  --seed 0
+```
+
+### Expected Signal / Interpretation Plan
+
+- **P.RS1.d holds** (strong overlap): excess substantially > 0 across most heads, with a
+  plausible depth profile (early layers heavily RoPE-dominated → high overlap; mid layers
+  emergent recovers RoPE's code → high overlap; late layers may diverge). This upgrades C1
+  from "emergent position fills in" to "emergent position reconstructs the same code RoPE
+  supplied" — a stronger mechanistic claim.
+- **P.RS1.d falsified** (random-level alignment): excess ≈ 0 globally → emergent position
+  and RoPE-supplied position are different codes. This doesn't invalidate C1 (position is
+  still present and non-addressable) but weakens the "reconstruction" framing — the model
+  developed its own positional system rather than inheriting RoPE's.
+- **Intermediate** (excess > 0 in some layers, ≈ 0 or negative in others): depth-stratified
+  reconstruction — RoPE's code is recoverable where RoPE is architecturally load-bearing
+  (early layers), with divergence in late layers where the model has freedom to develop
+  independent representations. This is the most likely outcome given RS1a's finding that
+  early-layer position is rotation-propagated while deep-layer position is emergent and
+  rotation-independent.
+
+### Pre-run Provenance
+
+- Spec: `experiments/rope-as-scaffold/RS2-spec.md` (pre-registration); see also `RS1-spec.md` §10.F (C2 method).
+- Code: `experiments/rope-as-scaffold/scripts/c2_subspace_overlap.py` (new, this commit).
+- Input data provenance:
+  - RoPE projectors: RS1a run, published at
+    <https://github.com/vhallac/crockpot-experiments/releases/tag/run/rope-as-scaffold-rs1a/20260724>
+  - DroPE'd projectors: RS1b LR-corrected run, published at
+    <https://github.com/vhallac/crockpot-experiments/releases/tag/run/rope-as-scaffold-rs1b-lr1e3/20260726>
+- Code branch: `main`.
+- Pre-run commit: TBD (this notebook entry).
+- Planned output location: `outputs/rs2_subspace_<timestamp>/`; to be committed as a summary
+  artifact or published alongside prior RS1 outputs.
+
+### Results
+
+TBD
+
+---
+
 ## 2026-07-25 — RS1b LR-corrected rerun (pre-run)
 
 ### Question / Hypothesis
@@ -263,10 +345,9 @@ addressing 0) was an LR artifact.
 **P.RS1.c is re-adjudicated in the program's favor** — addressing does not disappear
 across the RoPE→NoPE transition; both states show the same weak, fragile signal.
 
-Next step: update the RS1-spec with this LR finding, particularly RS1b-ctrl's recipe
-(§11), then either (a) proceed to RS1b-ctrl if the original Ctrl recipe's LR needs the
-same correction, or (b) close RS1b and move to RS2 (length generalization) with the
-now-validated mechanistic picture.
+Next step (2026-07-26): **Path (b) chosen** — RS1b-ctrl is deferred (per §11 gating: results are
+crisp, not borderline). Proceeding to **RS2 (C2 subspace overlap)** on the existing M1.5
+projectors — analysis-only, cheap, no GPU needed.
 
 ## 2026-07-25 — RS1b DroPE-trained M1.5/M1.6 probes (pre-run)
 
