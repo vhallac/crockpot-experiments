@@ -174,7 +174,7 @@ rotation-dependence gradient.
   - `rs2_subspace_overlap.csv` (58,968 bytes, SHA256: 4f811879…)
   - `rs2_subspace_summary.json` (10,347 bytes, SHA256: 9353c461…)
 - Release: <https://github.com/vhallac/crockpot-experiments/releases/tag/run/rope-as-scaffold-rs2/20260726>
-- Final commit: TBD (this notebook completion).
+- Final commit: `5a23568` (notebook completion + two verified-slip fixes).
 
 ---
 
