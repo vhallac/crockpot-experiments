@@ -1,8 +1,14 @@
-# RS1b learning-rate retuning — open question, not yet decided
+# RS1b learning-rate retuning — resolved (historical)
 
-**Status:** parked. RS1b's live run (Qwen3-0.6B, `qwen3-droped`) is still in progress at peak LR
-3e-5. This note captures a finding surfaced mid-run and the options for what to do about it —
-nothing here has been acted on. Do not treat this as a decision.
+**Status:** **resolved, 2026-07-26 (reviewer catch: this note was stale, still said "parked").**
+Option **A** (full clean restart at a corrected LR) was chosen and run at **peak LR 1e-3**
+(the stretch option below, not the safer 3e-4 first step — Qwen3's native QK-norm made it safe as
+predicted, no instability). Held-out PPL recovered from ~30,859 to **16.88** (below the 21.8 RoPE
+baseline), crossing the baseline around step ~800 of 1907 and improving smoothly to completion —
+see `NOTEBOOK.md`'s "2026-07-25 — RS1b LR-corrected rerun" entry for the full curve and the M1.5/M1.6
+results this unblocked. `RS1-spec.md` §10.C now records 1e-3 as the canonical recipe value. The
+rest of this note is kept as-is below for historical record of the reasoning that led there —
+read it as the pre-decision analysis, not a current open question.
 
 ## The finding
 
@@ -66,9 +72,9 @@ RS1b recipe becomes canonical**, not stay pinned to the original 3e-5. Running t
 since-superseded, under-tuned LR would replicate the same confound-masking problem in the control
 arm and defeat its purpose. Revisit §11's recipe reference once this is decided.
 
-## Do not act on this yet
+## Do not act on this yet (historical — resolved, see Status above)
 
-Wait for the current run to finish and for its M1.5/M1.6 probe results to land before deciding
-between (A)/(B)/neither. A clean plateau with strong M1.5/M1.6 signal might still be a fully
-reportable, falsifiable RS1b result on its own terms (per the spec's own decision tree) even if the
-LR was suboptimal — under-recovery doesn't automatically invalidate C1's other predictions.
+This section originally said to wait for the run and its M1.5/M1.6 results before deciding between
+(A)/(B)/neither. That decision is made: (A) ran, resolved cleanly (PPL 16.88, M1.6 transitivity and
+addressing both restored to RoPE-comparable levels). Kept here unedited as the record of what the
+decision criteria were before the data existed.

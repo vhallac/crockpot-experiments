@@ -149,10 +149,39 @@ directory: `/workspace/qwen3-droped`. Token cache reused from v1 training at
 `/workspace/rs1b-token-cache/`; eval slice is the same 5M-token held-out prefix used
 for the v1 PPL measurement.
 
-**Training loss curve (last recorded):**
-[training metrics to be extracted from training_metrics.csv — see `training_manifest.json`
-for recipe pins; primary probes below do not depend on this beyond confirming the model
-is not near-random.]
+**Training/eval curve (P.RS1.a evidence — full `training_metrics.csv` eval history, not just
+"not near-random"):**
+
+| step | eval_ppl | eval_ce |
+|---:|---:|---:|
+| 1 | 30,859.3 | 10.337 |
+| 100 | 72.06 | 4.278 |
+| 200 | 37.34 | 3.620 |
+| 300 | 30.69 | 3.424 |
+| 400 | 27.56 | 3.316 |
+| 500 | 25.64 | 3.244 |
+| 600 | 24.08 | 3.181 |
+| 700 | 22.84 | 3.128 |
+| **800** | **21.64** | **3.075** |
+| 900 | 20.86 | 3.038 |
+| 1000 | 20.10 | 3.001 |
+| 1100 | 19.45 | 2.968 |
+| 1200 | 18.81 | 2.934 |
+| 1300 | 18.30 | 2.907 |
+| 1400 | 17.84 | 2.882 |
+| 1500 | 17.50 | 2.862 |
+| 1600 | 17.27 | 2.849 |
+| 1700 | 17.12 | 2.840 |
+| 1800 | 17.00 | 2.833 |
+| 1900 | 16.89 | 2.827 |
+| **1907 (final)** | **16.88** | **2.826** |
+
+RoPE baseline for reference: PPL 21.8 / CE 3.082 (RS1a). This run crosses below the baseline
+around step ~800 and continues improving smoothly through completion (total elapsed 25,173s ≈
+7.0h on H100 SXM, steady-state ~39,700-39,800 tok/s) — a monotonic, fully-converged curve, not
+an early-stopping or lucky-checkpoint artifact. This is the P.RS1.a evidence that was previously
+missing from this entry (a reviewer catch, addressed 2026-07-26): the "LR confound removed" claim
+below is now backed by the actual recovery curve, not just the M1.6 mechanistic result.
 
 **M1.5 and M1.6 probes** run on RunPod NVIDIA GeForce RTX 4090 (24GB VRAM), commit `8f78c47`:
 
