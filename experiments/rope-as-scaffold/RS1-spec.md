@@ -400,8 +400,9 @@ apples-to-apples. This is a probe-stimulus length and is independent of the two 
 
 ## 11. Addendum (2026-07-24): RS1b-ctrl — RoPE-recalibrated confound control
 
-**Status:** pre-registered, not yet run. Raised during RS1b's actual execution (mid-run
-methodological review), not part of the original §§0–10 design.
+**Status:** **deferred (2026-07-26)**, not cancelled. Pre-registered, not run. Raised during
+RS1b's actual execution (mid-run methodological review), not part of the original §§0–10 design.
+See the deferral decision at the end of this section for why.
 
 **The concern.** RS1's C1 claim rests on comparing **state 1** (original RoPE checkpoint, zero
 additional training) against **state 3** (DroPE'd, recalibrated on ~1–2B FineWeb-Edu tokens — see
@@ -446,3 +447,24 @@ the same extra training on the same data" constant across the comparison that ma
 RS1b itself on A100 SXM: ~12.5h, ~$18–19 (flash-attention confirmed working on Ampere/Hopper; avoid
 Blackwell GPUs — see the RS1b training note's GPU-selection history). No new engineering: the RS1b
 training script with the rotary-identity patch left disabled is a one-flag change, not a new script.
+
+**Deferral decision (2026-07-26).** RS1b's LR-corrected rerun (peak LR 1e-3, see `RS1-spec.md`
+§10.C revision and `NOTEBOOK.md`'s 2026-07-25 "RS1b LR-corrected rerun" entry) landed crisp, not
+borderline — the gating condition above resolves to "control becomes optional." Concretely: this
+control's value was in interpreting v1's *negative* finding (transitivity/addressing collapsing to
+0/448) — separating "RoPE removal killed addressing" from "this recipe was too undertrained to show
+anything." That negative finding no longer exists: the corrected-LR run shows addressing
+**persisting**, matching-to-slightly-exceeding the RoPE baseline (transitivity 448/448 vs. RoPE's
+448/448; output_above_noise 6/448 vs. RoPE's 4/448). For the question this program is actually
+asking here — does a DroPE'd model retain addressing capability after proper recalibration — that
+question is answered without the control, since the answer doesn't depend on whether a
+RoPE-retrained-on-the-same-corpus arm would also nudge those numbers.
+
+**What the control would still add, if ever needed:** the "slightly exceeds RoPE" framing (3 vs. 2
+addressing heads, 6 vs. 4 output_above_noise) rests on effects already flagged as being at the
+noise floor (`NOTEBOOK.md` caveats). It's plausible any extra training on this corpus nudges a few
+borderline metrics up regardless of RoPE, in which case the honest reading is "statistically
+indistinguishable from RoPE" rather than "slightly better." RS1b-ctrl is exactly what would firm
+this up — but it's a refinement of an already-positive result, not a requirement for the addressing-
+recovery question this program is currently scoped to. Revisit if a stronger causal claim (e.g. for
+publication) is needed later; not currently planned.
