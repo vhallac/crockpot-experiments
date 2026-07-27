@@ -244,11 +244,13 @@ weight, and the top-line verdict should not be read as rounding it up.
 inheritance, but cannot distinguish "reconstructs RoPE's *specific* code" from "any functional
 NoPE training at this scale converges to similar positional geometry." Discriminating those
 needs an independently-initialized control (a from-scratch or differently-seeded NoPE model
-probed the same way) — a natural RS3 arm.
+probed the same way) — an unscoped C2 follow-up (not RS3; RS3 is now pinned to C3, see
+RS3-spec.md).
 
-Next: RS3 (k_post ablation/retraining to test necessity; now also the natural home for the
-independent-initialization control above) or RS4 (emergence timeline during training
-checkpoints).
+Next: unscoped ideas, neither matching RS3 (C3, now spec'd) or RS4 (C4, scale check) as
+currently defined — a `k_post` ablation/retraining test of necessity (folding in the
+independent-initialization control above), and an emergence-timeline study across training
+checkpoints.
 
 ## 2026-07-26 — RS2 C2 subspace overlap (completed)
 
@@ -420,9 +422,10 @@ rotation-dependence gradient.
   RoPE removal and retraining. The fill-in dynamic itself was never observed: position
   was already at ceiling pre-training (RS1a), so RS1b shows persistence, not emergence.
 - **C2 (same code reconstructed):** Confirmed by RS2, depth-qualified.
-- **Next:** The primary C1/C2 claims are now both supported. RS3 (model-scale generalisation,
-  different architectures) and RS4 (causal intervention — freezing early-layer heads
-  that reconstruct RoPE's code vs late-layer heads that diverge) remain as future work.
+- **Next:** The primary C1/C2 claims are now both supported. RS4 (model-scale generalisation,
+  different architectures — C4) and an unscoped causal-intervention idea (freezing early-layer
+  heads that reconstruct RoPE's code vs late-layer heads that diverge) remain as future work.
+  RS3 (C3, local-order vs retrieval) is pre-registered separately — see RS3-spec.md.
 
 ### Published Outputs
 
