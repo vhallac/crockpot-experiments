@@ -81,29 +81,36 @@ def _bootstrap_ci(
     }
 
 
-def _ce_on_chunk(
-    model: torch.nn.Module,
-    ids: torch.Tensor,
-    device: torch.device,
-) -> float:
-    """Cross-entropy on a single [1, L] sequence chunk.
+ARM_A_BATCH_SIZE = 4   # 2048-token blocks — memory-bound; keep small
+ARM_B_BATCH_SIZE = 16  # up to ~1600-token items — moderate
+ARM_C_BATCH_SIZE = 32  # 243-token items — short, can fill
 
-    Unlike `token_weighted_ce_and_ppl` this operates on a single pre-cut block
-    and returns the token-weighted mean CE for that block only.
+
+def _ce_batched(
+    model: torch.nn.Module,
+    batch: torch.Tensor,
+    device: torch.device,
+) -> list[float]:
+    """Token-weighted CE for a batch of equal-length sequences [N, L].
+
+    Returns one float per sequence.  All sequences in the batch MUST
+    have the same length (no padding — callers split by length first).
     """
-    chunk = ids.unsqueeze(0).to(device)
-    if chunk.shape[1] < 2:
-        return float("nan")
+    N, L = batch.shape
+    if L < 2:
+        return [float("nan")] * N
+    inp = batch.to(device)
     with torch.no_grad():
-        out = model(chunk, use_cache=False)
-        logits = out.logits[:, :-1, :]
-        labels = chunk[:, 1:]
-        loss = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
+        out = model(inp, use_cache=False)
+        logits = out.logits[:, :-1, :]                 # [N, L-1, V]
+        labels = inp[:, 1:]                            # [N, L-1]
+        # Per-sequence token-weighted mean CE.
+        ce_per_seq = F.cross_entropy(
+            logits.reshape(N * (L - 1), -1),
             labels.reshape(-1),
-            reduction="mean",
-        )
-    return float(loss.item())
+            reduction="none",
+        ).view(N, L - 1).mean(dim=1)                   # [N]
+    return [float(v.item()) for v in ce_per_seq]
 
 
 def _split_blocks(ids: torch.Tensor, block_size: int) -> list[torch.Tensor]:
@@ -154,36 +161,44 @@ def _arm_a_score_model(
     """Score one model on all blocks × conditions. Returns per-block rows."""
     rows: list[dict] = []
     n_blocks = len(blocks)
+    batch_size = ARM_A_BATCH_SIZE
 
-    # Pre-compute clean CE per block (shared across all perturbations).
+    # Pre-compute clean CE per block in batches (shared across perturbations).
     clean_ces: list[float] = []
-    for bi, block in enumerate(blocks):
-        ce = _ce_on_chunk(model, block, device)
-        clean_ces.append(ce)
-        if (bi + 1) % 100 == 0 or bi + 1 == n_blocks:
-            print(f"    arm-A clean block {bi + 1}/{n_blocks}", flush=True)
+    for b_start in range(0, n_blocks, batch_size):
+        b_end = min(b_start + batch_size, n_blocks)
+        batch = torch.stack(blocks[b_start:b_end])     # [B, L]
+        ces = _ce_batched(model, batch, device)
+        clean_ces.extend(ces)
+        print(f"    arm-A clean block {b_end}/{n_blocks}", flush=True)
 
-    # Perturbation conditions.
+    # Perturbation conditions — also batched.
     for mode in modes:
         for w in windows:
-            for bi, block in enumerate(blocks):
-                if mode == "scramble":
-                    perturbed = _scramble_block(block, w, seed)
-                elif mode == "reverse":
-                    perturbed = _reverse_block(block, w)
-                else:
-                    raise ValueError(f"unknown mode: {mode}")
-                ce = _ce_on_chunk(model, perturbed, device)
-                rows.append(
-                    {
-                        "block": bi,
-                        "mode": mode,
-                        "window": w,
-                        "ce_clean": clean_ces[bi],
-                        "ce_perturbed": ce,
-                        "delta_ce": ce - clean_ces[bi],
-                    }
-                )
+            for b_start in range(0, n_blocks, batch_size):
+                b_end = min(b_start + batch_size, n_blocks)
+                perturbed_blocks: list[torch.Tensor] = []
+                for bi in range(b_start, b_end):
+                    block = blocks[bi]
+                    if mode == "scramble":
+                        perturbed_blocks.append(_scramble_block(block, w, seed))
+                    elif mode == "reverse":
+                        perturbed_blocks.append(_reverse_block(block, w))
+                    else:
+                        raise ValueError(f"unknown mode: {mode}")
+                batch = torch.stack(perturbed_blocks)
+                ces = _ce_batched(model, batch, device)
+                for i, bi in enumerate(range(b_start, b_end)):
+                    rows.append(
+                        {
+                            "block": bi,
+                            "mode": mode,
+                            "window": w,
+                            "ce_clean": clean_ces[bi],
+                            "ce_perturbed": ces[i],
+                            "delta_ce": ces[i] - clean_ces[bi],
+                        }
+                    )
             print(f"    arm-A {mode} w={w} done", flush=True)
     return rows
 
@@ -306,43 +321,67 @@ def _arm_b_score_model(
     """Score one model on all induction items. Returns per-sequence rows."""
     rows: list[dict] = []
     n_items = len(items)
+    batch_size = ARM_B_BATCH_SIZE
 
+    # Group items by distance (equal length within each group — no padding needed).
+    by_dist: dict[int, list[dict]] = {}
     for idx, item in enumerate(items):
-        seq_t = torch.tensor([item["seq"]], dtype=torch.long, device=device)
-        with torch.no_grad():
-            out = model(seq_t, use_cache=False)
-            logits = out.logits[0]  # [L, V]
+        by_dist.setdefault(item["distance"], []).append({"idx": idx, **item})
 
-        span_len = len(item["span"])
-        p1_start = item["first_span_pos"]
-        p2_start = item["second_span_pos"]
+    for distance, group in by_dist.items():
+        n = len(group)
+        for g_start in range(0, n, batch_size):
+            g_end = min(g_start + batch_size, n)
+            sub = group[g_start:g_end]
+            # Stack sequences into [B, L] batch.
+            seqs = [torch.tensor(it["seq"], dtype=torch.long) for it in sub]
+            batch = torch.stack(seqs).to(device)                    # [B, L]
+            B, L = batch.shape
 
-        # CE on first occurrence (all tokens — unpredictable by construction).
-        ce_first = 0.0
-        for t in range(p1_start, p1_start + span_len):
-            ce_first += float(F.cross_entropy(
-                logits[t:t + 1], seq_t[0, t + 1:t + 2], reduction="mean"
-            ).item())
+            with torch.no_grad():
+                out = model(batch, use_cache=False)
+                logits = out.logits                              # [B, L, V]
 
-        # CE on second occurrence, excluding first token (no match cue yet).
-        ce_second = 0.0
-        for t in range(p2_start + 1, p2_start + span_len):
-            ce_second += float(F.cross_entropy(
-                logits[t:t + 1], seq_t[0, t + 1:t + 2], reduction="mean"
-            ).item())
+            span_len = len(sub[0]["span"])
+            p1_start = sub[0]["first_span_pos"]
+            p2_start = sub[0]["second_span_pos"]
 
-        rows.append(
-            {
-                "seq_idx": idx,
-                "distance": item["distance"],
-                "ce_first": ce_first,
-                "ce_second": ce_second,
-                "induction_gain": ce_first - ce_second,
-            }
-        )
+            # CE on first span: positions [p1_start, p1_start+span_len).
+            # Predictions at positions p1_start..p1_start+span_len-1
+            # target positions p1_start+1..p1_start+span_len
+            first_logits = logits[:, p1_start:p1_start + span_len, :]   # [B, span_len, V]
+            first_labels = batch[:, p1_start + 1:p1_start + span_len + 1]  # [B, span_len]
+            ce_first_per_seq = F.cross_entropy(
+                first_logits.reshape(B * span_len, -1),
+                first_labels.reshape(-1),
+                reduction="none",
+            ).view(B, span_len).mean(dim=1)                              # [B]
 
-        if (idx + 1) % 100 == 0 or idx + 1 == n_items:
-            print(f"    arm-B seq {idx + 1}/{n_items}", flush=True)
+            # CE on second span (excl. first token, last token has no next-token label).
+            n_second = span_len - 2
+            second_logits = logits[:, p2_start + 1:p2_start + span_len - 1, :]  # [B, n_second, V]
+            second_labels = batch[:, p2_start + 2:p2_start + span_len]          # [B, n_second]
+            ce_second_per_seq = F.cross_entropy(
+                second_logits.reshape(B * n_second, -1),
+                second_labels.reshape(-1),
+                reduction="none",
+            ).view(B, n_second).mean(dim=1)                               # [B]
+
+            ce_first_list = [float(v.item()) for v in ce_first_per_seq]
+            ce_second_list = [float(v.item()) for v in ce_second_per_seq]
+
+            for i, it in enumerate(sub):
+                rows.append(
+                    {
+                        "seq_idx": it["idx"],
+                        "distance": distance,
+                        "ce_first": ce_first_list[i],
+                        "ce_second": ce_second_list[i],
+                        "induction_gain": ce_first_list[i] - ce_second_list[i],
+                    }
+                )
+
+            print(f"    arm-B d={distance} seq {g_end}/{n}", flush=True)
 
     return rows
 
@@ -479,60 +518,65 @@ def _arm_c_score_model(
 ) -> list[dict]:
     """Score one model on KV-retrieval items.
 
-    Constructs the prompt as a sequence of lines, each tokenized as:
-      <key_tok0> <key_tok1> ":" <val_tok0> <val_tok1> "\n"
-    Then the query:
-      <target_key_tok0> <target_key_tok1> ":"
-    The model must predict <val_tok0> at the position after ":".
-    We measure top-1 accuracy of the first value token and CE of the true value.
+    All items have the same length (M lines × 6 tokens + query 3 tokens),
+    so we can stack them into a straight [N, L] batch — no padding needed.
     """
     rows: list[dict] = []
     colon_id = tokenizer.encode(":", add_special_tokens=False)[0]
     newline_id = tokenizer.encode("\n", add_special_tokens=False)[0]
     n_items = len(items)
+    batch_size = ARM_C_BATCH_SIZE
 
-    for idx, item in enumerate(items):
-        # Build token sequence: M×(key0 key1 : val0 val1 \n) + key0 key1 :
+    # Pre-build all sequences as token lists (CPU, cheap).
+    all_seqs: list[list[int]] = []
+    for item in items:
         seq: list[int] = []
         for ki in range(len(item["keys"])):
             seq.extend(item["keys"][ki])
             seq.append(colon_id)
             seq.extend(item["values"][ki])
             seq.append(newline_id)
-        # Query
         seq.extend(item["target_key"])
         seq.append(colon_id)
+        all_seqs.append(seq)
 
-        seq_t = torch.tensor([seq], dtype=torch.long, device=device)
+    L = len(all_seqs[0])  # all items have the same length
+
+    for s_start in range(0, n_items, batch_size):
+        s_end = min(s_start + batch_size, n_items)
+        sub_seqs = [torch.tensor(s, dtype=torch.long) for s in all_seqs[s_start:s_end]]
+        batch = torch.stack(sub_seqs).to(device)              # [B, L]
+        B = batch.shape[0]
+
         with torch.no_grad():
-            out = model(seq_t, use_cache=False)
-            logits = out.logits[0]  # [L, V]
+            out = model(batch, use_cache=False)
+            logits = out.logits                                # [B, L, V]
 
-        # The position right after the final ":" is the prediction position.
-        predict_pos = len(seq) - 1  # last token is ":"
-        pred_logits = logits[predict_pos]  # [V]
-        true_val0 = item["target_value"][0]
+        predict_pos = L - 1  # last token is ":"
+        pred_logits = logits[:, predict_pos, :]                # [B, V]
+        true_val0_list = [item["target_value"][0] for item in items[s_start:s_end]]
+        true_val0_t = torch.tensor(true_val0_list, device=device)  # [B]
 
-        # Top-1 accuracy.
-        top1 = int(torch.argmax(pred_logits).item() == true_val0)
+        # Top-1 accuracy per item.
+        top1_per_item = (torch.argmax(pred_logits, dim=1) == true_val0_t).int()  # [B]
 
-        # CE of true value token.
-        ce = float(F.cross_entropy(
-            pred_logits.unsqueeze(0), torch.tensor([true_val0], device=device),
-            reduction="mean",
-        ).item())
+        # CE per item.
+        ce_per_item = F.cross_entropy(pred_logits, true_val0_t, reduction="none")  # [B]
 
-        rows.append(
-            {
-                "seq_idx": idx,
-                "depth": item["depth"],
-                "top1_correct": top1,
-                "ce_true_value": ce,
-            }
-        )
+        top1_list = [int(v.item()) for v in top1_per_item]
+        ce_list = [float(v.item()) for v in ce_per_item]
 
-        if (idx + 1) % 50 == 0 or idx + 1 == n_items:
-            print(f"    arm-C seq {idx + 1}/{n_items}", flush=True)
+        for i, idx in enumerate(range(s_start, s_end)):
+            rows.append(
+                {
+                    "seq_idx": idx,
+                    "depth": items[idx]["depth"],
+                    "top1_correct": top1_list[i],
+                    "ce_true_value": ce_list[i],
+                }
+            )
+
+        print(f"    arm-C seq {s_end}/{n_items}", flush=True)
 
     return rows
 
@@ -608,6 +652,54 @@ def run_kv_retrieval(
 
 
 # ---------------------------------------------------------------------------
+# Arm D — local CE-at-context helper (RS1-frozen function stays locked)
+# ---------------------------------------------------------------------------
+
+
+def _ce_at_context(
+    model: torch.nn.Module,
+    ids: torch.Tensor,
+    eval_context: int,
+    stride: int,
+    device: torch.device,
+) -> tuple[float, float, int]:
+    """Token-weighted CE at arbitrary eval_context/stride.
+
+    Unlike the RS1-frozen `token_weighted_ce_and_ppl`, this helper accepts
+    any context length and stride.  It is local to RS3 Arm D only.
+    """
+    if ids.ndim != 1:
+        raise ValueError("ids must be a 1D token tensor")
+
+    weighted_loss = 0.0
+    prediction_tokens = 0
+    model.eval()
+    with torch.no_grad():
+        for start in range(0, max(1, len(ids) - 1), stride):
+            end = min(start + eval_context, len(ids))
+            chunk = ids[start:end].unsqueeze(0).to(device)
+            if chunk.shape[1] < 2:
+                continue
+            out = model(chunk, use_cache=False)
+            logits = out.logits[:, :-1, :]
+            labels = chunk[:, 1:]
+            n = int(labels.numel())
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                labels.reshape(-1),
+                reduction="mean",
+            )
+            weighted_loss += float(loss.item()) * n
+            prediction_tokens += n
+            if end == len(ids):
+                break
+    if prediction_tokens == 0:
+        return float("nan"), float("nan"), 0
+    ce = weighted_loss / prediction_tokens
+    return ce, float(math.exp(ce)), prediction_tokens
+
+
+# ---------------------------------------------------------------------------
 # Arm D — Length behaviour CE (exploratory)
 # ---------------------------------------------------------------------------
 
@@ -640,8 +732,8 @@ def run_length_ce(
         ids = eval_ids[:max_len]
 
         for ctx in contexts:
-            ce, ppl, pred_tokens = token_weighted_ce_and_ppl(
-                lm.model, ids, eval_context=ctx, stride=ctx,
+            ce, ppl, pred_tokens = _ce_at_context(
+                lm.model, ids, eval_context=ctx, stride=ctx, device=model_device,
             )
             all_rows.append(
                 {
