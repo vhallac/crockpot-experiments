@@ -2,6 +2,85 @@
 
 Newest entries first.
 
+## 2026-07-27 — RS3 functional locus of RoPE (local-order vs. retrieval)
+
+### Question / Hypothesis
+
+C3 (behavioral): removing RoPE costs **local-order / recency acuity**, not
+**retrieval / content-addressing**. RoPE's causal contribution is local, not an address.
+
+### Experiment Design Summary
+
+Four-arm eval harness over three Qwen3-0.6B states:
+1. `qwen3` — RoPE baseline (pinned revision `c1899de289a04d12100db370d81485cdf75e47ca`)
+2. `qwen3-droped` — DroPE'd, LR=1e-3 rerun (`/workspace/qwen3-droped`)
+3. `qwen3-dropped` — untrained identity-RoPE floor
+
+Arms:
+- **A (local_scramble):** CE delta under scrambled/reversed windows w∈{2,4,8,16,32}
+  over 1M FineWeb-Edu tokens (offset 5M past RS1a's slice). Primary metric.
+- **B (induction):** synthetic repeated-span retrieval gain, d∈{64,256,512,1024,1536},
+  n_seq=256 per distance. Primary metric.
+- **C (kv_retrieval):** key–value needle retrieval, M=40 lines, n_seq=128 per depth.
+  Secondary, floor-gated.
+- **D (length_ce):** CE at contexts {1024,2048,4096,8192}. Exploratory only.
+
+All primary metrics are **within-model contrasts** computed on identical items
+(generated once, seed 0, then scored by every model).
+
+### Planned Procedure
+
+```bash
+# Stage 1: G-RS3.1 gate — verify harness reproduces known CE
+RUN_ID=rs3_behavioral_$(date -u +%Y%m%dT%H%M%SZ)
+export QWEN3_DROPED_PATH=/workspace/qwen3-droped
+
+PYTHONPATH=experiments/dead-keys ./scripts/cuda-python \
+  experiments/rope-as-scaffold/scripts/rs3_behavioral.py \
+  --task gates --models qwen3 qwen3-droped \
+  --eval-offset-tokens 0 --eval-tokens 5000000 \
+  --output-dir outputs/${RUN_ID}_gates
+
+# Stage 2-5: Four arms (run sequentially on same pod)
+for TASK in local_scramble induction kv_retrieval length_ce; do
+  PYTHONPATH=experiments/dead-keys ./scripts/cuda-python \
+    experiments/rope-as-scaffold/scripts/rs3_behavioral.py \
+    --task $TASK --models qwen3 qwen3-droped qwen3-dropped \
+    --eval-tokens 1000000 --eval-offset-tokens 5000000 \
+    --output-dir outputs/${RUN_ID}_${TASK}
+done
+```
+
+### Expected Signal / Interpretation Plan
+
+Per RS3-spec.md §4-5:
+- **P.RS3.a:** DroPE'd less order-sensitive at w∈{2,4,8} — `delta_ce_droped < delta_ce_rope`.
+- **P.RS3.b:** `induction_gain_droped ≥ induction_gain_rope` at every d.
+- **P.RS3.c:** Proportional degradation larger on local axis than retrieval axis.
+- **P.RS3.d:** State 2 (untrained) shows near-zero induction_gain, compressed delta_ce.
+
+Decision tree in §5.
+
+### Pre-run Provenance
+- Spec: `experiments/rope-as-scaffold/RS3-spec.md` (pre-registered 2026-07-27)
+- Code: `experiments/rope-as-scaffold/scripts/rs3_behavioral.py`
+- Code: `experiments/rope-as-scaffold/scripts/eval_perplexity.py` (extended with `offset_tokens`)
+- Model revisions: `qwen3`/`qwen3-dropped` at `c1899de289a04d12100db370d81485cdf75e47ca`
+- `qwen3-droped` checkpoint: `/workspace/qwen3-droped` (RS1b LR=1e-3)
+- Pre-run commit: _pending_
+- Planned output location: `outputs/rs3_behavioral_<ts>_*`
+
+### Results
+_Pending run._
+
+### Analysis
+_Pending output analysis._
+
+### Conclusion / Next Step
+_Pending._
+
+---
+
 ## 2026-07-26 — RS2.1 subspace reconstruction vs. initialization inheritance (completed)
 
 ### Question / Hypothesis

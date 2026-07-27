@@ -52,12 +52,22 @@ class PerplexityResult:
     elapsed_s: float
 
 
-def fineweb_edu_eval_ids(tokenizer, *, eval_tokens: int) -> torch.Tensor:
-    """Return the deterministic RS1 held-out eval prefix as token ids."""
+def fineweb_edu_eval_ids(tokenizer, *, eval_tokens: int, offset_tokens: int = 0) -> torch.Tensor:
+    """Return the deterministic RS1 held-out eval prefix as token ids.
+
+    When ``offset_tokens > 0``, the first ``offset_tokens`` tokens are consumed
+    and discarded; the returned slice starts immediately after them.  This keeps
+    the stream logic identical while allowing experiments to use a non-overlapping
+    slice (e.g. RS3 uses offset 5M to avoid reusing tokens RS1a already evaluated).
+    At ``offset_tokens = 0`` (default) the behaviour is byte-identical to the
+    original single-argument form, so RS1a/RS1b perplexity stays reproducible.
+    """
     from datasets import load_dataset
 
     if eval_tokens < 2:
         raise ValueError("eval_tokens must be at least 2")
+    if offset_tokens < 0:
+        raise ValueError("offset_tokens must be non-negative")
     eos_id = tokenizer.eos_token_id
     if eos_id is None:
         raise RuntimeError("RS1 FineWeb-Edu packing requires a tokenizer eos_token_id")
@@ -65,6 +75,7 @@ def fineweb_edu_eval_ids(tokenizer, *, eval_tokens: int) -> torch.Tensor:
     ds = load_dataset(DATASET_PATH, DATASET_NAME, split=DATASET_SPLIT, streaming=DATASET_STREAMING)
     chunks: list[torch.Tensor] = []
     total = 0
+    needed = offset_tokens + eval_tokens
     for row in ds:
         text = str(row.get("text") or "")
         if not text.strip():
@@ -75,9 +86,12 @@ def fineweb_edu_eval_ids(tokenizer, *, eval_tokens: int) -> torch.Tensor:
         ids = torch.cat([ids, torch.tensor([eos_id], dtype=ids.dtype)])
         chunks.append(ids)
         total += int(ids.numel())
-        if total >= eval_tokens:
-            return torch.cat(chunks)[:eval_tokens]
-    raise RuntimeError(f"FineWeb-Edu stream ended after {total} tokens; need {eval_tokens}")
+        if total >= needed:
+            break
+    if total < needed:
+        raise RuntimeError(f"FineWeb-Edu stream ended after {total} tokens; need {needed}")
+    all_ids = torch.cat(chunks)
+    return all_ids[offset_tokens:offset_tokens + eval_tokens]
 
 
 def token_weighted_ce_and_ppl(
