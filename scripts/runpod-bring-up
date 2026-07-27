@@ -17,6 +17,7 @@ Environment overrides:
   RUNPOD_NETWORK_VOLUME_ID    Network volume id. Default: et0mntsj6x.
   RUNPOD_VOLUME_MOUNT_PATH    Network volume mount path. Default: /workspace.
   RUNPOD_SSH_KEY              SSH private key. Default: ~/.ssh/id_ed25519.
+  RUNPOD_CLOUD_TYPE           Cloud type for the pod. Default: SECURE.
   RUNPOD_KEEP_ON_TIMEOUT      If 1, do not delete the newly-created pod on timeout.
 
 Example:
@@ -36,6 +37,7 @@ fi
 
 gpu_type=$1
 timeout_seconds=${RUNPOD_BRING_UP_TIMEOUT:-120}
+cloud_type=${RUNPOD_CLOUD_TYPE:-SECURE}
 template_id=${RUNPOD_TEMPLATE_ID:-1zpm2v05rn}
 network_volume_id=${RUNPOD_NETWORK_VOLUME_ID:-et0mntsj6x}
 volume_mount_path=${RUNPOD_VOLUME_MOUNT_PATH:-/workspace}
@@ -75,12 +77,13 @@ jq -n \
   --arg gpu_type "$gpu_type" \
   --arg network_volume_id "$network_volume_id" \
   --arg volume_mount_path "$volume_mount_path" \
+  --arg cloud_type "$cloud_type" \
   '{
     name: $name,
     templateId: $template_id,
     gpuTypeIds: [$gpu_type],
     gpuCount: 1,
-    cloudType: "SECURE",
+    cloudType: $cloud_type,
     networkVolumeId: $network_volume_id,
     volumeMountPath: $volume_mount_path
   }' > "$create_payload"
