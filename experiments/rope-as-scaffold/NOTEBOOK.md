@@ -67,17 +67,204 @@ Decision tree in §5.
 - Code: `experiments/rope-as-scaffold/scripts/eval_perplexity.py` (extended with `offset_tokens`)
 - Model revisions: `qwen3`/`qwen3-dropped` at `c1899de289a04d12100db370d81485cdf75e47ca`
 - `qwen3-droped` checkpoint: `/workspace/qwen3-droped` (RS1b LR=1e-3)
-- Pre-run commit: _pending_
-- Planned output location: `outputs/rs3_behavioral_<ts>_*`
+- Pre-run commit: `1f14b5a`; batching/Arm-D-crash fix `c639f75` applied before the full run
+  (first attempt on an A5000 hit the unbatched-forward slowness and Arm D crash described
+  below; both fixed and re-run, see `temp/gpu-readiness/20260727T202200Z-rs3-fixed.md`)
+- Output location: `outputs/rs3_20260727T204900Z/{local_scramble,induction,kv_retrieval,length_ce}/`
 
 ### Results
-_Pending run._
+
+All four arms completed on the RTX A5000 pod after the batching fix (~50 min total, vs. an
+extrapolated >4h for the unbatched version). Numbers below are independently recomputed from
+the per-item CSVs, not taken from the run's own summary JSONs (which do match, once checked).
+
+**Arm A — local scramble, paired per-block contrast (RoPE − DroPE'd), scramble mode:**
+
+| w | paired Δ | 95% CI | rel_delta agrees? |
+|---:|---:|---|---|
+| 2 | +0.044 | [+0.035, +0.053] | yes (droped > rope) |
+| 4 | **−0.024** | [−0.034, −0.014] | yes |
+| 8 | **−0.087** | [−0.098, −0.077] | yes |
+| 16 | −0.140 | [−0.151, −0.128] | yes |
+| 32 | −0.165 | [−0.177, −0.154] | yes |
+
+Positive = RoPE more sensitive (prediction). Only w=2 goes the predicted direction; w≥4 all
+have CIs excluding zero in the *wrong* direction. `rel_delta_ce` (delta/clean, the spec's
+normalization check) agrees with the absolute-delta sign at **every** window, not just
+w∈{2,4,8} as originally planned — no normalization ambiguity here.
+
+**Arm B — induction gain, paired per-sequence contrast (RoPE − DroPE'd):**
+
+| d | 64 | 256 | 512 | 1024 | 1536 |
+|---|---:|---:|---:|---:|---:|
+| paired Δ | +0.97 | +1.24 | +1.70 | +2.93 | +3.53 |
+| 95% CI excludes 0? | yes | yes | yes | yes | yes |
+
+RoPE's gain is flat (~12.93 nats at every distance). DroPE'd decays monotonically
+(11.97 → 9.41) as distance grows. The gap is entirely in `ce_second` (the retrieval
+readout) — `ce_first` (unpredictable-by-construction floor) is ~13.1 for both, confirming
+the contrast isolates retrieval and not some other difference between the sequences.
+
+**Arm C — KV retrieval (secondary, gate-checked):** top-1 accuracy ratio DroPE'd/RoPE ranges
+0.11 (depth 1) to 0.68 (depth 40); RoPE 0.77–0.91, DroPE'd 0.10–0.55 across depths 1–40.
+Corroborates Arm B's direction and magnitude.
+
+**Arm D — length behavior (exploratory only, per spec §2.6):** RoPE is flat across context
+(PPL 21.5–22.7 at 1024–8192). DroPE'd is flat within its 2048 recalibration context
+(PPL 17.6 @1024, 16.9 @2048) but collapses past it: PPL 51.3 @4096, 298.4 @8192. Per spec,
+this cannot itself adjudicate C3 (RoPE was pretrained at 32k, so this isn't length
+extrapolation for it), but it rules out one confusion: Arm B's induction sequences top out
+at 1600 tokens, inside DroPE'd's stable range, so the retrieval collapse in Arm B is not
+downstream of this context-length effect.
+
+**Gates:**
+- **G-RS3.1** (harness reproduces known CE) — not directly evidenced for this run; the
+  logged gate check at 18:00Z ran the pre-batching code. Arm D's own qwen3/qwen3-droped
+  ctx=2048 numbers (CE 3.0826 / 2.8263) are consistent with the frozen values (3.0819 /
+  2.826) to within the gate's tolerance, so the harness is very likely fine, but this is
+  incidental corroboration, not the pre-registered gate run against this exact code.
+- **G-RS3.2** (perturbation validity) — **recorded as FAILED for all three models** in the
+  run's own summary JSON. Decomposed by mode: **scramble is monotone non-decreasing in w for
+  all three states** (passes cleanly); **reverse is non-monotone for all three** (peaks at
+  w=4, then declines through w=32). The gate as written doesn't split by mode, so a real
+  reverse-mode anomaly sank the whole gate including the clean scramble result.
+- **G-RS3.3 / G-RS3.4** (floor checks) — passed, but trivially: thresholds (0.5 nats;
+  3×chance≈1.6e-4) are far below the observed effects (12.9 nats; 0.91 accuracy). Not
+  useful discriminators as written.
+- **Provenance regression:** all four summary JSONs record `revision: null`. The notebook's
+  planned procedure and RS1-spec §10 both pin `qwen3`/`qwen3-dropped` to
+  `c1899de289a04d12100db370d81485cdf75e47ca`; that flag was not passed on this run. Follow-up
+  below.
 
 ### Analysis
-_Pending output analysis._
+
+**P.RS3.a (local-order cost): falsified as stated.** The DroPE'd model is *more*
+order-sensitive than RoPE at w≥4, not less, with CIs excluding zero and no
+normalization-dependence to hide behind. Only the smallest window (w=2) goes the predicted
+direction, and even that is a small effect (+0.044 nats) next to the w=32 reversal (−0.165).
+
+**Reverse-mode non-monotonicity is a real, interpretable finding, not just a gate technicality.**
+All three states — including the untrained floor — peak sensitivity at w=4 and *decline*
+through w=32 under reversal. Reversal at large w preserves local (adjacent-token) structure
+better than random scramble does (only the window's two endpoints move far; the interior
+stays locally ordered relative to reversal, whereas scramble destroys it uniformly), so a
+reversal-specific peak-then-decline is mechanistically plausible. That reading is post-hoc,
+however, and the gate failure should stay visible rather than be quietly explained away —
+scramble-mode is the arm's clean primary result; reverse-mode is reported but flagged
+gate-failed.
+
+**P.RS3.b (retrieval preserved): falsified, and more decisively than P.RS3.a.** All five
+distances show CIs excluding zero in the falsifying direction, the effect grows monotonically
+with distance, and Arm C corroborates both direction and rough magnitude independently. This
+is the strongest single result in RS3.
+
+**P.RS3.c (the axis contrast): C3's own falsifier is triggered.** At the pre-registered
+anchors (w=4, d=512): `D_local = −0.006` (RoPE and DroPE'd are within noise of each other),
+`D_retrieval = +0.132` (retrieval degraded substantially, proportionally, relative to RoPE's
+own gain). Proportional retrieval loss exceeds proportional local-order loss —
+`D_retrieval > D_local` — which is precisely the falsifier RS3-spec §4 wrote down in advance
+for C3.
+
+**P.RS3.d (untrained floor): holds.** State 2 shows negative induction gain (ce_second >
+ce_first — the untrained model is actively *worse* at the retrieval position, not merely at
+zero) and heavily compressed local-order deltas relative to the other two states. The
+instruments register a known-degenerate model as degenerate, as designed.
+
+**Why this cannot yet be reported as "C3 falsified" — the confound RS3-spec §1 flagged in
+advance is live on both axes, asymmetrically:**
+- **Local axis:** §1's own bias-direction argument said the 1B-token domain-adaptation
+  confound would push the DroPE'd model toward *appearing more* order-sensitive than a
+  clean RoPE-removal effect would show — i.e. the confound biases *against* P.RS3.a. The
+  observed result (DroPE'd more sensitive) is exactly the confound's predicted direction.
+  That does not mean the result is *only* the confound — but it means "no real local-order
+  cost, fully explained by domain adaptation" and "a real local-order cost, inflated further
+  by domain adaptation" are both consistent with what was measured, and this run cannot
+  distinguish them.
+- **Retrieval axis:** §1 stated plainly that no equivalent conservative argument exists here.
+  The induction collapse could be RoPE removal, or could be catastrophic forgetting of the
+  induction circuit during narrow-domain (FineWeb-Edu-only) recalibration — a generic
+  effect of the training regime, not specifically of dropping RoPE.
+
+Both readings were anticipated in the spec (§5's decision tree, the "borderline" branch),
+but the actual outcome — **both axes falsified, with the retrieval axis falsified far more
+strongly** — is not one of the three named branches in §5 (a✓b✓, a✓b✗, a✗b✓). It is closest
+in spirit to the borderline/undecidable branch and should be treated the same way: **route
+to RS1b-ctrl before adjudicating C3**, rather than force-fitting it into a branch that
+assumed at least one axis would hold.
+
+**A mechanistic hypothesis worth stating, not yet tested:** induction copying requires
+attending to "the token after my last match" — a relative-offset operation RoPE supplies
+natively via its rotation structure. If DroPE'd's emergent position (C1/C2's finding) encodes
+*absolute* position well but reconstructs RoPE's *relative-offset* affordance only
+weakly — plausible, since RS2/RS2.1's reconstruction was strongest in early-mid layers and
+the induction mechanism is typically attributed to specific mid-to-late attention
+heads — that would explain retrieval collapse *without* contradicting C1/C2's "position fills
+in and partially reconstructs RoPE's code" or E2's "position is not itself the retrieval
+address." It would reframe C3 (retrieval depends on RoPE only *through* a positional
+primitive it fails to fully reconstruct) rather than simply falsify the program's account.
+This is a hypothesis for a future RS3.x/RS4 arm, not a claim this run supports.
 
 ### Conclusion / Next Step
-_Pending._
+
+**No C3 verdict yet.** RS3's instruments and paired-contrast design worked as intended —
+clean gates on the primary scramble-mode Arm A metric, a decisive and internally-corroborated
+Arm B/C result, and a diagnostic Arm D that rules out one alternative explanation — but the
+result (both axes degrade, retrieval much more than local order) lands on exactly the
+confounded case RS3-spec §1 and §5 pre-registered a hold for. Reporting "C3 falsified" now
+would mean overriding my own pre-registered caution the moment the data made it inconvenient.
+
+**Required before adjudicating C3:** run **RS1b-ctrl**
+([RS1-spec §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control)) —
+recalibrate a copy of unmodified RoPE Qwen3-0.6B on the identical FineWeb-Edu
+corpus/recipe/token-budget as `qwen3-droped`, then re-run RS3 Arms A/B against that model
+instead of the raw pretrained RoPE baseline. This isolates domain-adaptation effects from
+RoPE-removal effects on both axes at once. Cost: ~7h H100 (cf. RS1b) plus a cheap RS3 re-run
+(~1h given the now-batched harness).
+
+**Two follow-ups outside the RS1b-ctrl gate, not blocking it:**
+1. **Provenance regression** — re-run (or at minimum, verify after the fact) with the pinned
+   revision `c1899de289a04d12100db370d81485cdf75e47ca` passed explicitly. `--revision` exists
+   as a CLI flag; the pre-planned command in this entry's Planned Procedure never sets it, and
+   neither did the actual invocation.
+   **How the pin was lost (as reported by the implementing session, not independently verified
+   by inspecting its tool-call log directly):** the gate check and first launch attempt did
+   pass `--revision c1899de2…`; the relaunch after fixing a `QWEN3_DROPED_PATH` env-var bug
+   rebuilt its command from an inline script that dropped the `--revision` flag, so all three
+   models in the run that actually produced this entry's data loaded with `revision=None`
+   (→ `main`). Consistent with independently-observed local evidence: the monitor logs
+   (`temp/rs3-monitor-20260727T204052Z.txt`) show a string of `QWEN3_DROPED_PATH` `ValueError`s
+   from a failed earlier attempt, and every summary JSON from the final run records
+   `revision: null` — both facts check out against this account, though the account itself
+   (which specific launch used which flag) is relayed, not directly verified here.
+   **Recovered value — best-effort, not a direct verification:** queried the live Hugging Face
+   API for `Qwen/Qwen3-0.6B` — `main` currently resolves to
+   `c1899de289a04d12100db370d81485cdf75e47ca`, the exact pinned SHA, last modified 2025-07-26
+   with no newer commits since. A same-day run against an unpinned `main` on a stable,
+   already-released model should resolve to this same commit. **Caveat, still open:** this was
+   not confirmed against the pod's own HF cache snapshot, which would be dispositive — the pod
+   (`nci2dn93kj36vr`, RTX A5000, no persistent network volume — all state including the HF
+   cache lived on that specific host's local container disk) went `EXITED` after the run and
+   its host had no free GPU capacity to restart on 8 repeated attempts over ~4 minutes
+   (`runpodctl pod start` failing with "not enough free GPUs on the host machine"), so the
+   actual cached snapshot hash could not be read. Residual risk: if the pod's HF cache reused a
+   stale local snapshot instead of checking `main` fresh, the effective revision could differ.
+   **Adopted value for this entry: `c1899de289a04d12100db370d81485cdf75e47ca`, high-confidence
+   but not certain.** Re-verify directly (pod cache, or an explicit `--revision`-pinned re-run)
+   before treating this as settled provenance.
+   **Separate, pre-existing gap, not new to RS3:** the FineWeb-Edu corpus
+   (`HuggingFaceFW/fineweb-edu`, `sample-10BT`) has never been revision-pinned at any point in
+   this program — RS1-spec §10 pins the model SHAs `[MUST]` but only pins the dataset's
+   name/config/split, not a commit. Not a regression; worth fixing whenever §10 is next revised.
+2. **G-RS3.2 gate logic** should split by mode (`scramble` vs `reverse`) rather than failing
+   the whole gate on one mode's non-monotonicity — the reverse-mode finding is informative,
+   not a defect, and shouldn't silently mask the clean scramble-mode pass. Fix before RS4
+   reuses this pattern.
+
+**Arm D's context-collapse finding** (PPL 298 at 8192, 17x the in-context value) is
+independently interesting for the DroPE recipe itself, separate from the C3 question — a 1B
+token / 2048-context recalibration does not confer any length robustness past the
+recalibration window. Worth a line in any future write-up of the DroPE recipe's limitations,
+regardless of how C3 resolves.
 
 ---
 
