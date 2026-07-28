@@ -2,6 +2,80 @@
 
 Newest entries first.
 
+## 2026-07-28 — RS-amendment-2-3: RoPE-recalibrated control (amends RS2 and RS3)
+
+### Question / Hypothesis
+
+Every RoPE-vs-DroPE'd comparison in this program so far compares `qwen3` (zero extra training)
+against `qwen3-droped` (~1B extra FineWeb-Edu tokens), confounding **RoPE removed** with
+**received extra in-domain training**. RS3 made this blocking: both of its primary predictions
+falsified in ways that confound cannot rule out (P.RS3.a falsified in exactly the direction
+RS3-spec §1 said the confound would push it; P.RS3.b falsified with no conservative argument
+available at all).
+
+This experiment trains `qwen3-rope-recal` — the identical recalibration recipe with **RoPE left
+active** — so the two trained arms differ only in RoPE, then re-runs the affected analyses.
+
+Full pre-registration: [`RS-amendment-2-3.md`](RS-amendment-2-3.md) (arms, gates, predictions,
+decision matrix); recipe of record: [RS1-spec §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control).
+
+### Experiment Design Summary
+
+**Stage 0 (artifact generation):** train `qwen3-rope-recal` from
+`Qwen/Qwen3-0.6B` @ `c1899de289a04d12100db370d81485cdf75e47ca`, identical corpus/seed/streaming
+order/token budget/LR schedule to `qwen3-droped`, with `set_qwen_rotary_identity` **skipped**.
+
+**Three analysis arms off that one checkpoint:**
+- **Arm 1 (required):** RS3 Arms A (local_scramble) + B (induction) re-run.
+- **Arm 2 (recommended):** M1.5 on the control, then `c2_subspace_overlap.py`.
+- **Arm 3 (near-free):** frozen perplexity + M1.6 on the control.
+
+### Planned Procedure
+
+```bash
+# Stage 0: train the control (~7h, H100 SXM)
+export QWEN3_ROPE_RECAL_PATH=/workspace/qwen3-rope-recal
+PYTHONPATH=experiments/dead-keys ./scripts/cuda-python --i-declare-gpu-readiness-pass \
+  experiments/rope-as-scaffold/scripts/train_qwen3_nope.py \
+  --base-model Qwen/Qwen3-0.6B \
+  --revision c1899de289a04d12100db370d81485cdf75e47ca \
+  --no-rotary-patch \
+  --train-tokens 1000000000 --train-context 2048 --lr 1e-3 --seed 0 \
+  --cache-dir /workspace/rs1b-token-cache \
+  --output-dir /workspace/qwen3-rope-recal
+
+# (analysis arms follow after training — see checklist)
+```
+
+### Expected Signal / Interpretation Plan
+
+Per `RS-amendment-2-3.md` §4–5. C3 verdict follows §5's 4-cell decision matrix.
+
+### Pre-run Provenance
+- Plan: `experiments/rope-as-scaffold/RS-amendment-2-3.md` (pre-registered 2026-07-28)
+- Recipe of record: `RS1-spec.md` §11
+- Code: `scripts/train_qwen3_nope.py` (+ `--no-rotary-patch`, `rope_active_probe`)
+- Code: `deadkeys/common/loading.py` (+ `qwen3-rope-recal` tag, excluded from `DROPPED_ROPE_TAGS`)
+- Code: `scripts/rs3_behavioral.py` (+ G-RS3.2 per-mode gate fix)
+- Base model: `Qwen/Qwen3-0.6B` @ `c1899de289a04d12100db370d81485cdf75e47ca`
+- Token cache reused from RS1b: `/workspace/rs1b-token-cache/`
+- Comparison checkpoint: `qwen3-droped` at `/workspace/qwen3-droped` (RS1b LR=1e-3)
+- GPU readiness report: `temp/gpu-readiness/20260728T160037Z-rs-amd23.md` — **GO**
+- GPU: H100 SXM (pod `jn1bvsu2vxwdnw`, NE-1)
+- Pre-run commit: _pending_
+- Planned output location: `outputs/rs_amd23_*`
+
+### Results
+_Pending run._
+
+### Analysis
+_Pending output analysis._
+
+### Conclusion / Next Step
+_Pending. On completion, this entry's verdict must be back-propagated to the 2026-07-27 RS3 entry._
+
+---
+
 ## 2026-07-27 — RS3 functional locus of RoPE (local-order vs. retrieval)
 
 ### Question / Hypothesis
