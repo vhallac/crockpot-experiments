@@ -99,6 +99,7 @@ without it, reconsider whether the note is worth writing. Full landscape in
 | RS2 | C2 | emergent-vs-RoPE positional subspace overlap on the RS1 checkpoints | analysis-only |
 | RS2.1 ([spec](RS2.1-spec.md)) | C2 (correction) | external review (`temp/rs2-critiqe.md`) found RS2 didn't control for initialization inheritance — the DroPE'd model started from RoPE's own weights, so subspace overlap could reflect that rather than reconstruction. Re-tests with an untrained-dropped zero-shot control and a `k_pre`-residual test | analysis-only |
 | RS3 ([spec](RS3-spec.md)) | C3 | task/perplexity ablations along a local-order axis (within-window scramble ΔCE) vs a retrieval axis (induction gain, KV needle), RoPE vs DroPE'd. All primary metrics are *within-model* contrasts, because the DroPE'd model's 1B extra FineWeb-Edu tokens make cross-model absolute scores uninterpretable | eval harness (~1.5h GPU inference, no training) |
+| **RS1b-ctrl** ([spec](RS1b-ctrl-spec.md) · [recipe: RS1-spec §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control)) | unblocks C3, strengthens C2, closes C1 confound | every RoPE-vs-DroPE'd comparison so far pits `qwen3` (zero extra training) against `qwen3-droped` (~1B extra tokens), confounding "RoPE removed" with "extra in-domain training". Trains `qwen3-rope-recal` (identical corpus/seed/budget, RoPE left **on**) so the two trained arms differ only in RoPE, then re-runs RS3 Arms A/B against it | **~$25–30**, one pod session (~12.5h training + cheap probes) |
 | RS4 | C4 | E1/E2 spot-check on one >0.6B model | GPU |
 
 RS1 is the load-bearing one: it converts the DroPE connection from *citation* to *result*.
@@ -138,18 +139,6 @@ probing phase that consumes the resulting checkpoint (M1.5/M1.6/perplexity/C2) i
 `NOTEBOOK.md`-tracked run.
 
 ### Candidate extensions (unscoped)
-
-- **RS1b-ctrl — RoPE-recalibrated confound control (pre-registered, activated).** The original
-  RoPE-vs-DroPE'd comparisons (RS1b, RS3) confound two things: RoPE removed, and receiving extra
-  domain-specific training the untouched baseline never got. Fix: recalibrate a copy of the
-  *unmodified RoPE* Qwen3-0.6B on the identical corpus/recipe/token budget/seed (RoPE stays on;
-  skip the identity patch) and compare against that instead of the raw pretrained baseline. Full
-  pre-registration, predictions, and falsifiers in
-  [RS1-spec.md §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control).
-  **Status:** deferred as optional for RS1b (its results landed crisp without it), then
-  **reactivated as required for RS3** — RS3's C3 verdict (local-order vs. retrieval) is currently
-  blocked on this control, since both of RS3's primary predictions falsified in a way the
-  confound cannot rule out. Not optional until RS3 Arms A/B are re-run against `qwen3-rope-recal`.
 
 - **RoPE as a training warmup for NoPE (proposed).** Instead of dropping RoPE from a fully
   RoPE-pretrained model (RS1), use RoPE only as an *early scaffold* for an otherwise-NoPE run:

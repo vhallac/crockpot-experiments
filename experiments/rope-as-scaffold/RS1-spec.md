@@ -489,6 +489,12 @@ deferral, this is not resolvable by re-reading existing evidence — RS3's own f
 adaptation artifact." The control is now load-bearing for C3, and this section's deferred status
 no longer applies to that use.
 
+**Analysis arms, gates, predictions, and the C3 decision matrix are pre-registered separately in
+[`RS1b-ctrl-spec.md`](RS1b-ctrl-spec.md)** (2026-07-28). This section remains the pre-registration
+of record for the *recipe* and the original P.RS1.ctrl.a/b; that spec scopes what consumes the
+checkpoint. Note it restates P.RS1.ctrl.a (as P.ctrl.d) in light of state 3 having reached
+PPL 16.88 — *better* than the untrained baseline — which inverts the prediction's original framing.
+
 **Scope for the RS3 reactivation — narrower than the original §11 design:**
 - **Train** `qwen3-rope-recal` exactly as specified above (identical corpus, seed, streaming
   order, token budget, LR/schedule/optimizer/seed as `qwen3-droped`; `set_qwen_rotary_identity`
