@@ -19,6 +19,7 @@ Environment overrides:
   RUNPOD_SSH_KEY              SSH private key. Default: ~/.ssh/id_ed25519.
   RUNPOD_CLOUD_TYPE           Cloud type for the pod. Default: SECURE.
   RUNPOD_KEEP_ON_TIMEOUT      If 1, do not delete the newly-created pod on timeout.
+  RUNPOD_SKIP_GPU_READINESS_CHECK  If 1, skip the GPU readiness report gate.
 
 Example:
   scripts/runpod-bring-up "NVIDIA L4"
@@ -67,6 +68,44 @@ fi
 if [[ ! -r "$ssh_key" ]]; then
   echo "ERROR: SSH key is not readable: $ssh_key" >&2
   exit 2
+fi
+
+# --- GPU readiness gate ---
+if [[ "${RUNPOD_SKIP_GPU_READINESS_CHECK:-0}" != "1" ]]; then
+  script_dir=$(cd "$(dirname "$0")" && pwd)
+  repo_root=$(cd "$script_dir/.." && pwd)
+  readiness_dir="$repo_root/temp/gpu-readiness"
+  gate_deadline_epoch=$(date -d '10 minutes ago' +%s)
+
+  newest_ts=0
+  newest_file=""
+  if [[ -d "$readiness_dir" ]]; then
+    while IFS= read -r -d '' filepath; do
+      filename=$(basename "$filepath")
+      # Extract YYYYMMDDTHHMMSSZ prefix from match on first 16 chars
+      if [[ "$filename" =~ ^([0-9]{8}T[0-9]{6}Z) ]]; then
+        ts_str="${BASH_REMATCH[1]}"
+        ts_epoch=$(date -d "${ts_str:0:8} ${ts_str:9:2}:${ts_str:11:2}:${ts_str:13:2}" +%s 2>/dev/null) || continue
+        if [[ $ts_epoch -gt $newest_ts ]]; then
+          newest_ts=$ts_epoch
+          newest_file=$filepath
+        fi
+      fi
+    done < <(find "$readiness_dir" -maxdepth 1 -name '*.md' -print0)
+  fi
+
+  if [[ $newest_ts -lt $gate_deadline_epoch ]]; then
+    echo "ERROR: GPU readiness gate — no report found in last 10 minutes" >&2
+    echo "  Directory: $readiness_dir" >&2
+    if [[ -n "$newest_file" ]]; then
+      echo "  Newest report: $newest_file ($(date -d @$newest_ts '+%Y-%m-%dT%H:%M:%SZ'))" >&2
+    else
+      echo "  No readiness reports found in $readiness_dir" >&2
+    fi
+    echo "  Create a report under temp/gpu-readiness/ or set RUNPOD_SKIP_GPU_READINESS_CHECK=1" >&2
+    exit 3
+  fi
+  echo "GPU readiness gate: newest report $(basename "$newest_file") ($(date -d @$newest_ts '+%Y-%m-%dT%H:%M:%SZ')) — OK" >&2
 fi
 
 create_payload=$(mktemp)

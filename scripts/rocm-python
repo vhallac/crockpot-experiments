@@ -8,4 +8,37 @@ export HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-11.0.0}"
 # Enable PyTorch's experimental ROCm AOTriton attention kernels on this GPU.
 export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="${TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL:-1}"
 
+# --- GPU readiness soft gate ---
+HAS_DECLARATION=0
+FILTERED_ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--i-declare-gpu-readiness-pass" ]]; then
+    HAS_DECLARATION=1
+  else
+    FILTERED_ARGS+=("$arg")
+  fi
+done
+set -- "${FILTERED_ARGS[@]}"
+
+if [[ "$HAS_DECLARATION" -eq 0 ]]; then
+  cat >&2 <<'SOFTGATE_EOF'
+GPU readiness declaration required.
+
+This script runs GPU-accelerated Python code that may incur costs or produce
+invalid results if GPU readiness has not been verified. Before running:
+
+1. Create a GPU readiness report:
+     temp/gpu-readiness/<YYYYMMDDTHHMMSSZ>-<slug>.md
+
+2. The report must cover: CUDA hot-path review, vectorization assessment,
+   progress-reporting assessment, and a tripwire run.
+
+3. See AGENTS.md "RunPod GPU readiness report" section for the full checklist.
+
+If you have completed the review, rerun with:
+  --i-declare-gpu-readiness-pass
+SOFTGATE_EOF
+  exit 4
+fi
+# --- end GPU readiness soft gate ---
 exec uv run python "$@"
