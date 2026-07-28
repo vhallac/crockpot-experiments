@@ -82,8 +82,8 @@ def _bootstrap_ci(
 
 
 ARM_A_BATCH_SIZE = 4   # 2048-token blocks — memory-bound; keep small
-ARM_B_BATCH_SIZE = 16  # up to ~1600-token items — moderate
-ARM_C_BATCH_SIZE = 32  # 243-token items — short, can fill
+ARM_B_BATCH_SIZE = 4   # up to ~1600-token items — OOM at 16 on 24GB A5000 (logits [16,1600,V]=15.5GB)
+ARM_C_BATCH_SIZE = 16  # 243-token items — reduced from 32 as precaution on 24GB
 
 
 def _ce_batched(
