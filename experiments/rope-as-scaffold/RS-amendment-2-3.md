@@ -226,16 +226,25 @@ would be needed next (independent-init control, or a matched-domain corpus).
 
 | stage | compute | est. |
 |---|---|---|
-| Stage 0 — training | 1× A100 / H100 / H200 SXM — see GPU note below | ~12.5h, **~$20** |
+| Stage 0 — training | 1× H100 SXM (see GPU note) | **~7h** (measured, see below) |
 | Arm 2 prereq — M1.5 probe | same pod | ~0.5–1h |
 | Arm 3 — perplexity + M1.6 | same pod | ~1h |
 | Arm 1 — RS3 A/B (+C) | same pod, batched harness | ~1h |
 | Arm 2 — subspace analysis | CPU-only | minutes |
 
-**Total ≈ $25–30**, one pod session. Do all GPU work in a single booting of the pod — the
-checkpoint is the expensive artifact, and every downstream probe is cheap by comparison. Produce a
-GPU readiness report before launching (AGENTS.md), and publish the checkpoint + outputs per the
-reproducible-research flow.
+**Training-time reference (corrected 2026-07-28).** The recipe this control replicates — RS1b's
+**LR-corrected** rerun, 1B tokens at LR 1e-3 — ran in **25,173s ≈ 7.0h on H100 SXM at ~39,700
+tok/s** (`NOTEBOOK.md`, RS1b LR-corrected entry). RS1-spec §11's "~12.5h" figure predates that run
+and refers to RS1b **v1** on A100; do not use it as the H100 budget. At $2.99/h that is **≈$21**
+for Stage 0, **≈$30 total** with the probe arms.
+
+**This matters for the readiness gate:** AGENTS.md's hard gate is "do not start the full paid run
+if extrapolated wall-clock exceeds the planned budget." Budget the tripwire against **7h on
+H100**, not 12.5h — a 12.5h budget would let a ~1.8× slowdown pass unnoticed.
+
+Do all GPU work in a single booting of the pod — the checkpoint is the expensive artifact, and
+every downstream probe is cheap by comparison. Produce a GPU readiness report before launching
+(AGENTS.md), and publish the checkpoint + outputs per the reproducible-research flow.
 
 **GPU note — by card, not by architecture family** (the family names are easy to mis-map):
 
@@ -244,9 +253,19 @@ reproducible-research flow.
 | **Safe** | A100 (Ampere), **H100 and H200** (both Hopper, CC 9.0), A5000/A6000, L40S, RTX 4090 | flash-attention supported |
 | **Avoid** | B100, B200, GB200, RTX 5090, RTX PRO 6000 Blackwell | Blackwell; flash-attention unsupported (Dao-AILab/flash-attention#1987) |
 
-**H200 is Hopper, not Blackwell** — same GH100 die as H100, just HBM3e and 141GB instead of 80GB.
-It is safe, but buys nothing here: a 0.6B model at 2048 context is nowhere near memory-bound, so
-prefer whichever of A100/H100/H200 is cheapest and available rather than paying an H200 premium.
+**H200 is Hopper, not Blackwell** — same GH100 die as H100. Critically, **H200 has identical
+compute to H100**: same 132 SMs, same ~989 TFLOPS dense BF16. The upgrade is memory only —
+141GB HBM3e @ 4.8 TB/s vs. 80GB HBM3 @ 3.35 TB/s. H200 is therefore the right pick when you are
+**capacity-bound** (model/batch won't fit in 80GB) or **bandwidth-bound** (e.g. inference decode),
+and never for extra FLOPs.
+
+**Verdict for this run: use H100.** Stage 0 is compute-bound training of a 0.6B model whose
+weights are ~1.2GB in bf16 — nowhere near capacity-bound. Some of the step *is* bandwidth-sensitive
+(the lm_head produces a ~5GB logits tensor at 8×2048 tokens against a 151,936 vocab), so H200's
++43% bandwidth may buy a modest single-digit-to-low-teens percentage, but it cannot approach the
++47% price delta ($4.39 vs $2.99/h) when the FLOPs are identical. Concretely: ~$21 on H100 vs
+~$31 on H200 for the same ~7h of work. Take H200 only if H100 is unavailable and waiting costs
+more than the ~$10 difference.
 
 ---
 

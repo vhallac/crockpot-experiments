@@ -446,8 +446,11 @@ the same extra training on the same data" constant across the comparison that ma
 - RS1b's results are borderline / ambiguous on any of P.RS1.a/b/c → running this control becomes
   necessary before making any causal claim in a write-up.
 
-**Cost/schedule.** Identical shape to RS1b (§8): single-GPU, few-hour run. Measured directly during
-RS1b itself: ~12.5h, ~$18–20 on either **A100 or H100 SXM** — both Ampere/Hopper-class and
+**Cost/schedule.** Identical shape to RS1b (§8): single-GPU, few-hour run. **Corrected 2026-07-28:**
+the ~12.5h figure below was RS1b **v1** on A100; the LR-corrected rerun this control actually
+replicates took **7.0h on H100 SXM** (25,173s, ~39,700 tok/s — `NOTEBOOK.md`), ≈$21 at $2.99/h.
+Budget against 7h on H100, not 12.5h. Historical figure retained for context:
+~12.5h, ~$18–20 on either **A100 or H100 SXM** — both Ampere/Hopper-class and
 confirmed flash-attention-compatible, and priced within ~$1–2/run of each other at these
 durations, so pick whichever is available rather than treating A100 as the pinned choice; avoid
 Blackwell GPUs (RTX PRO 6000/RTX 5090/B200 — see the RS1b training note's GPU-selection history).
