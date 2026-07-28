@@ -400,9 +400,12 @@ apples-to-apples. This is a probe-stimulus length and is independent of the two 
 
 ## 11. Addendum (2026-07-24): RS1b-ctrl — RoPE-recalibrated confound control
 
-**Status:** **deferred (2026-07-26)**, not cancelled. Pre-registered, not run. Raised during
-RS1b's actual execution (mid-run methodological review), not part of the original §§0–10 design.
-See the deferral decision at the end of this section for why.
+**Status:** **activated (2026-07-28)** — required, not optional. Pre-registered, not yet run.
+Raised during RS1b's actual execution (mid-run methodological review), not part of the original
+§§0–10 design. Deferred on 2026-07-26 when RS1b's own results landed crisp (see the deferral
+decision below, kept for record); reactivated when RS3 hit exactly the confound this control
+exists to close — see "Reactivation" below. The original RS1b motivation is still optional; the
+new RS3 motivation is not.
 
 **The concern.** RS1's C1 claim rests on comparing **state 1** (original RoPE checkpoint, zero
 additional training) against **state 3** (DroPE'd, recalibrated on ~1–2B FineWeb-Edu tokens — see
@@ -444,9 +447,14 @@ the same extra training on the same data" constant across the comparison that ma
   necessary before making any causal claim in a write-up.
 
 **Cost/schedule.** Identical shape to RS1b (§8): single-GPU, few-hour run. Measured directly during
-RS1b itself on A100 SXM: ~12.5h, ~$18–19 (flash-attention confirmed working on Ampere/Hopper; avoid
-Blackwell GPUs — see the RS1b training note's GPU-selection history). No new engineering: the RS1b
-training script with the rotary-identity patch left disabled is a one-flag change, not a new script.
+RS1b itself: ~12.5h, ~$18–20 on either **A100 or H100 SXM** — both Ampere/Hopper-class and
+confirmed flash-attention-compatible, and priced within ~$1–2/run of each other at these
+durations, so pick whichever is available rather than treating A100 as the pinned choice; avoid
+Blackwell GPUs (RTX PRO 6000/RTX 5090/B200 — see the RS1b training note's GPU-selection history).
+No new engineering: the RS1b training script with the rotary-identity patch left disabled is a
+one-flag change, not a new script. **This time, pass `--revision` explicitly** for both `qwen3`
+(base checkpoint) and the FineWeb-Edu load — RS3's relaunch silently dropped the model revision
+pin (`NOTEBOOK.md`, 2026-07-27 RS3 entry, "Provenance regression"); don't repeat it here.
 
 **Deferral decision (2026-07-26).** RS1b's LR-corrected rerun (peak LR 1e-3, see `RS1-spec.md`
 §10.C revision and `NOTEBOOK.md`'s 2026-07-25 "RS1b LR-corrected rerun" entry) landed crisp, not
@@ -468,3 +476,29 @@ indistinguishable from RoPE" rather than "slightly better." RS1b-ctrl is exactly
 this up — but it's a refinement of an already-positive result, not a requirement for the addressing-
 recovery question this program is currently scoped to. Revisit if a stronger causal claim (e.g. for
 publication) is needed later; not currently planned.
+
+**Reactivation (2026-07-28) — RS3, not RS1b, now needs this control.** RS3 (`RS3-spec.md`, C3:
+local-order vs. retrieval) ran the same confounded comparison this section was written to close —
+`qwen3` (zero extra training) vs. `qwen3-droped` (~1B extra FineWeb-Edu tokens) — and both primary
+predictions came back falsified in a way the confound cannot rule out: P.RS3.a (local-order cost)
+falsified in the *exact direction* this section's own bias-direction argument said the confound
+would push it, and P.RS3.b (retrieval preserved) falsified with no equivalent conservative
+argument available at all (`NOTEBOOK.md`, 2026-07-27 RS3 entry, Analysis). Unlike the RS1b
+deferral, this is not resolvable by re-reading existing evidence — RS3's own falsifier
+(`D_retrieval > D_local`) triggered on data that cannot distinguish "real cost" from "domain-
+adaptation artifact." The control is now load-bearing for C3, and this section's deferred status
+no longer applies to that use.
+
+**Scope for the RS3 reactivation — narrower than the original §11 design:**
+- **Train** `qwen3-rope-recal` exactly as specified above (identical corpus, seed, streaming
+  order, token budget, LR/schedule/optimizer/seed as `qwen3-droped`; `set_qwen_rotary_identity`
+  skipped) — this part is unchanged from the original design.
+- **Re-run RS3 Arms A and B only** (local_scramble, induction — the two arms carrying the
+  confound) against `qwen3-rope-recal` in place of raw `qwen3`, i.e. the paired contrast becomes
+  `qwen3-rope-recal` (extra-trained, RoPE-on) vs. `qwen3-droped` (extra-trained, RoPE-off). Arm C
+  (kv_retrieval) is an optional cheap third corroboration, not required. Arm D (length_ce) is not
+  fixed by this control — its confound is pretrain-context (32k) vs. recalibration-context (2048),
+  which `qwen3-rope-recal` shares with `qwen3-droped`, not resolved by it.
+- The original P.RS1.ctrl.a/b predictions (perplexity recovery, M1.5/M1.6 profile) remain
+  available as a free bonus once the checkpoint exists — probing it costs little relative to the
+  training run — but are not the reason this is being run now.

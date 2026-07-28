@@ -139,15 +139,17 @@ probing phase that consumes the resulting checkpoint (M1.5/M1.6/perplexity/C2) i
 
 ### Candidate extensions (unscoped)
 
-- **RS1b-ctrl — RoPE-recalibrated confound control (pre-registered).** RS1b compares the original
-  RoPE checkpoint (zero extra training) against the DroPE'd checkpoint (~1–2B extra FineWeb-Edu
-  tokens) — a confound, since any observed difference could reflect RoPE removal *or* just extra
-  training. Fix: recalibrate a copy of the *unmodified RoPE* Qwen3-0.6B on the identical
-  corpus/recipe (RoPE stays on; skip the identity patch) and compare against that instead. Full
+- **RS1b-ctrl — RoPE-recalibrated confound control (pre-registered, activated).** The original
+  RoPE-vs-DroPE'd comparisons (RS1b, RS3) confound two things: RoPE removed, and receiving extra
+  domain-specific training the untouched baseline never got. Fix: recalibrate a copy of the
+  *unmodified RoPE* Qwen3-0.6B on the identical corpus/recipe/token budget/seed (RoPE stays on;
+  skip the identity patch) and compare against that instead of the raw pretrained baseline. Full
   pre-registration, predictions, and falsifiers in
   [RS1-spec.md §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control).
-  **Gated on RS1b's own results** (§11): optional if RS1b lands crisp and wide-margin, necessary if
-  borderline — do not run blindly.
+  **Status:** deferred as optional for RS1b (its results landed crisp without it), then
+  **reactivated as required for RS3** — RS3's C3 verdict (local-order vs. retrieval) is currently
+  blocked on this control, since both of RS3's primary predictions falsified in a way the
+  confound cannot rule out. Not optional until RS3 Arms A/B are re-run against `qwen3-rope-recal`.
 
 - **RoPE as a training warmup for NoPE (proposed).** Instead of dropping RoPE from a fully
   RoPE-pretrained model (RS1), use RoPE only as an *early scaffold* for an otherwise-NoPE run:
