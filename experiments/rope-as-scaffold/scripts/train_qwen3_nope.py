@@ -99,6 +99,27 @@ def rotary_identity_probe(model: torch.nn.Module, device: torch.device, *, seq_l
     }
 
 
+def rope_active_probe(model: torch.nn.Module, device: torch.device, *, seq_len: int) -> dict[str, float | bool]:
+    """Verify RoPE is genuinely active (cos ≠ 1, sin ≠ 0).
+
+    Inverse of `rotary_identity_probe` — used when --no-rotary-patch is set
+    to confirm the control model actually sees real rotary embeddings.
+    """
+    input_ids = torch.arange(seq_len, device=device, dtype=torch.long).unsqueeze(0)
+    pos = torch.arange(seq_len, device=device, dtype=torch.long).unsqueeze(0)
+    emb = model.model.embed_tokens(input_ids)
+    cos, sin = model.model.rotary_emb(emb, pos)
+    cos_max_dev = float((cos - 1).abs().max().item())
+    sin_max = float(sin.abs().max().item())
+    # The identity patch would give cos=1, sin=0; a real RoPE deviates.
+    rope_active = cos_max_dev > 0.0 or sin_max > 0.0
+    return {
+        "rope_cos_max_abs_deviation_from_identity": cos_max_dev,
+        "rope_sin_max_abs": sin_max,
+        "pass": rope_active,
+    }
+
+
 def build_or_reuse_token_cache(tokenizer, cache_dir: Path, *, eval_tokens: int, train_tokens: int) -> tuple[Path, Path]:
     from datasets import load_dataset
 
@@ -249,6 +270,9 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--checkpoint-every", type=int, default=500)
     parser.add_argument("--resume-from", type=Path, default=None)
+    parser.add_argument("--no-rotary-patch", action="store_true", default=False,
+                        help="Train with real RoPE (control), not identity. Skips identity patch "
+                             "and runs inverted probe to verify RoPE is active.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
@@ -263,13 +287,20 @@ def main() -> None:
     rev_kw = {"revision": base_sha}
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, **rev_kw)
     model = AutoModelForCausalLM.from_pretrained(args.base_model, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, **rev_kw)
-    set_qwen_rotary_identity(model, enabled=True)
+    rotary_patch_applied = not args.no_rotary_patch
+    if rotary_patch_applied:
+        set_qwen_rotary_identity(model, enabled=True)
     model.to(device)
     model.train()
 
-    probe = rotary_identity_probe(model, device, seq_len=min(args.train_context, 32))
-    if not probe["pass"]:
-        raise RuntimeError(f"rotary identity probe failed: {probe}")
+    if rotary_patch_applied:
+        probe = rotary_identity_probe(model, device, seq_len=min(args.train_context, 32))
+        if not probe["pass"]:
+            raise RuntimeError(f"rotary identity probe failed: {probe}")
+    else:
+        probe = rope_active_probe(model, device, seq_len=min(args.train_context, 32))
+        if not probe["pass"]:
+            raise RuntimeError(f"rope active probe failed — RoPE does not appear active: {probe}")
 
     eval_path, train_path = build_or_reuse_token_cache(tokenizer, args.cache_dir, eval_tokens=args.eval_tokens, train_tokens=args.train_tokens)
     train_blocks = args.train_tokens // args.train_context
@@ -356,7 +387,8 @@ def main() -> None:
         "created_at": utc_now(),
         "output_dir": str(args.output_dir),
         "token_cache": {"eval_path": str(eval_path), "train_path": str(train_path)},
-        "rotary_identity_probe": probe,
+        "rotary_patch_applied": rotary_patch_applied,
+        "rotary_probe": probe,
         "config": asdict(config),
         "total_steps": total_steps,
         "grad_accumulation_steps": grad_accum,

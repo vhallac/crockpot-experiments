@@ -22,10 +22,11 @@ MODEL_IDS = {
     "qwen3": "Qwen/Qwen3-0.6B",
     "qwen3-dropped": "Qwen/Qwen3-0.6B",
     "qwen3-droped": "Qwen/Qwen3-0.6B",
+    "qwen3-rope-recal": "Qwen/Qwen3-0.6B",
     "nope-gpt-small": "andrewdalpino/NoPE-GPT-Small-Base",
 }
 
-QWEN_LIKE_TAGS = {"qwen25", "qwen3", "qwen3-dropped", "qwen3-droped", "openllama7"}
+QWEN_LIKE_TAGS = {"qwen25", "qwen3", "qwen3-dropped", "qwen3-droped", "qwen3-rope-recal", "openllama7"}
 DROPPED_ROPE_TAGS = {"qwen3-dropped", "qwen3-droped"}
 
 
@@ -122,9 +123,16 @@ def load_model(tag: str, *, device: str | torch.device | None = None, revision: 
     if tag not in MODEL_IDS:
         raise ValueError(f"unknown model tag {tag!r}; choose one of {sorted(MODEL_IDS)}")
     hf_id = MODEL_IDS[tag]
-    model_path = os.environ.get("QWEN3_DROPED_PATH") if tag == "qwen3-droped" else None
-    if tag == "qwen3-droped" and not model_path:
-        raise ValueError("qwen3-droped requires QWEN3_DROPED_PATH=/path/to/trained/checkpoint")
+    if tag == "qwen3-droped":
+        model_path = os.environ.get("QWEN3_DROPED_PATH")
+        if not model_path:
+            raise ValueError("qwen3-droped requires QWEN3_DROPED_PATH=/path/to/trained/checkpoint")
+    elif tag == "qwen3-rope-recal":
+        model_path = os.environ.get("QWEN3_ROPE_RECAL_PATH")
+        if not model_path:
+            raise ValueError("qwen3-rope-recal requires QWEN3_ROPE_RECAL_PATH=/path/to/trained/checkpoint")
+    else:
+        model_path = None
     source_id = str(Path(model_path).expanduser()) if model_path else hf_id
     rev_kw = {} if revision is None or model_path else {"revision": revision}
     if tag == "nope-gpt-small":

@@ -9,6 +9,8 @@ Current experiment groups:
 - `experiments/dead-keys/` — original dead-key census and follow-on RoPE/intervention phases. See `experiments/dead-keys/README.md` and `spec.md`.
 - `experiments/queryability/` — paired `W_Q^T W_K` query/key geometry. See `experiments/queryability/README.md`.
 - `experiments/k-address-space/` — pre-registered K-space/content-address experiment. See `experiments/k-address-space/README.md` and `spec.md`.
+- `experiments/rope-as-scaffold/` — directed program on RoPE as a removable training scaffold. See `experiments/rope-as-scaffold/README.md` and its per-experiment `RS*-spec.md`.
+- `experiments/wavelet/` — KV-cache mergeability under content reordering. See `experiments/wavelet/README.md` and `W0-spec.md`. This program is deliberately specified only one experiment deep (see its README, *Scope discipline*); do not pre-detail downstream experiments before W0 reports.
 
 ## Experiment documentation standard
 

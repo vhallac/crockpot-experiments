@@ -832,7 +832,11 @@ def _check_gate_rs31(
 def _gates_from_arm_a(summaries: dict) -> dict:
     """G-RS3.2: CE_perturbed > CE_clean, delta non-decreasing in w.
 
-    Returns a dict with per-model gate results.
+    Evaluated **per perturbation mode** (scramble and reverse independently)
+    so reverse-mode non-monotonicity (expected — it is a stronger perturbation)
+    does not sink the clean scramble-mode pass.
+
+    Returns a dict with per-model, per-mode gate results.
     """
     gate = {}
     for tag, entries in summaries.items():
@@ -841,22 +845,24 @@ def _gates_from_arm_a(summaries: dict) -> dict:
         for e in entries:
             by_mode.setdefault(e["mode"], {})[e["window"]] = e["mean"]
 
-        monotonic_pass = True
-        all_positive = True
+        per_mode = {}
         for mode, wd in by_mode.items():
             sorted_ws = sorted(wd.keys())
+            monotonic_non_decreasing = True
+            all_positive = True
             for i in range(1, len(sorted_ws)):
                 if wd[sorted_ws[i]] < wd[sorted_ws[i - 1]]:
-                    monotonic_pass = False
+                    monotonic_non_decreasing = False
             for w, d in wd.items():
                 if d <= 0:
                     all_positive = False
+            per_mode[mode] = {
+                "all_positive": all_positive,
+                "monotonic_non_decreasing": monotonic_non_decreasing,
+                "passed": all_positive and monotonic_non_decreasing,
+            }
 
-        gate[tag] = {
-            "all_positive": all_positive,
-            "monotonic_non_decreasing": monotonic_pass,
-            "passed": all_positive and monotonic_pass,
-        }
+        gate[tag] = per_mode
     return gate
 
 
