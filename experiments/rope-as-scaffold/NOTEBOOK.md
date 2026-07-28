@@ -62,7 +62,7 @@ Per `RS-amendment-2-3.md` §4–5. C3 verdict follows §5's 4-cell decision matr
 - Comparison checkpoint: `qwen3-droped` at `/workspace/qwen3-droped` (RS1b LR=1e-3)
 - GPU readiness report: `temp/gpu-readiness/20260728T160037Z-rs-amd23.md` — **GO**
 - GPU: H100 SXM (pod `jn1bvsu2vxwdnw`, NE-1)
-- Pre-run commit: _pending_
+- Pre-run commit: 508db935cf8971a86dc10fec67d75626c8533948
 - Planned output location: `outputs/rs_amd23_*`
 
 ### Results
