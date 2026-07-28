@@ -490,7 +490,7 @@ adaptation artifact." The control is now load-bearing for C3, and this section's
 no longer applies to that use.
 
 **Analysis arms, gates, predictions, and the C3 decision matrix are pre-registered separately in
-[`RS1b-ctrl-spec.md`](RS1b-ctrl-spec.md)** (2026-07-28). This section remains the pre-registration
+[`RS-amendment-2-3.md`](RS-amendment-2-3.md)** (2026-07-28). This section remains the pre-registration
 of record for the *recipe* and the original P.RS1.ctrl.a/b; that spec scopes what consumes the
 checkpoint. Note it restates P.RS1.ctrl.a (as P.ctrl.d) in light of state 3 having reached
 PPL 16.88 — *better* than the untrained baseline — which inverts the prediction's original framing.

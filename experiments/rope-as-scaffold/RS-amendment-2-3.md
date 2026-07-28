@@ -1,12 +1,21 @@
-# RS1b-ctrl — RoPE-recalibrated confound control
+# RS-amendment-2-3 — RoPE-recalibrated control, amending RS2 and RS3
 
 **Dated:** 2026-07-28
 **Status:** pre-registered, not yet run
-**Program:** [`rope-as-scaffold`](README.md) — unblocks **C3** (RS3), strengthens **C2** (RS2/RS2.1),
-closes the original **C1** confound question.
-**Pre-registration of record for the recipe:** [RS1-spec §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control)
-(recipe, P.RS1.ctrl.a/b, cost). This spec does not replace §11 — it scopes the *analysis arms*
-that consume the checkpoint §11 defines, and pre-registers their predictions.
+**Program:** [`rope-as-scaffold`](README.md) — unblocks **C3** (amends RS3), strengthens **C2**
+(amends RS2/RS2.1), closes the original **C1** confound question.
+
+**What this is.** The execution plan for the control experiment pre-registered as **RS1b-ctrl**
+in [RS1-spec §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control).
+It is filed as an *amendment* rather than a new RS-number because it produces no new claim of its
+own: it re-runs analyses already completed for RS2 and RS3 against a properly-controlled baseline,
+and its output is a correction (or confirmation) of those entries' verdicts. §11 remains the
+pre-registration of record for the **recipe** and the original P.RS1.ctrl.a/b; this document
+scopes the **analysis arms** that consume the checkpoint §11 defines, and pre-registers their
+predictions and decision matrix.
+
+**Amends:** `NOTEBOOK.md` 2026-07-27 (RS3 — currently ends "no C3 verdict yet"), and
+2026-07-26 (RS2/RS2.1 — C2 substantiated, with a training-drift baseline still missing).
 
 ---
 
@@ -41,7 +50,7 @@ between the two trained arms.
 functional NoPE training at this scale converges to similar positional geometry." That needs an
 **independently-initialized** control (from-scratch or differently-seeded NoPE), which this is
 not: `qwen3-rope-recal` starts from the same weights as everything else. Keep the two controls
-distinct; this spec does not claim the independent-init gap is addressed.
+distinct; this plan does not claim the independent-init gap is addressed.
 
 **Also does not fix:** RS3 Arm D (length behavior). Its confound is pretrain-context (32k) vs.
 recalibration-context (2048), and `qwen3-rope-recal` is recalibrated at 2048 too — it shares the
