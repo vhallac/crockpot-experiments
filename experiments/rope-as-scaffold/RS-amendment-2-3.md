@@ -226,7 +226,7 @@ would be needed next (independent-init control, or a matched-domain corpus).
 
 | stage | compute | est. |
 |---|---|---|
-| Stage 0 — training | 1× A100 **or** H100 SXM (both Ampere/Hopper, flash-attn OK; avoid Blackwell) | ~12.5h, **~$20** |
+| Stage 0 — training | 1× A100 / H100 / H200 SXM — see GPU note below | ~12.5h, **~$20** |
 | Arm 2 prereq — M1.5 probe | same pod | ~0.5–1h |
 | Arm 3 — perplexity + M1.6 | same pod | ~1h |
 | Arm 1 — RS3 A/B (+C) | same pod, batched harness | ~1h |
@@ -236,6 +236,17 @@ would be needed next (independent-init control, or a matched-domain corpus).
 checkpoint is the expensive artifact, and every downstream probe is cheap by comparison. Produce a
 GPU readiness report before launching (AGENTS.md), and publish the checkpoint + outputs per the
 reproducible-research flow.
+
+**GPU note — by card, not by architecture family** (the family names are easy to mis-map):
+
+| verdict | cards | why |
+|---|---|---|
+| **Safe** | A100 (Ampere), **H100 and H200** (both Hopper, CC 9.0), A5000/A6000, L40S, RTX 4090 | flash-attention supported |
+| **Avoid** | B100, B200, GB200, RTX 5090, RTX PRO 6000 Blackwell | Blackwell; flash-attention unsupported (Dao-AILab/flash-attention#1987) |
+
+**H200 is Hopper, not Blackwell** — same GH100 die as H100, just HBM3e and 141GB instead of 80GB.
+It is safe, but buys nothing here: a 0.6B model at 2048 context is nowhere near memory-bound, so
+prefer whichever of A100/H100/H200 is cheapest and available rather than paying an H200 premium.
 
 ---
 
