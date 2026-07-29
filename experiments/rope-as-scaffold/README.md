@@ -59,11 +59,18 @@ RoPE is a droppable scaffold," and the reason for this program.
 - **C2 — subspace equivalence.** The DroPE'd model's emergent position reconstructs the *same*
   positional information/subspace RoPE supplied (measure overlap/alignment). *Falsifier:*
   disjoint subspaces — emergent position ≠ RoPE-supplied position.
-- **C3 — functional locus of RoPE.** What actually degrades on removal is **local-order /
+- **C3 — functional locus of RoPE.** ~~What actually degrades on removal is **local-order /
   recency acuity and length-extrapolation behavior**, not retrieval/addressing — i.e. RoPE's
-  causal contribution is local, not address. *Falsifier:* removal degrades retrieval more than
+  causal contribution is local, not address.~~ *Falsifier:* removal degrades retrieval more than
   local-order tasks. (Sharpens [RNoPE-SWA](references/literature-survey.md)'s correlational
   "RoPE = local, NoPE = retrieval" into a causal claim.)
+  → **FALSIFIED 2026-07-28** by RS3 + RS-amendment-2-3. Removal damages **both** axes; the
+  falsifier triggered, with retrieval degrading ~5.8× more than local order in proportional terms
+  (`D_retrieval` +0.066 vs `D_local` +0.011). The positive clause survives — a real local-order
+  cost exists, confined to short windows (w≤8) — but the distinguishing "not retrieval" clause
+  fails. **Reframing now better supported:** RoPE supplies a *local relative-offset primitive*
+  that retrieval circuits are built on, rather than being independent of retrieval. See
+  `NOTEBOOK.md` 2026-07-28.
 - **C4 — scale check.** E1/E2 hold beyond 0.6B (spot-check one larger model). *Falsifier:*
   a genuine retrieval-address emerges at scale, or emergent redundancy vanishes.
 
@@ -100,7 +107,8 @@ without it, reconsider whether the note is worth writing. Full landscape in
 | RS2.1 ([spec](RS2.1-spec.md)) | C2 (correction) | external review (`temp/rs2-critiqe.md`) found RS2 didn't control for initialization inheritance — the DroPE'd model started from RoPE's own weights, so subspace overlap could reflect that rather than reconstruction. Re-tests with an untrained-dropped zero-shot control and a `k_pre`-residual test | analysis-only |
 | RS3 ([spec](RS3-spec.md)) | C3 | task/perplexity ablations along a local-order axis (within-window scramble ΔCE) vs a retrieval axis (induction gain, KV needle), RoPE vs DroPE'd. All primary metrics are *within-model* contrasts, because the DroPE'd model's 1B extra FineWeb-Edu tokens make cross-model absolute scores uninterpretable | eval harness (~1.5h GPU inference, no training) |
 | **RS-amendment-2-3** ([plan](RS-amendment-2-3.md) · [recipe: RS1-spec §11](RS1-spec.md#11-addendum-2026-07-24-rs1b-ctrl--rope-recalibrated-confound-control)) | unblocks C3, strengthens C2, closes C1 confound | every RoPE-vs-DroPE'd comparison so far pits `qwen3` (zero extra training) against `qwen3-droped` (~1B extra tokens), confounding "RoPE removed" with "extra in-domain training". Trains `qwen3-rope-recal` (identical corpus/seed/budget, RoPE left **on**) so the two trained arms differ only in RoPE, then re-runs RS3 Arms A/B against it | **~$25–30**, one pod session (~12.5h training + cheap probes) |
-| RS4 | C4 | E1/E2 spot-check on one >0.6B model | GPU |
+| RS4 | C4 | E1/E2 spot-check on one >0.6B model. **Blocked on planning:** E2 depends on M1.6, whose G6 gate becomes harder to satisfy as models improve and failed outright on the best model probed so far — see the G6 investigation below before scoping | GPU |
+| **G6-ceiling investigation** ([reference](G6-ceiling-investigation.md)) | instrument, not a claim | M1.6's G6 marker-neutrality gate degrades monotonically with model quality (`qwen3` PPL 21.80 passes at default budget → `qwen3-droped` 16.88 needs 8× → `qwen3-rope-recal` 14.25 fails outright). Threatens E2's measurability on any better/larger model, RS4 included | **not scoped, not scheduled** — to be run as its own experiment after current program work |
 
 RS1 is the load-bearing one: it converts the DroPE connection from *citation* to *result*.
 Each experiment gets its own `spec.md` (pre-registration) before running.

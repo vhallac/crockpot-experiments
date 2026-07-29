@@ -192,14 +192,26 @@ causal attribution weakens correspondingly.
 
 Applied to Arm 1's results, using RS3's pre-registered anchors (w=4, d=512):
 
-| P.ctrl.a (local) | P.ctrl.b (retrieval) | C3 verdict |
-|---|---|---|
-| holds (recal more sensitive) | holds (recal retains gain) | **C3 supported after all** — RS3's double falsification was confound-driven; local cost is real and retrieval is spared |
-| falsified | holds | **C3 falsified, cleanly and interestingly** — removal costs retrieval, not local order: the *inverse* of the claim. Forces the §1 reframing (RoPE's local primitive is what retrieval is built on) into the foreground |
-| holds | falsified | Both axes degrade, local more; C3 partially supported but its "not retrieval" clause fails |
-| falsified | falsified | **Neither effect is RoPE-attributable** — RS3's whole result was domain adaptation. C3 unadjudicated; the instruments are sound but the comparison was never informative. Report as such |
+> **CORRECTED 2026-07-29 (defect found at adjudication time).** The original table's row 1 glossed
+> "P.ctrl.b holds" as "(recal retains gain) → retrieval is spared," which **contradicts P.ctrl.b's
+> own prediction text in §4** — there, b holding means the induction collapse *is* RoPE-specific,
+> i.e. retrieval **is** damaged. The two readings are incompatible and the table could not be
+> applied literally. Restated below in terms of the underlying facts rather than
+> prediction-holds/fails labels, which is what should have been done originally. The observed
+> result (both axes damaged, retrieval proportionally more) is unambiguous either way; see the
+> `NOTEBOOK.md` 2026-07-28 entry for the adjudication actually made.
 
-**Do not** collapse the bottom-right cell into "C3 falsified." A null control result means RS3
+Applied to Arm 1's results, using RS3's pre-registered anchors (w=4, d=512). Rows are stated as
+**facts about the control-vs-DroPE'd contrast**, not as prediction labels:
+
+| local acuity: recal > droped? | retrieval: recal > droped? | C3 verdict |
+|---|---|---|
+| yes (removal costs local) | **no** (removal spares retrieval) | **C3 supported** — exactly the claim: local cost, retrieval intact |
+| no (removal spares local) | yes (removal costs retrieval) | **C3 falsified, inverted** — removal costs retrieval and not local order, the mirror image of the claim |
+| yes | yes | **Both axes damaged.** C3's positive clause holds, its "not retrieval" clause fails. Compare `D_local` vs `D_retrieval` to state which dominates — **this is the observed outcome**, with retrieval ~5.8× larger |
+| no | no | **Neither effect is RoPE-attributable** — RS3's whole result was domain adaptation. C3 unadjudicated; the instruments are sound but the comparison was never informative. Report as such |
+
+**Do not** collapse the bottom row into "C3 falsified." A null control result means RS3
 measured training, not RoPE, and the honest output is a retracted result plus a note on what
 would be needed next (independent-init control, or a matched-domain corpus).
 

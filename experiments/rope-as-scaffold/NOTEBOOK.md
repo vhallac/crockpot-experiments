@@ -66,13 +66,187 @@ Per `RS-amendment-2-3.md` §4–5. C3 verdict follows §5's 4-cell decision matr
 - Planned output location: `outputs/rs_amd23_*`
 
 ### Results
-_Pending run._
+
+Training completed on H100 SXM: 1907 steps, 999,817,216 tokens, 25,022s (~7.0h) at ~39,957 tok/s.
+All numbers below independently recomputed from the per-item CSVs, not read off summary JSONs.
+
+**Gates:**
+
+| gate | verdict | evidence |
+|---|---|---|
+| G-ctrl.1 (RoPE active) | **PASS**, two ways | `training_manifest.json`: `rotary_patch_applied: false`, `rotary_probe.pass: true` (cos deviates from identity by 2.0, sin non-zero to 1.0). **Independently:** the control's step-1 eval PPL is **21.82**, matching the untrained RoPE baseline 21.80 — a RoPE-removed model starts at ~30,859. The identity patch definitively did not leak. |
+| G-ctrl.2 (training matched) | **PASS** | 1907 steps, LR 1e-3, 1B tokens, ctx 2048, seed 0, batch 524288, AdamW β=(0.9,0.95) wd=0.1 — all matching `qwen3-droped`. Same cached token files (`fineweb_edu_qwen3_train_after_eval5000000_1000000000.uint32`). |
+| G-ctrl.3 (functional) | **PASS** | held-out PPL 14.25 |
+| G-ctrl.4 (G-RS3.1 re-run) | **PASS** | `rs3_gates.log`: `qwen3` measured 3.081886 vs target 3.0819 → PASS; `qwen3-droped` 2.826026 vs 2.826 → PASS. (Recovered from the pod's log — its summary JSON was overwritten, see Provenance defects.) |
+| revision pinned | **PASS** | `c1899de289a04d12100db370d81485cdf75e47ca` recorded in the summary — RS3's regression is fixed |
+
+**P.ctrl.a — local-order.** Paired per-block contrast, `qwen3-rope-recal` minus `qwen3-droped`,
+scramble mode (positive = RoPE removal costs local acuity):
+
+| w | paired Δ | 95% CI | verdict |
+|---:|---:|---|---|
+| 2 | **+0.0236** | [+0.0184, +0.0287] | holds |
+| 4 | **+0.0441** | [+0.0386, +0.0494] | holds |
+| 8 | **+0.0220** | [+0.0168, +0.0271] | holds |
+| 16 | −0.0050 | [−0.0102, −0.0001] | reverses (marginal) |
+| 32 | −0.0221 | [−0.0269, −0.0174] | reverses |
+
+**P.ctrl.a holds at all three pre-registered windows** (w∈{2,4,8}), with `rel_delta_ce` agreeing
+in sign at each. The sign reversal at w≥16 was not pre-registered and is reported as observed.
+
+**P.ctrl.b — retrieval.** Induction gain (nats) by model and distance:
+
+| d | `qwen3` (raw) | `qwen3-rope-recal` | `qwen3-droped` | RoPE-attributable share |
+|---:|---:|---:|---:|---:|
+| 64 | 12.942 | 12.156 | 11.967 | 19% |
+| 256 | 12.961 | 12.104 | 11.720 | 31% |
+| 512 | 12.930 | 12.021 | 11.229 | 47% |
+| 1024 | 12.925 | 11.610 | 9.995 | 55% |
+| 1536 | 12.938 | 11.094 | 9.409 | 48% |
+
+Paired `rope-recal` − `droped` is positive with CI excluding zero at **every** distance
+(+0.189, +0.384, +0.792, +1.614, +1.685). Retrieval **is** damaged by RoPE removal. But
+`rope-recal` also falls well short of raw `qwen3` (−0.79 to −1.84), so recalibration alone
+damages retrieval too.
+
+**P.ctrl.c (subspace control) — NOT DELIVERED.** See Provenance defects.
+
+**P.ctrl.d — perplexity.** `qwen3-rope-recal` **14.25** (CE 2.6569) vs `qwen3-droped` **16.88**
+(CE 2.826) vs untrained `qwen3` **21.80** (CE 3.0819). Decomposition of RS1b's headline:
+
+- domain adaptation gains **0.425 nats** (3.0819 → 2.6569)
+- RoPE removal costs **0.169 nats** (2.6569 → 2.826)
+- net vs. untrained baseline = 0.256 nats — exactly what RS1b reported as "recovery past baseline"
+
+**P.ctrl.e (M1.5/M1.6 profile) — NOT DELIVERED, blocked with cause.** See below.
+
+**Arm 3b (M1.6) blocked — G6 marker-neutrality gate could not be satisfied.** M1.6's G6 gate
+requires the model to be near-indifferent between four candidate continuation markers
+(`max_prob/min_prob < 3.0`). On `qwen3-rope-recal` the marker search failed at both attempted
+budgets: best ratio **5.534** at `--max-marker-sets 512`, and **3.311** at 4096 (on stimulus
+M16_02; M16_01 passed at that budget). Since G6 is foundational, the entire downstream pipeline —
+causal K/V patching, induction scoring, transitivity, per-head classification — was correctly
+skipped rather than run on non-neutral markers, which would have invalidated every readout.
+
+The cause is **model quality, not training exposure**: `qwen3-droped` received *identical*
+training (same token stream, same 1907 steps) and passed G6 at a 4096 budget. What differs is
+that the RoPE-active control is a better model (14.25 vs 16.88 PPL), and sharper predictive
+distributions make near-indifference harder to find. Across three checkpoints the relationship is
+monotone in perplexity: `qwen3` (21.80) passes at the default 512; `qwen3-droped` (16.88) needs
+4096; `qwen3-rope-recal` (14.25) fails at 4096. **This experiment is closed and will not be
+expanded to chase it** — the issue is scoped for separate investigation in
+[`G6-ceiling-investigation.md`](G6-ceiling-investigation.md).
+
+**Provenance defects (recorded, not fixed):**
+1. **Arm 2 prerequisite was the wrong probe.** The `m15/` output directory contains a *Task 4 band
+   census* (`census_*.csv`, `spectra_*.npz`, `bands_manifest.csv`) — not M1.5 `position_content`
+   output. No `kaddress_m15_projectors_qwen3-rope-recal.npz` was produced, so
+   `c2_subspace_overlap.py` could not be run and **P.ctrl.c is undelivered**. The directory name
+   is misleading; the artifacts are from a different instrument.
+2. **Summary JSON overwritten twice.** `run_analysis.sh` wrote the gates run, the `local_scramble`
+   arm, and the `induction` arm all to the same `--output-dir`. The surviving
+   `rs3_summary.json` is `induction`'s, so G-RS3.1's and G-RS3.2's recorded results were both
+   lost. G-RS3.1 was recovered from `rs3_gates.log` (passed, above). **G-RS3.2 has no recorded
+   pass**; recomputed independently here from the CSV: scramble is monotone non-decreasing for all
+   three models, reverse is non-monotone for all three — same pattern as RS3, and the per-mode
+   split (fix 2d) would have recorded scramble as passing.
+3. **`training_manifest.json` mislabels the artifact** as `"artifact": "qwen3-droped"` — a
+   hardcoded string in the training script. `output_dir` is correctly `/workspace/qwen3-rope-recal`
+   and the rotary fields are correct, so this is cosmetic, but it should be fixed before the
+   script generates another artifact.
+4. **Checkpoint is unpublished.** Verified intact on network volume `6qaba2cjcx` (`dead-weight-ne1`,
+   US-NE-1) at `/workspace/qwen3-rope-recal` — 1.19GB safetensors plus tokenizer, 4.5GB with
+   training checkpoint. Note this is a *different* volume from the project's documented
+   `et0mntsj6x` (US-CA-2, per `AGENTS.md`). Checklist steps 8–9 remain open.
 
 ### Analysis
-_Pending output analysis._
+
+**P.ctrl.a holds: RS3's local-order falsification was a confound artifact, exactly as
+pre-registered.** RS3-spec §1 argued in advance that domain adaptation would bias the DroPE'd
+model toward *appearing more* order-sensitive, working against P.RS3.a — and that a falsification
+in that direction would therefore be uninterpretable. With training held constant, the sign
+flips: the RoPE-active control is more order-sensitive than the RoPE-removed model at every
+pre-registered window. **RoPE removal does cost local-order acuity.** The effect is small in
+absolute terms (+0.044 nats at w=4) but robust, and it survives the `rel_delta_ce` normalization
+check.
+
+The reversal at w≥16 sharpens rather than muddies this: the RoPE-attributable cost is confined to
+*short* windows and vanishes (then inverts) at long ones. That is precisely the profile C3's
+positive clause predicts — RoPE supplies **local** order structure.
+
+**P.ctrl.b lands between the prediction and its falsifier, and the decomposition is the finding.**
+Neither branch fires cleanly: the control neither retains raw `qwen3`'s gain (as "the collapse is
+RoPE-specific" predicted) nor matches `qwen3-droped` (as "the collapse is training-induced"
+predicted). Both mechanisms are real and separable:
+
+- **Recalibration alone** costs 0.79–1.84 nats of induction gain — narrow-domain training on
+  FineWeb-Edu degrades retrieval on random-token spans regardless of RoPE.
+- **RoPE removal costs more on top**, at every distance, with CIs excluding zero.
+- The **RoPE-attributable share grows with distance**: 19% at d=64, ~47–55% at d≥512.
+
+So **RS3 overstated the RoPE-attributable retrieval loss by roughly 2×** at the d=512 anchor
+(attributing the full 1.70 nats to RoPE when only 0.79 is), but RS3's *direction* survives the
+control intact.
+
+**C3 is falsified — cleanly this time.** C3's distinguishing claim is that RoPE's causal
+contribution is local **and not** retrieval. With the confound removed, removal damages **both**,
+and retrieval far more in proportional terms: at the pre-registered anchors, `D_local = +0.011`
+versus `D_retrieval = +0.066`, a ~5.8× ratio in the direction opposite to C3's ordering. The
+"not retrieval" clause fails on controlled evidence, not on confounded evidence as in RS3.
+
+**C3's spirit survives its letter, and the RS3 reframing is now the better-supported account.**
+Two independent signatures point the same way: the local-order cost is confined to w≤8, and the
+retrieval cost grows monotonically with distance. Both are consistent with the hypothesis floated
+in the RS3 entry — that induction copying depends on a *relative-offset* operation ("attend to the
+token after my last match") that RoPE supplies natively, so RoPE's contribution really is a local
+primitive, but retrieval circuits are **built on** that primitive rather than independent of it.
+This does not contradict E2 (the retrieval address is content; position supplies the offset step).
+It reframes C3 rather than merely refuting it.
+
+**P.ctrl.d is the sleeper result: the DroPE recipe does not fully recover.** RS1b reported
+recovery to PPL 16.88, "below the 21.80 baseline," which read as an unqualified success. Against
+the correct control that reading dissolves: adaptation on this corpus is worth 0.425 nats, RoPE
+removal costs 0.169 nats back, and the 0.256-nat net is what RS1b saw. A **persistent 18.5%
+perplexity penalty** (16.88/14.25) survives full recalibration at this token budget. The
+sub-baseline crossing at step ~800 flagged in the RS1b entry was domain adaptation, as suspected
+there — but the residual gap is new, and it qualifies the program's "scaffold is freely
+removable" framing at the language-modelling level, independent of C1/C2/C3.
+
+**A defect in this experiment's own decision matrix.** `RS-amendment-2-3.md` §5 row 1 glosses
+"P.ctrl.b holds" as "(recal retains gain) → retrieval is spared," but P.ctrl.b's own prediction
+text in §4 says the opposite — that b holding means the collapse *is* RoPE-specific, i.e.
+retrieval **is** damaged. The two are contradictory, so the matrix cannot be applied literally.
+The observed data is unambiguous enough to adjudicate without it (both axes damaged, retrieval
+more), but the matrix is corrected in the spec rather than left as a trap for a future reader.
 
 ### Conclusion / Next Step
-_Pending. On completion, this entry's verdict must be back-propagated to the 2026-07-27 RS3 entry._
+
+**C3: falsified.** RoPE removal costs both local-order acuity and retrieval, with retrieval hit
+~5.8× harder proportionally. C3's positive clause (a local cost exists) is vindicated — and was
+being masked by the confound in RS3 — but its distinguishing "not retrieval" clause fails on
+controlled evidence.
+
+**The control did its job.** It reversed one RS3 verdict (P.RS3.a: confound artifact, now holds),
+halved the magnitude of another while preserving its direction (P.RS3.b), and surfaced a finding
+neither RS3 nor RS1b could see (P.ctrl.d's persistent perplexity penalty). This is the clearest
+vindication so far of pre-registering the confound analysis before the data arrives.
+
+**Delivered:** P.ctrl.a, P.ctrl.b, P.ctrl.d, and the C3 verdict (the blocking output).
+**Not delivered:** P.ctrl.c (wrong probe run — Arm 2's M1.5 prerequisite was never produced) and
+P.ctrl.e (M1.6 blocked at G6, cause understood and recorded above). **This experiment is closed;
+neither will be chased within it.**
+
+**Consequences to carry forward:**
+1. **Back-propagated to the 2026-07-27 RS3 entry** — see the amendment note appended there.
+2. **RS2/RS2.1's training-drift baseline remains missing.** P.ctrl.c was the cheap way to get it;
+   it now needs its own run. C2's verdict is unchanged but still rests on an initialization
+   control only, with generic training drift unexcluded.
+3. **M1.6's quality ceiling is scoped separately** in
+   [`G6-ceiling-investigation.md`](G6-ceiling-investigation.md). **This blocks planning for RS4**,
+   whose E1/E2 spot-check assumes M1.6 runs on a *larger* — and therefore better, and on this
+   evidence more likely to fail G6 — model.
+4. **P.RS1.a's framing needs revisiting** in light of P.ctrl.d: "perplexity recovers" is true only
+   against an un-adapted baseline.
 
 ---
 
@@ -279,6 +453,23 @@ primitive it fails to fully reconstruct) rather than simply falsify the program'
 This is a hypothesis for a future RS3.x/RS4 arm, not a claim this run supports.
 
 ### Conclusion / Next Step
+
+> **AMENDED 2026-07-28 — resolved by RS-amendment-2-3 (see the newest entry).** The hold below was
+> correct and the control vindicated it. Summary of what changed:
+> - **P.RS3.a's falsification was a confound artifact.** With domain adaptation held constant, the
+>   sign flips: the RoPE-active control is *more* order-sensitive than the DroPE'd model at every
+>   pre-registered window (+0.024/+0.044/+0.022 at w=2/4/8, CIs excluding zero). RoPE removal does
+>   cost local-order acuity, and RS3 could not see it.
+> - **P.RS3.b's direction survives, but its magnitude was ~2× overstated.** At d=512 the full
+>   1.70-nat gap decomposes into 0.91 nats of recalibration effect and 0.79 nats attributable to
+>   RoPE removal. Retrieval *is* damaged by removal, at every distance, CIs excluding zero.
+> - **C3 is now falsified on controlled evidence:** removal damages both axes, retrieval ~5.8×
+>   more proportionally (D_local +0.011 vs D_retrieval +0.066). C3's "not retrieval" clause fails.
+> - The mechanistic reframing floated below (retrieval circuits built *on* RoPE's local
+>   relative-offset primitive) is now the better-supported account, on two independent signatures:
+>   the local cost is confined to w≤8, and the retrieval cost grows with distance.
+>
+> The original reasoning is retained verbatim below as the record of what was known at the time.
 
 **No C3 verdict yet.** RS3's instruments and paired-contrast design worked as intended —
 clean gates on the primary scramble-mode Arm A metric, a decisive and internally-corroborated
