@@ -45,6 +45,14 @@ Every reproducible run **MUST** pin the exact upstream revision of every model a
 
 ## Cross-experiment caching via network volume
 
+**Canonical volume (verified 2026-07-29): `6qaba2cjcx` — `dead-weight-ne1`, US-NE-1, 43GB.**
+This is the *only* network volume on the account; the RunPod API lists no others. Volume history:
+`sndrrdckku` (EU-RO-1) → `et0mntsj6x` (US-CA-2) → `6qaba2cjcx` (US-NE-1, created for
+RS-amendment-2-3 because H100 SXM capacity was in NE-1). **Each migration replaced its
+predecessor — the older ids no longer exist and any reference to them will fail.** Datacenter
+matters: a pod can only attach a volume in its own DC, so GPU availability in US-NE-1 constrains
+GPU choice until the volume is migrated again (`scripts/runpod-rebuild-volume-in-dc`).
+
 Python CUDA libraries (PyTorch, transformers, etc.) and model parameters are
 large downloads (5+ GB). They MUST live on the RunPod network volume so new
 pods and new experiments reuse them without re-downloading.
@@ -220,7 +228,7 @@ Scripts under `scripts/` are the preferred operational entry points:
 - `scripts/runpod-persistent-cache-setup` — run inside a RunPod pod after `cd /workspace/crockpot-experiments`. It creates/updates `/workspace/crockpot-experiments-cache`, writes `~/.crockpot-experiments-runpod-env`, points HuggingFace/torch/pip/uv/Triton caches at the network volume, and sets `DEAD_KEYS_CUDA_VENV=/workspace/venv`.
 - `scripts/cuda-run` — RunPod CUDA Python runner. It sources `~/.crockpot-experiments-runpod-env`, creates `/workspace/venv` if missing, installs `requirements-runpod-cuda.txt` with `uv pip` unless `DEAD_KEYS_CUDA_SKIP_INSTALL=1`, then execs the venv Python with the supplied arguments.
 - `scripts/cuda-python` — convenience wrapper around `scripts/cuda-run` for Python commands/modules.
-- `scripts/runpod-bring-up` — local helper to create a RunPod pod from project template id `1zpm2v05rn`, attach network volume `et0mntsj6x` at `/workspace`, wait for SSH readiness, and print JSON metadata. Use for GPU experiment pods; for CPU-only cleanup pods, use the RunPod REST CPU `computeType: "CPU"` path documented in the RunPod API docs.
+- `scripts/runpod-bring-up` — local helper to create a RunPod pod from project template id `1zpm2v05rn`, attach network volume `6qaba2cjcx` (`dead-weight-ne1`, **US-NE-1**, 43GB) at `/workspace`, wait for SSH readiness, and print JSON metadata. Use for GPU experiment pods; for CPU-only cleanup pods, use the RunPod REST CPU `computeType: "CPU"` path documented in the RunPod API docs.
 - `scripts/watch-experiment-run` — remote/local process monitor for long runs. It polls a required `--pattern`, prints matching process CPU/memory plus system CPU/memory/GPU utilization every interval, and exits when no matching process remains or `--timeout` is reached.
 
 ## RunPod NVIDIA/CUDA environment
@@ -237,7 +245,7 @@ scripts/runpod-bring-up "NVIDIA L4"
 ```
 
 The helper creates a pod from template `1zpm2v05rn`, attaches network volume
-`et0mntsj6x` at `/workspace`, waits for direct public-IP SSH readiness, and
+`6qaba2cjcx` at `/workspace`, waits for direct public-IP SSH readiness, and
 prints JSON containing the pod id and SSH command. It times out after 120s by
 default (`RUNPOD_BRING_UP_TIMEOUT=<seconds>` to override) and deletes the newly
 created pod on timeout unless `RUNPOD_KEEP_ON_TIMEOUT=1` is set. Use this helper

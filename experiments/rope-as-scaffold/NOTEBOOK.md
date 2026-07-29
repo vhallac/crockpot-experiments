@@ -143,6 +143,17 @@ expanded to chase it** — the issue is scoped for separate investigation in
    output. No `kaddress_m15_projectors_qwen3-rope-recal.npz` was produced, so
    `c2_subspace_overlap.py` could not be run and **P.ctrl.c is undelivered**. The directory name
    is misleading; the artifacts are from a different instrument.
+   **Root cause:** `-m deadkeys.scripts.census` was run instead of
+   `-m kaddress.scripts.position_content`. Three scripts look like plausible "M1.5" candidates and
+   only one is (`deadkeys.scripts.phase1_5` is a third, used in this program solely for the
+   sliding-window perplexity helper). `census` accepts neither `--families` nor `--max-length`, so
+   the spec's own flags were the available tell and were not cross-checked. Disambiguation table
+   added to [RS1-spec](RS1-spec.md) after the fact.
+   **For any future re-run of this arm:** the command is
+   `python -m kaddress.scripts.position_content --model qwen3-rope-recal --families A
+   --max-length 1024`, and it must emit `kaddress_m15_projectors_qwen3-rope-recal.npz`. The
+   checkpoint remains available on volume `6qaba2cjcx` at `/workspace/qwen3-rope-recal`, so this
+   is re-runnable without retraining.
 2. **Summary JSON overwritten twice.** `run_analysis.sh` wrote the gates run, the `local_scramble`
    arm, and the `induction` arm all to the same `--output-dir`. The surviving
    `rs3_summary.json` is `induction`'s, so G-RS3.1's and G-RS3.2's recorded results were both
@@ -157,7 +168,7 @@ expanded to chase it** — the issue is scoped for separate investigation in
 4. **Checkpoint is unpublished.** Verified intact on network volume `6qaba2cjcx` (`dead-weight-ne1`,
    US-NE-1) at `/workspace/qwen3-rope-recal` — 1.19GB safetensors plus tokenizer, 4.5GB with
    training checkpoint. Note this is a *different* volume from the project's documented
-   `et0mntsj6x` (US-CA-2, per `AGENTS.md`). Checklist steps 8–9 remain open.
+   `et0mntsj6x` (US-CA-2) that `AGENTS.md` referenced at the time — and which no longer exists (the RunPod API now lists `6qaba2cjcx` as the account's only volume; `AGENTS.md` and the pod scripts were corrected 2026-07-29). Checklist steps 8–9 remain open.
 
 ### Analysis
 

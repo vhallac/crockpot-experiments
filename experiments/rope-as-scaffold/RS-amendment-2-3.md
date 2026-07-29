@@ -110,8 +110,14 @@ RS2.1 established the *initialization* baseline (V2: untrained-dropped, zero tra
 *training-drift* baseline — "how much does 1B tokens of this corpus move key geometry toward
 `k_post` regardless of RoPE?" `qwen3-rope-recal` supplies exactly that third point.
 
-Run M1.5 on `qwen3-rope-recal` (`--families A --max-length 1024`, matching RS1a/RS1b so bases are
-comparable), then `c2_subspace_overlap.py` with `--droped-projectors` pointed at the resulting
+Run M1.5 on `qwen3-rope-recal` — **explicitly `python -m kaddress.scripts.position_content`, not
+`deadkeys.scripts.phase1_5` and not `deadkeys.scripts.census`** (see the disambiguation table in
+[RS1-spec §"Reused probe modules"](RS1-spec.md); this arm was lost once to that exact mix-up) — with
+`--families A --max-length 1024`, matching RS1a/RS1b so bases are comparable. Confirm it wrote
+`kaddress_m15_projectors_qwen3-rope-recal.npz` before proceeding; if the output is `census_*.csv`
+or `spectra_*.npz`, the wrong script ran.
+
+Then `c2_subspace_overlap.py` with `--droped-projectors` pointed at the resulting
 `k_pre` NPZ and `--rope-projectors` at RS1a's `qwen3` NPZ — same seed, same
 `--baseline-trials 100`, same families as RS2.
 

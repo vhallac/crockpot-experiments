@@ -14,7 +14,7 @@ Environment overrides:
   RUNPOD_BRING_UP_TIMEOUT     Readiness timeout in seconds. Default: 120.
   RUNPOD_BRING_UP_NAME        Pod name. Default: crockpot-<gpu>-<utc timestamp>.
   RUNPOD_TEMPLATE_ID          Template id. Default: 1zpm2v05rn.
-  RUNPOD_NETWORK_VOLUME_ID    Network volume id. Default: et0mntsj6x.
+  RUNPOD_NETWORK_VOLUME_ID    Network volume id. Default: 6qaba2cjcx (US-NE-1).
   RUNPOD_VOLUME_MOUNT_PATH    Network volume mount path. Default: /workspace.
   RUNPOD_SSH_KEY              SSH private key. Default: ~/.ssh/id_ed25519.
   RUNPOD_CLOUD_TYPE           Cloud type for the pod. Default: SECURE.
@@ -40,7 +40,7 @@ gpu_type=$1
 timeout_seconds=${RUNPOD_BRING_UP_TIMEOUT:-120}
 cloud_type=${RUNPOD_CLOUD_TYPE:-SECURE}
 template_id=${RUNPOD_TEMPLATE_ID:-1zpm2v05rn}
-network_volume_id=${RUNPOD_NETWORK_VOLUME_ID:-et0mntsj6x}
+network_volume_id=${RUNPOD_NETWORK_VOLUME_ID:-6qaba2cjcx}
 volume_mount_path=${RUNPOD_VOLUME_MOUNT_PATH:-/workspace}
 ssh_key=${RUNPOD_SSH_KEY:-$HOME/.ssh/id_ed25519}
 name=${RUNPOD_BRING_UP_NAME:-crockpot-${gpu_type//[^A-Za-z0-9]/-}-$(date -u +%Y%m%d%H%M%S)}

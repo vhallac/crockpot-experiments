@@ -108,6 +108,21 @@ apples-to-apples.
 - **M1.5** (`kaddress.scripts.position_content`): per-layer key-position decodability (ridge CV
   R², null-corrected), position fraction, PCA-to-90%, position-removal projector fidelity. Reuse
   gates G1 (architectural zero at L0), G2 (architectural one), G4 (one-sided shuffled null).
+
+  > **Disambiguation — "M1.5" is NOT `phase1_5.py`.** Three scripts are plausible-looking
+  > candidates and only one is M1.5:
+  >
+  > | script | is it M1.5? | what it actually is | tell-tale flags |
+  > |---|---|---|---|
+  > | `kaddress.scripts.position_content` | **YES** | the M1.5 position-content probe; emits `kaddress_m15_projectors_<model>.npz`, the input `c2_subspace_overlap.py` consumes | `--families`, `--max-length` |
+  > | `deadkeys.scripts.phase1_5` | no | despite the name. This program uses it only for the sliding-window `perplexity()` helper (§10.D) | neither of the above |
+  > | `deadkeys.scripts.census` | no | Task-4 dead-key band census; emits `census_*.csv` / `spectra_*.npz` / `bands_manifest.csv` | `--samples`, `--misalign-rotations`, `--atol` |
+  >
+  > **If a spec says "run M1.5 with `--families`/`--max-length`", only `position_content` accepts
+  > those flags — an argparse rejection is the signal you have the wrong script, not a reason to
+  > drop the flags.** RS-amendment-2-3 lost its P.ctrl.c arm to exactly this confusion: `census`
+  > was run instead, producing spectra where projectors were needed
+  > (`NOTEBOOK.md` 2026-07-28, Provenance defects).
 - **M1.6** (`kaddress.scripts.m16_discriminator`): causal K/V patching, G6 marker neutrality,
   G7 noise-controlled attention, output-above-noise addressing criterion. **RoPE-state patches use
   `k_pre`** (pre-rotation, per addendum-M1.6 v1.1 §4.1); dropped/DroPE'd states have no rotation,

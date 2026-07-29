@@ -11,13 +11,13 @@ directly from source pod to target pod. The local machine only orchestrates;
 data flows source pod -> target pod.
 
 Defaults are project-specific:
-  source datacenter: US-CA-2
-  source volume id:  et0mntsj6x
+  source datacenter: US-NE-1
+  source volume id:  6qaba2cjcx
   mount path:        /workspace
 
 Environment overrides:
-  SOURCE_DC                     Source datacenter. Default: US-CA-2
-  SOURCE_VOLUME_ID              Source network volume id. Default: et0mntsj6x
+  SOURCE_DC                     Source datacenter. Default: US-NE-1
+  SOURCE_VOLUME_ID              Source network volume id. Default: 6qaba2cjcx
   TARGET_VOLUME_SIZE_GB         New target volume size. Default: 200
   TARGET_VOLUME_NAME            New target volume name. Default includes target DC/date
   RUNPOD_CPU_IMAGE              CPU pod image. Default: ubuntu:22.04
@@ -53,8 +53,8 @@ if [[ $# -ne 1 ]]; then
 fi
 
 target_dc=$1
-source_dc=${SOURCE_DC:-US-CA-2}
-source_volume_id=${SOURCE_VOLUME_ID:-et0mntsj6x}
+source_dc=${SOURCE_DC:-US-NE-1}
+source_volume_id=${SOURCE_VOLUME_ID:-6qaba2cjcx}
 target_volume_size_gb=${TARGET_VOLUME_SIZE_GB:-200}
 mount_path=${RUNPOD_VOLUME_MOUNT_PATH:-/workspace}
 cpu_image=${RUNPOD_CPU_IMAGE:-ubuntu:22.04}
