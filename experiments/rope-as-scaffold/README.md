@@ -89,6 +89,31 @@ instance of an old idea — the **DroPE before/after (RS1)**. Consequence: RS1 i
 without it, reconsider whether the note is worth writing. Full landscape in
 [`references/literature-survey.md`](references/literature-survey.md).
 
+## Published models
+
+The two trained checkpoints this program produced are on the Hugging Face Hub. They are a
+**matched pair** — identical corpus, identical cached token stream, identical step count, schedule
+and seed, differing *only* in whether RoPE was active — and a single one of them in isolation
+answers no question.
+
+| model | RoPE | held-out PPL |
+|---|---|---:|
+| [`vhallac/qwen3-0.6b-rope-recal-1b`](https://huggingface.co/vhallac/qwen3-0.6b-rope-recal-1b) | active (control) | **14.25** |
+| [`vhallac/qwen3-0.6b-nope-recal-1b`](https://huggingface.co/vhallac/qwen3-0.6b-nope-recal-1b) | removed | **16.88** |
+| `Qwen/Qwen3-0.6B` (base, no extra training) | active | 21.80 |
+
+Same fp32 frozen 5M-token FineWeb-Edu eval slice, same harness. Recalibration is worth 0.425 nats;
+removing RoPE gives 0.169 nats of that back. Reporting the NoPE model against *base* alone (21.80 →
+16.88) makes a real regression look like a gain — which is the point of publishing the control
+alongside it.
+
+> ⚠️ **The NoPE checkpoint will silently misbehave if loaded normally.** RoPE was disabled by a
+> runtime patch, which is not expressible in `config.json` — the two repos' configs are
+> byte-identical and both declare `rope_type: "default"`. Loading without forcing the rotary
+> embedding to identity runs a RoPE-trained forward pass on a model trained without it: degenerate
+> output, no exception. The required snippet is on
+> [that model's card](https://huggingface.co/vhallac/qwen3-0.6b-nope-recal-1b).
+
 ## Planned experiments
 
 > **Implementing or executing an RS experiment (e.g. RS1a/RS1b)? Read the
