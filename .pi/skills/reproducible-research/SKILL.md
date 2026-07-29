@@ -23,7 +23,13 @@ Recommended document roles:
 - `spec.md`, `<experiment-id>-spec.md`, or addendum specs: optional but recommended for pre-registered experiments, contract-style measurement definitions, or branches that must remain historically frozen. The README should link to these instead of absorbing every contract detail.
 - `NOTEBOOK.md`: newest-first chronological run ledger. Use for pre-run entries, run evidence, publication URIs, analysis notes, and completion provenance.
 - `FINDINGS.md`: durable scientific synthesis after enough evidence accumulates. Use for results that should survive beyond one notebook entry.
+- `DIRECTIONS.md`: successor research directions spawned by an experiment — the candidate questions its results opened but did not answer. Write it when a run produces more questions than it settles, which is common and not a failure mode: **an experiment's value may lie chiefly in producing its successor.** Keeps speculative follow-ups out of the notebook's Conclusion (which should state what *this* run concluded) while stopping them from evaporating.
 - `CLOSING-NOTE.md`: optional decision record explaining why the experiment group should continue, stop, retract, migrate, or be frozen.
+
+Each direction should be independently promotable: one question, its own directory, its own spec, its own notebook, and a verdict on whether there was anything there. Two rules make that work in practice:
+
+- **Cost each direction, and separate "inherits everything it needs" from "needs new compute."** A direction that can be answered by re-analysing existing artifacts is a writing task, not a budget item. Conflating the two is how cheap findings go unwritten while expensive ones get scheduled by default.
+- **Inheritance hygiene: when a direction is promoted, its spec must *restate* the numbers it inherits, not just link to them.** Parent outputs age, tarballs move, releases get re-tagged. "Re-doable on its own" has to survive the parent becoming hard to reach.
 
 ### README.md reference template
 
@@ -163,6 +169,43 @@ Use newest-first entries. A minimal entry can follow the pre-run/completion sect
 ## Implications
 
 ## Follow-up Questions
+```
+
+### DIRECTIONS.md reference template
+
+```markdown
+# Directions for Future Research — <experiment group>
+
+**Dated:** <YYYY-MM-DD>
+**Parent:** <experiment / notebook entry these directions came out of>
+**Status:** candidates only. None is pre-registered. Each becomes a real experiment only when it
+gets its own directory, single-question spec, and notebook.
+
+## How to read this document
+
+Each direction states one question, what it inherits, what it costs, and what would make it not
+worth doing. A direction that inherits everything it needs is an analysis task, not a budget item.
+
+## D<n> — <one-line question as a title>
+
+**Question.** <the single question, stated so it can be answered yes/no/inconclusive>
+
+**Inherits (complete | partial | nothing).** <specific numbers/artifacts, with values inline where
+short — restate rather than only linking, so this survives the parent aging>
+
+**Cost.** <$0 analysis | cheap GPU | real training, with an order-of-magnitude figure>
+
+**Kill criteria.** <what result or prior finding would make this not worth doing>
+
+<optional: design crux, confounds already known, gating tensions with existing plans>
+
+## Loose threads (not directions yet)
+
+<observations too small or too unexplained to be their own question, recorded so they are not lost>
+
+## Not directions — open items inside existing experiments
+
+<pending arms of live experiments, listed explicitly so they are not mistaken for future work>
 ```
 
 ### CLOSING-NOTE.md reference template
@@ -349,6 +392,7 @@ ACTION:
 - Fill in notebook Results, Analysis, Conclusion / Next Step, and final provenance.
 - Backfill the `Pre-run commit` field in the pre-run provenance now: the SHA cannot exist inside the commit it names, so it is written into the notebook here and lands in the final commit.
 - Include links to published outputs, checksums, publication identifier, run command, and relevant commit SHAs.
+- **Capture successor directions before the context is lost.** If the run opened questions it did not settle, record them in `DIRECTIONS.md` (see template) and link it from the Conclusion. Do this now, while the numbers and their caveats are still fresh — a direction written months later loses exactly the detail (which artifact, which caveat, what would kill it) that makes it startable. Keep the Conclusion about what *this* run concluded; speculative follow-ups belong in `DIRECTIONS.md`.
 - Commit the completed notebook and any small curated artifacts intended for git.
 
 VERIFY:

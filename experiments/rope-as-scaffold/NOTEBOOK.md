@@ -133,9 +133,15 @@ training (same token stream, same 1907 steps) and passed G6 at a 4096 budget. Wh
 that the RoPE-active control is a better model (14.25 vs 16.88 PPL), and sharper predictive
 distributions make near-indifference harder to find. Across three checkpoints the relationship is
 monotone in perplexity: `qwen3` (21.80) passes at the default 512; `qwen3-droped` (16.88) needs
-4096; `qwen3-rope-recal` (14.25) fails at 4096. **This experiment is closed and will not be
-expanded to chase it** — the issue is scoped for separate investigation in
-[`G6-ceiling-investigation.md`](G6-ceiling-investigation.md).
+4096; `qwen3-rope-recal` (14.25) fails at 4096. The general instrument problem is scoped for
+separate investigation in [`G6-ceiling-investigation.md`](G6-ceiling-investigation.md).
+
+> **Status revised 2026-07-29: a retry is planned, so this arm is open, not abandoned.** A retry
+> **must raise `--max-marker-sets` substantially or it will fail identically** — 4096 samples
+> ~0.02% of the C(152,4) ≈ 21M marker-combination space, so the earlier failure is not evidence
+> that no neutral set exists. Suggested 65536 (~20–30 min of forward passes). Do **not** relax the
+> 3.0 threshold or expand `CANDIDATE_MARKERS` to force a pass: either would void comparability
+> with every prior M1.6 result and would require re-running all previously-probed models.
 
 **Provenance defects (recorded, not fixed):**
 1. **Arm 2 prerequisite was the wrong probe.** The `m15/` output directory contains a *Task 4 band
@@ -242,22 +248,52 @@ halved the magnitude of another while preserving its direction (P.RS3.b), and su
 neither RS3 nor RS1b could see (P.ctrl.d's persistent perplexity penalty). This is the clearest
 vindication so far of pre-registering the confound analysis before the data arrives.
 
+**THE PROGRAM-LEVEL FINDING.** This experiment was targeted at a specific thesis — *RoPE is a
+training scaffold that can be thrown away.* **The findings do not support it. RoPE continues to
+add value at inference, and removing it costs capability that recalibration does not restore.**
+Four independent measurements converge on this:
+
+| measurement | cost of removing RoPE |
+|---|---|
+| P.ctrl.d (perplexity) | +0.169 nats / 18.5% PPL, persisting after full recalibration |
+| P.ctrl.a (local-order) | +0.044 nats at w=4, CI excluding zero |
+| P.ctrl.b (retrieval) | +0.79 nats at d=512, growing to +1.68 at d=1536 |
+| RS3 Arm D (context) | collapse past the recalibration window (PPL 298 @8192 vs RoPE's flat 21.5) |
+
+**The failure is not that position disappears — it is that reconstructed position is not
+functionally equivalent to supplied position.** C1 holds (position fills in) and C2 holds
+(it reconstructs RoPE's own code in L3–L12, confound-controlled). The model reconstitutes the
+representation and *still cannot do the job*. That is this program's own motivating principle —
+*decodable ≠ causally used* — turned back on the program: the scaffold thesis quietly assumed the
+converse, that reconstructed-and-decodable implies functionally-replaced. It does not.
+
+**Scope discipline on that claim:** the evidence supports *"not recoverable at a 1B-token
+recalibration"*, not *"not recoverable in principle."* The training curve converged, but on a
+cosine schedule at that budget. This does not weaken the practical finding — DroPE's own selling
+point is that a **brief** recalibration suffices, and at the budget claimed to suffice, it
+demonstrably does not.
+
 **Delivered:** P.ctrl.a, P.ctrl.b, P.ctrl.d, and the C3 verdict (the blocking output).
-**Not delivered:** P.ctrl.c (wrong probe run — Arm 2's M1.5 prerequisite was never produced) and
-P.ctrl.e (M1.6 blocked at G6, cause understood and recorded above). **This experiment is closed;
-neither will be chased within it.**
+**Open, not abandoned (revised 2026-07-29):** P.ctrl.c (M1.5 re-run — the checkpoint is intact on
+volume `6qaba2cjcx`, so this needs one probe pass, not retraining) and P.ctrl.e (M1.6 retry — see
+the `--max-marker-sets` requirement above). **This experiment is therefore not yet complete**;
+checklist items 7–12 remain open.
 
 **Consequences to carry forward:**
 1. **Back-propagated to the 2026-07-27 RS3 entry** — see the amendment note appended there.
-2. **RS2/RS2.1's training-drift baseline remains missing.** P.ctrl.c was the cheap way to get it;
-   it now needs its own run. C2's verdict is unchanged but still rests on an initialization
-   control only, with generic training drift unexcluded.
+2. **RS2/RS2.1's training-drift baseline is pending P.ctrl.c.** C2's verdict is unchanged but
+   still rests on an initialization control only, with generic training drift unexcluded until
+   the M1.5 re-run lands.
 3. **M1.6's quality ceiling is scoped separately** in
    [`G6-ceiling-investigation.md`](G6-ceiling-investigation.md). **This blocks planning for RS4**,
    whose E1/E2 spot-check assumes M1.6 runs on a *larger* — and therefore better, and on this
-   evidence more likely to fail G6 — model.
+   evidence more likely to fail G6 — model. The pending retry here will inform it either way.
 4. **P.RS1.a's framing needs revisiting** in light of P.ctrl.d: "perplexity recovers" is true only
    against an un-adapted baseline.
+5. **Successor research directions are enumerated in [`DIRECTIONS.md`](DIRECTIONS.md)** — six
+   candidates, costed, most of them $0 analysis over numbers this experiment already produced.
+   Per the program's working principle: *an experiment's value may lie chiefly in producing its
+   successor,* and that is an acceptable outcome.
 
 ---
 
