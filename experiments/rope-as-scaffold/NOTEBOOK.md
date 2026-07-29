@@ -136,7 +136,9 @@ monotone in perplexity: `qwen3` (21.80) passes at the default 512; `qwen3-droped
 4096; `qwen3-rope-recal` (14.25) fails at 4096. The general instrument problem is scoped for
 separate investigation in [`G6-ceiling-investigation.md`](G6-ceiling-investigation.md).
 
-> **Status revised 2026-07-29: a retry is planned, so this arm is open, not abandoned.** A retry
+> **Not chased within this experiment.** A redo is planned as a **separate future notebook
+> entry** against the already-trained `qwen3-rope-recal` checkpoint (no retraining needed) — see
+> `DIRECTIONS.md` / the "Not directions — open items" note there. Whoever runs it: the retry
 > **must raise `--max-marker-sets` substantially or it will fail identically** — 4096 samples
 > ~0.02% of the C(152,4) ≈ 21M marker-combination space, so the earlier failure is not evidence
 > that no neutral set exists. Suggested 65536 (~20–30 min of forward passes). Do **not** relax the
@@ -273,25 +275,31 @@ cosine schedule at that budget. This does not weaken the practical finding — D
 point is that a **brief** recalibration suffices, and at the budget claimed to suffice, it
 demonstrably does not.
 
-**Delivered:** P.ctrl.a, P.ctrl.b, P.ctrl.d, and the C3 verdict (the blocking output).
-**Open, not abandoned (revised 2026-07-29):** P.ctrl.c (M1.5 re-run — the checkpoint is intact on
-volume `6qaba2cjcx`, so this needs one probe pass, not retraining) and P.ctrl.e (M1.6 retry — see
-the `--max-marker-sets` requirement above). **This experiment is therefore not yet complete**;
-checklist items 7–12 remain open.
+**Delivered:** P.ctrl.a, P.ctrl.b, P.ctrl.d, and the C3 verdict (the blocking output) — this is
+the complete set of outputs this experiment was scoped to produce for its blocking question.
+**Not delivered, and closed as such rather than left open here:** P.ctrl.c (wrong probe run) and
+P.ctrl.e (M1.6 blocked at G6). Both are re-runnable against the already-trained
+`qwen3-rope-recal` checkpoint (volume `6qaba2cjcx`) without retraining, but **the redo is tracked
+as a separate future notebook entry, not a reopening of this one** — this experiment is finished
+as delivered.
+
+**This experiment is complete.** Checklist `temp/repro-checklists/20260728-RS-amendment-2-3.md`
+items 8–12 close it out below.
 
 **Consequences to carry forward:**
 1. **Back-propagated to the 2026-07-27 RS3 entry** — see the amendment note appended there.
-2. **RS2/RS2.1's training-drift baseline is pending P.ctrl.c.** C2's verdict is unchanged but
-   still rests on an initialization control only, with generic training drift unexcluded until
-   the M1.5 re-run lands.
+2. **RS2/RS2.1's training-drift baseline is pending a future P.ctrl.c re-run.** C2's verdict is
+   unchanged but still rests on an initialization control only, with generic training drift
+   unexcluded until that lands.
 3. **M1.6's quality ceiling is scoped separately** in
    [`G6-ceiling-investigation.md`](G6-ceiling-investigation.md). **This blocks planning for RS4**,
    whose E1/E2 spot-check assumes M1.6 runs on a *larger* — and therefore better, and on this
-   evidence more likely to fail G6 — model. The pending retry here will inform it either way.
+   evidence more likely to fail G6 — model. The planned P.ctrl.e redo will inform it either way.
 4. **P.RS1.a's framing needs revisiting** in light of P.ctrl.d: "perplexity recovers" is true only
    against an un-adapted baseline.
 5. **Successor research directions are enumerated in [`DIRECTIONS.md`](DIRECTIONS.md)** — six
-   candidates, costed, most of them $0 analysis over numbers this experiment already produced.
+   candidates, costed, most of them $0 analysis over numbers this experiment already produced,
+   plus the P.ctrl.c/P.ctrl.e redo tracked there as an open item rather than a new direction.
    Per the program's working principle: *an experiment's value may lie chiefly in producing its
    successor,* and that is an acceptable outcome.
 
